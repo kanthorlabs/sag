@@ -141,6 +141,19 @@ func runAC11(t *testing.T, env harness.Env) {
 		if err != nil {
 			t.Fatalf("CREATE EXTENSION file_fdw: %v", err)
 		}
+		t.Cleanup(func() {
+			cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			conn, err := harness.ConnectDB(cctx, env.Postgres(env.Major()), ac11Database)
+			if err != nil {
+				t.Errorf("connect %s: %v", ac11Database, err)
+				return
+			}
+			defer conn.Close(cctx)
+			if _, err := conn.PgConn().ExecParams(cctx, "DROP EXTENSION file_fdw", nil, nil, nil, nil).Close(); err != nil {
+				t.Errorf("DROP EXTENSION file_fdw: %v", err)
+			}
+		})
 		deadline := time.Now().Add(ac11RecheckWindow)
 		for {
 			code := ac11QueryCode(ctx, t, env)
