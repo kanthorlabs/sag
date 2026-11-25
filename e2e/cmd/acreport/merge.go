@@ -63,8 +63,14 @@ func runMerge(args []string, stderr io.Writer) int {
 	for _, ac := range r.ACs {
 		if ac.ID == ciAC && ac.Status != statusPass {
 			fmt.Fprintf(stderr, "acreport merge: %s %s: %s\n", ciAC, ac.Status, ac.Message)
-			return 1
 		}
+	}
+	if !r.Gate.Passed {
+		fmt.Fprintf(stderr, "acreport merge: gate layer %d failed:\n", r.Gate.Layer)
+		for _, test := range r.Gate.Failing {
+			fmt.Fprintf(stderr, "  %s\n", test)
+		}
+		return 1
 	}
 	return 0
 }
@@ -236,11 +242,22 @@ func ac35Failures(reports []report, macOS string, table []e2e.ACRow) []string {
 		}
 	}
 	for _, in := range reports {
+		major := strconv.Itoa(in.PGMajors[0])
 		var items []string
-		for _, ac := range in.ACs {
-			if ac.ID != ciExcludedAC && ac.ID != ciAC && ac.Status != statusPass {
-				items = append(items, ac.ID+" "+ac.Status)
+		for _, row := range table {
+			if row.ID == ciExcludedAC || row.ID == ciAC {
+				continue
 			}
+			ac, ok := findByID(in, row.ID)
+			switch {
+			case !ok:
+				items = append(items, row.ID+" missing")
+			case ac.Status != statusPass || ac.ByMajor[major] != statusPass:
+				items = append(items, fmt.Sprintf("%s %s (by_major %s)", row.ID, ac.Status, ac.ByMajor[major]))
+			}
+		}
+		if !slices.ContainsFunc(in.Others, isRequiredSubtest) {
+			items = append(items, requiredSubtest+" missing")
 		}
 		for _, o := range in.Others {
 			if o.Status != statusPass {
@@ -260,6 +277,10 @@ func ac35Failures(reports []report, macOS string, table []e2e.ACRow) []string {
 		failed = append(failed, fmt.Sprintf("build-macos %s, want %s", macOS, macOSSuccess))
 	}
 	return failed
+}
+
+func isRequiredSubtest(o otherResult) bool {
+	return o.Test[strings.LastIndex(o.Test, "/")+1:] == requiredSubtest
 }
 
 func findByID(r report, id string) (acResult, bool) {

@@ -124,12 +124,12 @@ func TestAC35NeedsMacOSBuild(t *testing.T) {
 }
 
 func TestAC31ExcludedInCI(t *testing.T) {
-	cases := map[string]func(r report){
-		"excluded": func(report) {},
-		"failed":   func(r report) { setAC(r, ciExcludedAC, statusFail, "no login") },
-		"not run":  func(r report) { setAC(r, ciExcludedAC, statusNotImplemented, "") },
-		"in gate": func(r report) {
-			setAC(r, ciExcludedAC, statusFail, "no login")
+	cases := map[string]func(r *report){
+		"excluded": func(*report) {},
+		"failed":   func(r *report) { setAC(*r, ciExcludedAC, statusFail, "no login") },
+		"not run":  func(r *report) { setAC(*r, ciExcludedAC, statusNotImplemented, "") },
+		"in gate": func(r *report) {
+			setAC(*r, ciExcludedAC, statusFail, "no login")
 			r.Gate.Passed = false
 			r.Gate.Failing = []string{"TestE2E/parallel/AC31_ClaudeCode", "AC35_CI"}
 		},
@@ -138,7 +138,7 @@ func TestAC31ExcludedInCI(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			reports := ciReports(14, 15, 16, 17, 18, 19)
 			for i := range reports {
-				change(reports[i])
+				change(&reports[i])
 			}
 			r := mergeReports(mergeInput{Reports: reports, MacOSBuild: macOSSuccess}, e2e.ACTable)
 			ac31 := find(t, r, ciExcludedAC)
@@ -152,6 +152,69 @@ func TestAC31ExcludedInCI(t *testing.T) {
 				t.Errorf("gate = %+v, want passed", r.Gate)
 			}
 		})
+	}
+}
+
+func TestAC35NeedsEachRow(t *testing.T) {
+	removeAC := func(r *report, id string) {
+		r.ACs = slices.DeleteFunc(r.ACs, func(ac acResult) bool { return ac.ID == id })
+	}
+	cases := map[string]struct {
+		change func(r *report)
+		want   string
+	}{
+		"empty acs and others": {func(r *report) { r.ACs, r.Others = nil, nil }, "AC01 missing"},
+		"AC10 absent":          {func(r *report) { removeAC(r, "AC10") }, "AC10 missing"},
+		"skeleton absent":      {func(r *report) { r.Others = nil }, requiredSubtest + " missing"},
+		"skeleton other name": {func(r *report) {
+			r.Others[0].Test = "TestE2E/parallel/Harness_Skeleton_Copy"
+		}, requiredSubtest + " missing"},
+		"PASS with FAIL by_major": {func(r *report) {
+			for i := range r.ACs {
+				if r.ACs[i].ID == "AC10" {
+					r.ACs[i].ByMajor["16"] = statusFail
+				}
+			}
+		}, "AC10 PASS (by_major FAIL)"},
+		"AC05 EXCLUDED":        {func(r *report) { setAC(*r, "AC05", statusExcluded, skipMessage) }, "AC05 EXCLUDED"},
+		"AC05 NOT_IMPLEMENTED": {func(r *report) { setAC(*r, "AC05", statusNotImplemented, "") }, "AC05 NOT_IMPLEMENTED"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			reports := ciReports(14, 15, 16, 17, 18, 19)
+			c.change(&reports[2])
+			r := mergeReports(mergeInput{Reports: reports, MacOSBuild: macOSSuccess}, e2e.ACTable)
+			if got := find(t, r, ciAC); got.Status != statusFail || !strings.Contains(got.Message, "pg16: "+c.want) {
+				t.Errorf("AC35 = %+v, want FAIL that names pg16: %s", got, c.want)
+			}
+			if r.Gate.Passed {
+				t.Errorf("gate = %+v, want failed", r.Gate)
+			}
+		})
+	}
+
+	empty := ciReports(14, 15, 16, 17, 18, 19)
+	for i := range empty {
+		empty[i].ACs, empty[i].Others = nil, nil
+	}
+	if got := find(t, mergeReports(mergeInput{Reports: empty, MacOSBuild: macOSSuccess}, e2e.ACTable), ciAC); got.Status != statusFail {
+		t.Errorf("AC35 for 6 empty inputs = %+v, want FAIL", got)
+	}
+
+	extra := mergeReports(mergeInput{Reports: ciReports(13, 14, 15, 16, 17, 18, 19), MacOSBuild: macOSSuccess}, e2e.ACTable)
+	if got := find(t, extra, ciAC); got.Status != statusFail || !strings.Contains(got.Message, "unexpected majors 13") {
+		t.Errorf("AC35 = %+v, want FAIL that names unexpected major 13", got)
+	}
+}
+
+func TestMergeCarriesDirty(t *testing.T) {
+	reports := ciReports(14, 15, 16, 17, 18, 19)
+	if mergeReports(mergeInput{Reports: reports, MacOSBuild: macOSSuccess}, e2e.ACTable).Dirty {
+		t.Error("dirty = true for clean inputs, want false")
+	}
+	reports[3].Dirty = true
+	if !mergeReports(mergeInput{Reports: reports, MacOSBuild: macOSSuccess}, e2e.ACTable).Dirty {
+		t.Error("dirty = false with one dirty input, want true")
 	}
 }
 
@@ -221,6 +284,20 @@ func TestRunMergeExitCodes(t *testing.T) {
 	}
 	if code := run(mergeArgs(paths[:5], macOSSuccess, out), &stderr, probe); code != 1 {
 		t.Errorf("exit with 5 majors = %d, want 1", code)
+	}
+
+	gateOnly := slices.Clone(paths)
+	gateOnly[0] = writeReportFile(t, filepath.Join(dir, "extra"), func() report {
+		r := ciReport(14)
+		r.Others = append(r.Others, otherResult{Test: "TestE2E/parallel/Extra_Check", Status: statusPass, ByMajor: map[string]string{"14": statusPass}})
+		return r
+	}())
+	stderr.Reset()
+	if code := run(mergeArgs(gateOnly, macOSSuccess, out), &stderr, probe); code != 1 {
+		t.Errorf("exit with a failed merged gate = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "TestE2E/parallel/Extra_Check") {
+		t.Errorf("stderr = %q, want Extra_Check", stderr.String())
 	}
 
 	write := func(name string, change func(*report)) string {

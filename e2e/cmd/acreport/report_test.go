@@ -365,6 +365,12 @@ func TestRunGateExcludesSkipped(t *testing.T) {
 		t.Errorf("gate = %+v, want failing [AC31_ClaudeCode]", r.Gate)
 	}
 
+	failedSkeleton := slices.Concat(events[len(skeletonPass()):], finished("TestE2E/parallel/Harness_Skeleton", "fail", 1))
+	r = buildReport(6, []majorRun{{Major: 17, Run: parsed(t, failedSkeleton)}}, e2e.ACTable, []string{"AC31"}, buildInfo{})
+	if r.Gate.Passed || !slices.Equal(r.Gate.Failing, []string{"TestE2E/parallel/Harness_Skeleton"}) {
+		t.Errorf("gate with -skip AC31 and a failed Harness_Skeleton = %+v, want failing [TestE2E/parallel/Harness_Skeleton]", r.Gate)
+	}
+
 	r = buildReport(6, runs, e2e.ACTable, []string{"AC01"}, buildInfo{})
 	if got := find(t, r, "AC01"); got.Status != statusExcluded {
 		t.Errorf("AC01 = %+v, want EXCLUDED", got)
@@ -387,6 +393,27 @@ func TestMarkdownNoDurationForExcluded(t *testing.T) {
 	}
 }
 
+func TestMarkdownGateLineNamesExcluded(t *testing.T) {
+	events := skeletonPass()
+	for _, row := range e2e.ACTable[:4] {
+		events = append(events, finished("TestE2E/parallel/"+row.Test, "pass", 1)...)
+	}
+	for skip, want := range map[string]string{
+		"":          "- Gate layer 1: PASS\n",
+		"AC31":      "- Gate layer 1: PASS (excluded: AC31)\n",
+		"AC02 AC31": "- Gate layer 1: PASS (excluded: AC02, AC31)\n",
+	} {
+		r := buildReport(1, []majorRun{{Major: 17, Run: parsed(t, events)}}, e2e.ACTable, skipIDs(skip), buildInfo{})
+		var b bytes.Buffer
+		if err := writeMarkdown(&b, r); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("skip %q: markdown misses %q:\n%s", skip, want, b.String())
+		}
+	}
+}
+
 func TestRunSkipFlag(t *testing.T) {
 	events := slices.Concat(skeletonPass(), finished("TestE2E/parallel/AC01_ConfigCheckRejects", "pass", 1), finished("TestE2E/parallel/AC02_StartRefusesBadSecrets", "pass", 1), finished("TestE2E/parallel/AC03_JWTRejects", "pass", 1))
 	dir := t.TempDir()
@@ -397,7 +424,23 @@ func TestRunSkipFlag(t *testing.T) {
 	if code := run([]string{"-layer", "1", "-in", in, "-out", out}, &stderr, probe); code != 1 {
 		t.Errorf("exit without -skip = %d, want 1", code)
 	}
+	stderr.Reset()
 	if code := run([]string{"-layer", "1", "-in", in, "-skip", " AC04, AC31 ", "-out", out}, &stderr, probe); code != 0 {
 		t.Errorf("exit with -skip = %d, want 0; stderr: %s", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "warning") {
+		t.Errorf("stderr = %q, want no warning for known IDs", stderr.String())
+	}
+	stderr.Reset()
+	if code := run([]string{"-layer", "1", "-in", in, "-skip", "AC04 AC99 ac31", "-out", out}, &stderr, probe); code != 0 {
+		t.Errorf("exit with unknown -skip IDs = %d, want 0; stderr: %s", code, stderr.String())
+	}
+	for _, id := range []string{"AC99", "ac31"} {
+		if !strings.Contains(stderr.String(), "acreport: warning: -skip "+id+" is not an AC ID") {
+			t.Errorf("stderr = %q, want a warning for %s", stderr.String(), id)
+		}
+	}
+	if strings.Contains(stderr.String(), "-skip AC04 ") {
+		t.Errorf("stderr = %q, want no warning for AC04", stderr.String())
 	}
 }
