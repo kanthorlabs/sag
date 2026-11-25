@@ -188,6 +188,25 @@ func TestLoopbackIPLiteralOnly(t *testing.T) {
 	}
 }
 
+func TestLoopbackExemptionOnlyUnderVerifyFull(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "[::1]"} {
+		dsn := "postgres://u:" + testPassword + "@" + host + ":5432/orders"
+		cfg := verifyFull()
+		cfg.TLS = ""
+		if cc := mustConnConfig(t, cfg, dsn); cc.TLSConfig != nil {
+			t.Fatalf("host %s, tls absent: TLSConfig = %+v; want nil", host, cc.TLSConfig)
+		}
+		cfg.TLS = core.TLSInsecureSkipVerify
+		if cc := mustConnConfig(t, cfg, dsn); cc.TLSConfig == nil || !cc.TLSConfig.InsecureSkipVerify {
+			t.Fatalf("host %s, insecure-skip-verify: TLSConfig = %+v; want TLS without verification", host, cc.TLSConfig)
+		}
+		cfg.TLS = core.TLSDisable
+		if cc := mustConnConfig(t, cfg, dsn); cc.TLSConfig != nil {
+			t.Fatalf("host %s, disable: TLSConfig = %+v; want nil", host, cc.TLSConfig)
+		}
+	}
+}
+
 func TestIgnoresPGEnvironment(t *testing.T) {
 	t.Setenv("PGHOST", "evil.example.net")
 	t.Setenv("PGPORT", "1")

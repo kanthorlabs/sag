@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 5 |
+| Status | Revision 6 |
 | Date | 2026-11-25 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
@@ -105,7 +105,7 @@ Operational rules:
 
 - The daemon reads `sag.yaml` and all secrets at start. A change to `sag.yaml` or to a secret needs a container restart in v1.
 - The daemon removes each `PG*` environment variable at start.
-- The daemon refuses to start if a secret file has an owner other than UID 65532 or a mode with group or other bits.
+- The daemon refuses to start if a secret file has an owner other than UID 65532 or a mode other than exactly 0400.
 - The operator runs CLI commands inside the container with `podman exec`. No CLI function is reachable through MCP.
 - `GET /healthz` returns `200` with an empty body and needs no token. All other paths need a JWT.
 
@@ -539,7 +539,7 @@ Issue command: `podman exec -it sag sag jwt generate <sub> [--name <display>]`.
 | `insecure-skip-verify` | TLS without verification. The daemon logs one warning for each preflight run. `sag resource test` prints the warning. |
 | `disable` | No TLS. The daemon logs one warning for each preflight run. `sag resource test` prints the warning. |
 
-- A host that is an IP literal in `127.0.0.0/8` or `::1` needs no TLS and logs no warning. The exemption applies to IP literals only. The host name `localhost` gets no exemption.
+- A host that is an IP literal in `127.0.0.0/8` or `::1` needs no TLS and logs no warning. The exemption applies to IP literals only. The host name `localhost` gets no exemption. The exemption applies only when `tls` is `verify-full` or absent. An explicit `tls: insecure-skip-verify` or `tls: disable` applies as written.
 - The DSN cannot set a TLS mode. `sag.yaml` is the only source.
 
 ## 13. Interfaces
