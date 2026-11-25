@@ -131,12 +131,15 @@ func ac03ExpectRejected(ctx context.Context, t *testing.T, env harness.Env, cont
 		t.Fatalf("%s: HTTP %d; want 401", container, resp.StatusCode)
 	}
 	challenge := resp.Header.Get("WWW-Authenticate")
-	if !strings.HasPrefix(challenge, "Bearer") {
-		t.Fatalf("%s: WWW-Authenticate = %q; want Bearer", container, challenge)
+	if got := resp.Header.Values("WWW-Authenticate"); len(got) != 1 || got[0] != "Bearer" {
+		t.Fatalf("%s: WWW-Authenticate = %q; want exactly [Bearer]", container, got)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("%s: 401 body has %d bytes; want empty", container, len(body))
 	}
 	if cause != token.CauseUnauthenticated && strings.Contains(string(body)+challenge, string(cause)) {
 		t.Fatalf("%s: response reveals the cause %q", container, cause)

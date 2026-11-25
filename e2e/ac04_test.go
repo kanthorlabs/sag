@@ -53,6 +53,9 @@ func runAC04(t *testing.T, env harness.Env) {
 		if res.ExitCode == 0 {
 			t.Fatal("jwt generate without a terminal exited 0")
 		}
+		if !strings.Contains(res.Stderr, "not a terminal") {
+			t.Fatalf("jwt generate without a terminal: stderr %q; want the terminal cause", res.Stderr)
+		}
 		if ac04HasJWT(res.Stdout) || ac04HasJWT(res.Stderr) {
 			t.Fatal("jwt generate without a terminal printed a JWT")
 		}
@@ -69,6 +72,9 @@ func runAC04(t *testing.T, env harness.Env) {
 		}
 		if res.ExitCode == 0 {
 			t.Fatal("jwt generate nobody exited 0")
+		}
+		if !strings.Contains(res.Stdout+res.Stderr, "not in the agents list") {
+			t.Fatalf("jwt generate nobody: output %q; want the agents list cause", res.Stdout+res.Stderr)
 		}
 		if ac04HasJWT(res.Stdout) || ac04HasJWT(res.Stderr) {
 			t.Fatal("jwt generate nobody printed a JWT")
