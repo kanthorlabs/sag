@@ -19,8 +19,6 @@ const (
 	ac24Message  = "resource unavailable"
 )
 
-const ac24AuditRecordRequired = false
-
 func init() {
 	harness.Register(harness.AC{
 		ID:     "AC24",
@@ -115,7 +113,7 @@ func ac24AssertAuditRecord(ctx context.Context, t *testing.T, env harness.Env, r
 			}
 		}
 	}
-	if ac24AuditRecordRequired && !found {
+	if !found {
 		t.Fatalf("audit copy has no record for request_id %s", requestID)
 	}
 }
