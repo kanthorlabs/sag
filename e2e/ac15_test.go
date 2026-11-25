@@ -101,8 +101,9 @@ func init() {
 }
 
 type ac15ToolError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id"`
 }
 
 func ac15Query(ctx context.Context, t *testing.T, session *mcp.ClientSession, text string) ac15ToolError {
@@ -190,18 +191,21 @@ func runAC15(t *testing.T, env harness.Env) {
 	cases := ac15Cases()
 	ac15WaitServed(ctx, t, session, cases[0].text)
 
+	reasons := map[string]string{}
 	for _, c := range cases {
 		began := time.Now()
 		got := ac15Query(ctx, t, session, c.text)
 		elapsed := time.Since(began)
-		want := ac15ToolError{Code: ac15Rejected, Message: "statement rejected: " + c.reason}
-		if got != want {
-			t.Errorf("sql_query %q = %+v; want %+v", c.text, got, want)
+		if got.Code != ac15Rejected || got.Message != rejectionMessage(c.reason) {
+			t.Errorf("sql_query %q = %+v; want code %q and message %q", c.text, got, ac15Rejected, rejectionMessage(c.reason))
 		}
+		reasons[got.RequestID] = c.reason
 		if elapsed > ac15MaxSleep {
 			t.Errorf("sql_query %q took %s; want less than %s", c.text, elapsed, ac15MaxSleep)
 		}
 	}
+
+	assertAuditReasons(ctx, t, env, harness.ContainerSAG, reasons)
 
 	pg := env.Postgres(env.Major())
 	logs, err := pg.Logs(ctx, start.Add(-time.Second))

@@ -133,9 +133,10 @@ func assertProductRejects(t *testing.T, res core.Resource, text, reason string) 
 	t.Helper()
 	_, err := runQuery(t, res, text, testLimits)
 	var ce *core.Error
-	if !errors.As(err, &ce) || ce.Code != core.CodeQueryRejected || ce.Message != rejectionPrefix+reason {
-		t.Fatalf("Execute(%q) = %v; want query_rejected %q", text, err, rejectionPrefix+reason)
+	if !errors.As(err, &ce) || ce.Code != core.CodeQueryRejected || ce.Message != rejectionMessage(reason) {
+		t.Fatalf("Execute(%q) = %v; want query_rejected %q", text, err, rejectionMessage(reason))
 	}
+	assertRejectionReason(t, err, reason)
 }
 
 func advisoryLocks(t *testing.T, pg *testenv.Postgres, key int) string {

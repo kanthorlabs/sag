@@ -3,9 +3,11 @@ package audit
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -33,10 +35,16 @@ func (w *FileWriter) Append(rec Record) error {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	f, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(line)
+	size, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return errors.Join(err, f.Close())
+	}
+	if _, err = f.Write(line); err != nil {
+		err = errors.Join(err, f.Truncate(size))
+	}
 	return errors.Join(err, f.Close())
 }

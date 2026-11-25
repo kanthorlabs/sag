@@ -34,6 +34,13 @@ func (r *Rejection) Reason() string {
 	return r.Node + "." + r.Field
 }
 
+func (r *Rejection) Message() string {
+	if r.Rule != "" {
+		return rejectionPrefix + r.Rule
+	}
+	return rejectionPrefix + r.Node + "." + r.Field
+}
+
 func (r *Rejection) Error() string {
 	return rejectionPrefix + r.Reason()
 }

@@ -115,8 +115,8 @@ func TestNoDSNInError(t *testing.T) {
 	if ce.Code != core.CodeResourceUnavailable || ce.Trace != trace {
 		t.Fatalf("Error = %+v; want same code and trace", ce)
 	}
-	if ce.Message != "resource unavailable "+redacted {
-		t.Fatalf("Message = %q", ce.Message)
+	if ce.Message != outer.Message {
+		t.Fatalf("Message = %q; want the agent message unchanged", ce.Message)
 	}
 	if ce.Cause == nil {
 		t.Fatal("Cause = nil")

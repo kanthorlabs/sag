@@ -67,7 +67,7 @@ func (s Scrubber) Error(err error) error {
 	if !errors.As(err, &ce) {
 		return errors.New(s.String(err.Error()))
 	}
-	out := &core.Error{Code: ce.Code, Message: s.String(ce.Message), Trace: ce.Trace}
+	out := &core.Error{Code: ce.Code, Message: ce.Message, Trace: ce.Trace}
 	if ce.Cause != nil {
 		out.Cause = errors.New(s.String(chainText(ce.Cause)))
 	}

@@ -48,9 +48,10 @@ func init() {
 }
 
 type productOutput struct {
-	Code    string  `json:"code"`
-	Message string  `json:"message"`
-	Rows    [][]any `json:"rows"`
+	Code      string  `json:"code"`
+	Message   string  `json:"message"`
+	RequestID string  `json:"request_id"`
+	Rows      [][]any `json:"rows"`
 }
 
 func productCall(ctx context.Context, t *testing.T, env harness.Env, text string) (productOutput, bool) {
@@ -125,9 +126,11 @@ func runProductC1ServesReadsOnly(t *testing.T, env harness.Env) {
 		productSelectRow(ctx, t, env)
 	})
 	t.Run("INSERT rejected by C1", func(t *testing.T) {
-		if got := productQuery(ctx, t, env, productInsert); got.Code != "query_rejected" || got.Message != "statement rejected: statement:InsertStmt" {
-			t.Fatalf("sql_query %q = %+v; want query_rejected \"statement rejected: statement:InsertStmt\"", productInsert, got)
+		got := productQuery(ctx, t, env, productInsert)
+		if got.Code != "query_rejected" || got.Message != "statement rejected: statement" {
+			t.Fatalf("sql_query %q = %+v; want query_rejected \"statement rejected: statement\"", productInsert, got)
 		}
+		assertAuditReasons(ctx, t, env, harness.ContainerSAG, map[string]string{got.RequestID: "statement:InsertStmt"})
 	})
 	pg := env.Postgres(env.Major())
 	var logs string
@@ -169,9 +172,11 @@ func runProductSQLSizeLimit(t *testing.T, env harness.Env) {
 		t.Fatalf("sql_query at %d bytes = %+v; want query_rejected \"statement does not parse\"", len(atLimit), got)
 	}
 	deep := "SELECT ARRAY" + strings.Repeat("[", 4700) + "1" + strings.Repeat("]", 4700)
-	if got := productQuery(ctx, t, env, deep); got.Code != "query_rejected" || got.Message != "statement rejected: depth:500" {
-		t.Fatalf("sql_query of %d nested arrays = %+v; want query_rejected \"statement rejected: depth:500\"", 4700, got)
+	got := productQuery(ctx, t, env, deep)
+	if got.Code != "query_rejected" || got.Message != "statement rejected: depth" {
+		t.Fatalf("sql_query of %d nested arrays = %+v; want query_rejected \"statement rejected: depth\"", 4700, got)
 	}
+	assertAuditReasons(ctx, t, env, harness.ContainerSAG, map[string]string{got.RequestID: "depth:500"})
 	for _, text := range []string{atLimit + "1", chain(22000)} {
 		if got := productQuery(ctx, t, env, text); got.Code != "invalid_argument" || got.Message != "sql exceeds 16384 bytes" {
 			t.Fatalf("sql_query at %d bytes = %+v; want invalid_argument", len(text), got)
