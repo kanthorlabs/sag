@@ -246,7 +246,7 @@ func (s *Suite) prepareResources(ctx context.Context) error {
 				}
 				created[key] = true
 			}
-			dsn, err := s.resourceDSN(pg, db, r.WrongPassword)
+			dsn, err := s.resourceDSN(ctx, pg, db, r)
 			if err != nil {
 				return err
 			}
@@ -261,20 +261,38 @@ func (s *Suite) prepareResources(ctx context.Context) error {
 	return nil
 }
 
-func (s *Suite) resourceDSN(pg *testenv.Postgres, db string, wrongPassword bool) (string, error) {
+func (s *Suite) resourceDSN(ctx context.Context, pg *testenv.Postgres, db string, r ResourceSpec) (string, error) {
 	u, err := url.Parse(pg.NetworkDSN())
 	if err != nil {
 		return "", errors.New("harness: PostgreSQL network DSN does not parse")
 	}
 	u.Path = "/" + db
-	if wrongPassword {
-		wrong := make([]byte, 16)
-		if _, err := rand.Read(wrong); err != nil {
+	if r.Role != "" {
+		password, err := randomHex()
+		if err != nil {
 			return "", err
 		}
-		u.User = url.UserPassword(u.User.Username(), hex.EncodeToString(wrong))
+		if err := s.exec(ctx, pg, defaultDatabase, "CREATE ROLE "+pgx.Identifier{r.Role}.Sanitize()+" LOGIN PASSWORD '"+password+"'"); err != nil {
+			return "", fmt.Errorf("harness: resource %s: create role %s: %w", r.Name, r.Role, err)
+		}
+		u.User = url.UserPassword(r.Role, password)
+	}
+	if r.WrongPassword {
+		wrong, err := randomHex()
+		if err != nil {
+			return "", err
+		}
+		u.User = url.UserPassword(u.User.Username(), wrong)
 	}
 	return u.String(), nil
+}
+
+func randomHex() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func (s *Suite) runFixtures(ctx context.Context) error {

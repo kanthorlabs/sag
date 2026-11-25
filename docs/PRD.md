@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 9 |
+| Status | Revision 10 |
 | Date | 2026-11-25 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
@@ -427,7 +427,7 @@ SAG reads only these catalog objects and settings. The conformance suite runs ea
 | Limit | Default | Hard maximum | Enforcement |
 |---|---|---|---|
 | `max_rows` | 100 | 1000 | `RowCapPlan.Fetch` reads `max_rows + 1` rows. Result has `truncated: true` and `truncated_reason: max_rows`. |
-| `max_result_bytes` | 32 KiB | 2 MiB | Core stops at the cap after JSON encoding. `truncated_reason: max_result_bytes`. |
+| `max_result_bytes` | 32 KiB | 2 MiB | Core stops at the cap after JSON encoding. The cap covers the JSON object `{columns, rows, row_count, truncated, truncated_reason}`. `duration_ms` and `request_id` are outside the cap. `truncated_reason: max_result_bytes`. |
 | `max_cell_bytes` | 4 KiB | 8 KiB | Core cuts longer text and adds the suffix `…[truncated]`. |
 | `statement_timeout` | 15 s | 30 s | `SET LOCAL statement_timeout`, and a Go context deadline 2 s later. The server ends the statement, and the executor sends `ROLLBACK`. If the Go deadline ends first, pgx sends a cancel request. |
 | `lock_timeout` | 2 s | 2 s | `SET LOCAL lock_timeout`. |

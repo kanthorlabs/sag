@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/inventory"
@@ -113,6 +114,11 @@ func TestSharedAcrossResources(t *testing.T) {
 		),
 		MaxConcurrentPerAgent: 4,
 	})
+	release := sync.OnceFunc(func() {
+		close(a.proceed)
+		close(b.proceed)
+	})
+	t.Cleanup(release)
 	var wg sync.WaitGroup
 	errs := make(chan error, 4)
 	for _, name := range []string{"rate-a", "rate-a", "rate-b", "rate-b"} {
@@ -121,16 +127,33 @@ func TestSharedAcrossResources(t *testing.T) {
 			errs <- err
 		})
 	}
-	for range 2 {
-		<-a.entered
-		<-b.entered
+	timeout := time.After(5 * time.Second)
+	for held := 0; held < 4; {
+		select {
+		case <-a.entered:
+			held++
+		case <-b.entered:
+			held++
+		case err := <-errs:
+			t.Fatalf("held request returned before release: %v", err)
+		case <-timeout:
+			t.Fatalf("%d of 4 held requests entered Execute", held)
+		}
 	}
 	for _, name := range []string{"rate-a", "rate-b"} {
-		_, err := p.Execute(context.Background(), request("ac23", name))
-		assertCode(t, err, core.CodeRateLimited)
+		over := make(chan error, 1)
+		go func() {
+			_, err := p.Execute(context.Background(), request("ac23", name))
+			over <- err
+		}()
+		select {
+		case err := <-over:
+			assertCode(t, err, core.CodeRateLimited)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("request over the limit on %s did not return", name)
+		}
 	}
-	close(a.proceed)
-	close(b.proceed)
+	release()
 	wg.Wait()
 	close(errs)
 	for err := range errs {

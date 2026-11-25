@@ -79,27 +79,30 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	scrubber := scrub.New(slices.Collect(maps.Values(creds)))
 	log = slog.New(scrubHandler(log.Handler(), scrubber))
+	fatal := func(stage, err error) error {
+		return stageError(stage, scrubber.Error(err))
+	}
 	master, err := secret.DecodeMasterKey(creds[secret.MasterKeyName])
 	if err != nil {
-		return stageError(errMasterKey, err)
+		return fatal(errMasterKey, err)
 	}
 	jwtKey, err := keys.JWTKey(master, cfg.Auth.Version)
 	if err != nil {
-		return stageError(errJWTKey, err)
+		return fatal(errJWTKey, err)
 	}
 	cert, err := tls.X509KeyPair(creds[string(cfg.Server.TLSCert)].Reveal(), creds[string(cfg.Server.TLSKey)].Reveal())
 	if err != nil {
-		return stageError(errCertificate, err)
+		return fatal(errCertificate, err)
 	}
 
 	approvalKey, err := keys.ApprovalKey(master)
 	if err != nil {
-		return stageError(errApprovalKey, err)
+		return fatal(errApprovalKey, err)
 	}
 	approvals := approval.NewStore(filepath.Join(opts.StateDir, approval.DirName), approvalKey)
 	auditWriter, err := audit.NewFileWriter(filepath.Join(opts.StateDir, audit.DirName))
 	if err != nil {
-		return stageError(errAudit, err)
+		return fatal(errAudit, err)
 	}
 
 	inv := inventory.New()
@@ -112,7 +115,7 @@ func Run(ctx context.Context, opts Options) error {
 	opened, err := openResources(ctx, log, cfg, creds, inv, approvals, opts.WrapDialect, sched)
 	defer closeResources(log, opened)
 	if err != nil {
-		return stageError(errResource, err)
+		return fatal(errResource, err)
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer sched.Wait()
@@ -131,7 +134,7 @@ func Run(ctx context.Context, opts Options) error {
 		Version: opts.Version,
 	})
 	if err != nil {
-		return stageError(errMCP, err)
+		return fatal(errMCP, err)
 	}
 	srv, err := endpoint.New(endpoint.Options{
 		Listen:         cfg.Server.Listen,
@@ -144,11 +147,11 @@ func Run(ctx context.Context, opts Options) error {
 		Audit:          authAuditHook(auditWriter, log),
 	})
 	if err != nil {
-		return stageError(errEndpoint, err)
+		return fatal(errEndpoint, err)
 	}
 	log.Info("sag serving", "listen", cfg.Server.Listen)
 	if err := srv.Run(ctx); err != nil {
-		return stageError(errEndpoint, err)
+		return fatal(errEndpoint, err)
 	}
 	return nil
 }

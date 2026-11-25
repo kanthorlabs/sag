@@ -114,6 +114,27 @@ func TestRefusesSecretMode(t *testing.T) {
 	f.assertNoSecret(t, err)
 }
 
+func TestFatalErrorIsScrubbed(t *testing.T) {
+	f := newFixture(t, make([]byte, 32))
+	certText := "failed to find any PEM data"
+	f.secrets["sag-tls-cert"] = []byte(certText)
+	if err := os.Chmod(filepath.Join(f.opts.SecretsDir, "sag-tls-cert"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.opts.SecretsDir, "sag-tls-cert"), []byte(certText), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(f.opts.SecretsDir, "sag-tls-cert"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	err := Run(context.Background(), f.opts)
+	assertRefused(t, err, errCertificate)
+	f.assertNoSecret(t, err)
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("Run error = %v; want the scrubbed secret marker", err)
+	}
+}
+
 func TestConfigErrorHidesDSN(t *testing.T) {
 	for name, text := range map[string]string{
 		"dsn as kind":          strings.Replace(testConfig, "kind: postgres", "kind: "+testDSN, 1),

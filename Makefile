@@ -22,11 +22,18 @@ E2E_TEST := $(GO) test -tags e2e -json -count=1 -timeout 30m
 build:
 	CGO_ENABLED=1 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sag ./cmd/sag
 
+define build_image
+	old=$$(podman image inspect --format '{{.Id}}' $(1) 2>/dev/null); \
+	podman build --layers=false --build-arg VERSION=$(VERSION) -t $(1) -f $(2) . && \
+	new=$$(podman image inspect --format '{{.Id}}' $(1)) && \
+	if [ -n "$$old" ] && [ "$$old" != "$$new" ]; then podman rmi "$$old" >/dev/null 2>&1 || true; fi
+endef
+
 image:
-	podman build --build-arg VERSION=$(VERSION) -t $(IMAGE) -f deploy/Containerfile .
+	$(call build_image,$(IMAGE),deploy/Containerfile)
 
 image-conformance:
-	podman build --build-arg VERSION=$(VERSION) -t $(CONFORMANCE_IMAGE) -f e2e/conformance/Containerfile .
+	$(call build_image,$(CONFORMANCE_IMAGE),e2e/conformance/Containerfile)
 
 test:
 	$(GO) vet ./...

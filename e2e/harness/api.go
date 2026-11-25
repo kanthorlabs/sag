@@ -49,6 +49,7 @@ type ResourceSpec struct {
 	Containers    []string
 	PGMajor       int
 	Database      string
+	Role          string
 	WrongPassword bool
 	TLS           core.TLSMode
 	NoTLSCA       bool
