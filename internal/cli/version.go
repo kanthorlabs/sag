@@ -1,7 +1,14 @@
 package cli
 
-import "errors"
+import "fmt"
+
+const versionUsage = "usage: sag version"
 
 func version(args []string, std IO) int {
-	return fail(std, errors.ErrUnsupported)
+	if len(args) != 0 {
+		fmt.Fprintln(std.Err, versionUsage)
+		return ExitUsage
+	}
+	fmt.Fprintf(std.Out, "sag %s\n", Version)
+	return ExitOK
 }
