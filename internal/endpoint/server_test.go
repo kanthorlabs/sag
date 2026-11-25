@@ -163,6 +163,15 @@ func TestServerTimeouts(t *testing.T) {
 	if srv.ReadHeaderTimeout != 5*time.Second {
 		t.Errorf("ReadHeaderTimeout: got %v, want 5s", srv.ReadHeaderTimeout)
 	}
+	if srv.ReadTimeout != 10*time.Second {
+		t.Errorf("ReadTimeout: got %v, want 10s", srv.ReadTimeout)
+	}
+	if srv.IdleTimeout != 60*time.Second {
+		t.Errorf("IdleTimeout: got %v, want 60s", srv.IdleTimeout)
+	}
+	if srv.MaxHeaderBytes != 16<<10 {
+		t.Errorf("MaxHeaderBytes: got %d, want 16 KiB", srv.MaxHeaderBytes)
+	}
 	if srv.TLSConfig.MinVersion != tls.VersionTLS13 {
 		t.Errorf("MinVersion: got %x, want TLS 1.3", srv.TLSConfig.MinVersion)
 	}

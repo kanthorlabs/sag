@@ -12,7 +12,11 @@ import (
 
 const (
 	maxBodyBytes      = 64 << 10
+	maxHeaderBytes    = 16 << 10
 	readHeaderTimeout = 5 * time.Second
+	readTimeout       = 10 * time.Second
+	idleTimeout       = 60 * time.Second
+	healthzPath       = "/healthz"
 	shutdownTimeout   = 10 * time.Second
 )
 
@@ -58,11 +62,15 @@ func New(opts Options) (*Server, error) {
 func (s *Server) Handler() http.Handler {
 	protected := http.NewServeMux()
 	protected.Handle("/mcp", bridgeTokenInfo(s.opts.MCP))
+	authenticated := s.authenticate(protected)
 
-	root := http.NewServeMux()
-	root.HandleFunc("GET /healthz", healthz)
-	root.Handle("/", s.authenticate(protected))
-	return limitBody(root)
+	return limitBody(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == healthzPath && r.URL.RawPath == "" {
+			healthz(w, r)
+			return
+		}
+		authenticated.ServeHTTP(w, r)
+	}))
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -100,6 +108,9 @@ func (s *Server) httpServer() *http.Server {
 			Certificates: []tls.Certificate{s.opts.Certificate},
 		},
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
 		ErrorLog:          slog.NewLogLogger(s.opts.Logger.Handler(), slog.LevelWarn),
 	}
 }

@@ -78,6 +78,7 @@ func Test401HasWWWAuthenticate(t *testing.T) {
 	rec := &recorder{}
 	ts := startServer(t, rec)
 	client := ts.client(&tls.Config{})
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 	otherKey := bytes.Repeat([]byte{9}, 32)
 	foreign, err := token.Issue(otherKey, "ac03", "Test Agent", time.Now(), time.Hour)
@@ -106,6 +107,12 @@ func Test401HasWWWAuthenticate(t *testing.T) {
 		{"not yet issued", "/mcp", []string{"Bearer " + future}, future},
 		{"garbage", "/mcp", []string{"Bearer not.a.jwt"}, "not.a.jwt"},
 		{"other path", "/other", nil, ""},
+		{"double slash mcp", "//mcp", nil, ""},
+		{"dot segment mcp", "/a/../mcp", nil, ""},
+		{"double slash healthz", "//healthz", nil, ""},
+		{"healthz trailing slash", "/healthz/", nil, ""},
+		{"dot segment healthz", "/a/../healthz", nil, ""},
+		{"encoded healthz", "/%68ealthz", nil, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -135,6 +142,16 @@ func Test401HasWWWAuthenticate(t *testing.T) {
 				}
 			}
 		})
+	}
+	for _, path := range []string{"//mcp", "/a/../mcp", "/healthz"} {
+		resp, err := client.Post(ts.URL+path, "application/json", strings.NewReader("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") != "Bearer" {
+			t.Fatalf("POST %s: got %d %q, want 401 Bearer", path, resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
+		}
 	}
 	if calls, _, _ := rec.snapshot(); calls != 0 {
 		t.Fatalf("MCP handler reached %d times", calls)
