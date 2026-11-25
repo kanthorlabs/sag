@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/secret"
+	"github.com/kanthorlabs/sag/internal/sql"
 )
 
 const (
@@ -132,5 +134,52 @@ func TestConfigErrorHidesDSN(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type openOnlyAdapter struct{ fake *fakeAdapter }
+
+func (a openOnlyAdapter) Kind() string { return "daemon-open-only" }
+
+func (a openOnlyAdapter) Capabilities() []core.Capability { return a.fake.Capabilities() }
+
+func (a openOnlyAdapter) Open(ctx context.Context, cfg core.ResourceConfig, cred secret.Credential) (core.Resource, error) {
+	return a.fake.Open(ctx, cfg, cred)
+}
+
+func TestWrapDialectNilInProduct(t *testing.T) {
+	ctx := context.Background()
+	rc := core.ResourceConfig{Name: "main", Kind: fakeKind}
+	cred := secret.NewCredential("sag-main", []byte(testDSN))
+
+	fake := &fakeAdapter{}
+	res, err := openResource(ctx, fake, rc, cred, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.opened != 1 || fake.openedSQL != 0 || res != fake.resource {
+		t.Fatalf("nil WrapDialect: Open %d, OpenSQL %d, resource %#v; want the adapter Open path", fake.opened, fake.openedSQL, res)
+	}
+
+	wrapCalls := 0
+	wrap := func(d sql.Dialect) sql.Dialect {
+		wrapCalls++
+		return d
+	}
+	res, err = openResource(ctx, fake, rc, cred, wrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.opened != 1 || fake.openedSQL != 1 || wrapCalls != 1 || res == nil || res == core.Resource(fake.resource) {
+		t.Fatalf("WrapDialect set: Open %d, OpenSQL %d, wrap %d, resource %#v; want the wrapped executor", fake.opened, fake.openedSQL, wrapCalls, res)
+	}
+
+	plain := openOnlyAdapter{fake: &fakeAdapter{}}
+	res, err = openResource(ctx, plain, rc, cred, wrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.fake.opened != 1 || wrapCalls != 1 || res != plain.fake.resource {
+		t.Fatal("WrapDialect set on an adapter without sql.Opener: want the adapter Open path")
 	}
 }

@@ -6,15 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"time"
 
+	"github.com/kanthorlabs/sag/internal/approval"
 	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/endpoint"
 	"github.com/kanthorlabs/sag/internal/inventory"
 	"github.com/kanthorlabs/sag/internal/keys"
 	"github.com/kanthorlabs/sag/internal/mcpserver"
 	"github.com/kanthorlabs/sag/internal/pipeline"
+	"github.com/kanthorlabs/sag/internal/preflight"
 	"github.com/kanthorlabs/sag/internal/secret"
 )
 
@@ -25,6 +28,7 @@ var (
 	errSecrets     = errors.New("load secrets")
 	errMasterKey   = errors.New("master key")
 	errJWTKey      = errors.New("derive JWT key")
+	errApprovalKey = errors.New("derive approval key")
 	errCertificate = errors.New("endpoint certificate")
 	errResource    = errors.New("resource")
 	errMCP         = errors.New("mcp server")
@@ -77,12 +81,28 @@ func Run(ctx context.Context, opts Options) error {
 		return stageError(errCertificate, err)
 	}
 
+	approvalKey, err := keys.ApprovalKey(master)
+	if err != nil {
+		return stageError(errApprovalKey, err)
+	}
+	approvals := approval.NewStore(filepath.Join(opts.StateDir, approval.DirName), approvalKey)
+
 	inv := inventory.New()
-	opened, err := openResources(ctx, log, cfg, creds, inv)
+	sched := preflight.New(preflight.Options{
+		Clock:           preflight.SystemClock(),
+		Inventory:       inv,
+		Log:             log,
+		RecheckInterval: cfg.Preflight.RecheckInterval,
+	})
+	opened, err := openResources(ctx, log, cfg, creds, inv, approvals, opts.WrapDialect, sched)
 	defer closeResources(log, opened)
 	if err != nil {
 		return stageError(errResource, err)
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer sched.Wait()
+	defer cancel()
+	sched.Start(ctx)
 
 	mcpSrv, err := mcpserver.New(mcpserver.Options{
 		Inventory: inv,
