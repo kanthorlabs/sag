@@ -230,14 +230,13 @@ func TestRecheckInterval(t *testing.T) {
 func TestLimitKeysUnderLimits(t *testing.T) {
 	keys := []string{"max_rows: 5", "max_result_bytes: 5", "max_cell_bytes: 5", "statement_timeout: 5s", "lock_timeout: 1s", "idle_in_transaction_session_timeout: 5s", "connect_timeout: 1s", "pool_size: 1"}
 	for _, line := range keys {
-		name := strings.SplitN(line, ":", 2)[0]
-		mustReject(t, withResourceKeys(line), name)
-		mustReject(t, withDefaults(line), name)
-		mustReject(t, minimal+line+"\n", name)
+		mustReject(t, withResourceKeys(line), "line 10: unknown key")
+		mustReject(t, withDefaults(line), "line 11: unknown key")
+		mustReject(t, minimal+line+"\n", "line 10: unknown key")
 		mustParse(t, withResourceKeys("limits:\n  "+line))
 		mustParse(t, withDefaults("limits:\n  "+line))
 	}
-	mustReject(t, minimal+"max_concurrent_per_agent: 5\n", "max_concurrent_per_agent")
+	mustReject(t, minimal+"max_concurrent_per_agent: 5\n", "line 10: unknown key")
 }
 
 func TestMaxConcurrentOnlyInDefaults(t *testing.T) {
@@ -246,7 +245,7 @@ func TestMaxConcurrentOnlyInDefaults(t *testing.T) {
 		t.Fatalf("max_concurrent_per_agent = %d; want 4", got)
 	}
 	mustReject(t, withResourceKeys("limits:\n  max_concurrent_per_agent: 4"), "resources.main.limits.max_concurrent_per_agent")
-	mustReject(t, withResourceKeys("max_concurrent_per_agent: 4"), "max_concurrent_per_agent")
+	mustReject(t, withResourceKeys("max_concurrent_per_agent: 4"), "line 10: unknown key")
 }
 
 func TestRejectsInlineSecrets(t *testing.T) {
@@ -279,6 +278,34 @@ func TestTypeErrorHidesValue(t *testing.T) {
 	}
 }
 
+func TestOperatorTextHiddenInErrors(t *testing.T) {
+	dsn := "postgres://u:" + "s3cr3t-pw" + "@db.example:5432/app"
+	cases := map[string]struct {
+		text string
+		want string
+	}{
+		"dsn as kind":          {strings.Replace(minimal, "kind: postgres", "kind: "+dsn, 1), "resources.main.kind: must match"},
+		"dsn as unknown key":   {withResourceKeys(`"` + dsn + `": 1`), "line 10: unknown key"},
+		"dsn as duplicate key": {minimal + `"` + dsn + "\": 1\n\"" + dsn + "\": 2\n", "line 11: duplicate key"},
+		"dsn as resource name": {strings.Replace(minimal, "  main:", `  "`+dsn+`":`, 1), "resources.<invalid name>: name must match"},
+		"syntax error":         {minimal + dsn + ": [\n", "invalid YAML syntax"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(c.text))
+			if err == nil {
+				t.Fatal("Parse accepted the file")
+			}
+			if strings.Contains(err.Error(), "s3cr3t") || strings.Contains(err.Error(), "db.example") {
+				t.Fatalf("error holds operator text: %v", err)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("error = %q; want it to contain %q", err, c.want)
+			}
+		})
+	}
+}
+
 func TestSchemaRejects(t *testing.T) {
 	cases := map[string]struct {
 		text string
@@ -287,19 +314,19 @@ func TestSchemaRejects(t *testing.T) {
 		"empty":               {"", "empty"},
 		"version absent":      {strings.Replace(minimal, "version: 1\n", "", 1), "version"},
 		"version 2":           {strings.Replace(minimal, "version: 1", "version: 2", 1), "version"},
-		"unknown top key":     {minimal + "debug: true\n", "debug"},
-		"unknown server key":  {strings.Replace(minimal, "server:\n", "server:\n  port: 1\n", 1), "port"},
-		"unknown resource":    {withResourceKeys("read_only: false"), "read_only"},
-		"unknown limit":       {withDefaults("limits:\n  max_rows_x: 1\n"), "max_rows_x"},
-		"unknown redact":      {withDefaults("redact:\n  rows: [a]\n"), "rows"},
+		"unknown top key":     {minimal + "debug: true\n", "line 10: unknown key"},
+		"unknown server key":  {strings.Replace(minimal, "server:\n", "server:\n  port: 1\n", 1), "line 3: unknown key"},
+		"unknown resource":    {withResourceKeys("read_only: false"), "line 10: unknown key"},
+		"unknown limit":       {withDefaults("limits:\n  max_rows_x: 1\n"), "line 12: unknown key"},
+		"unknown redact":      {withDefaults("redact:\n  rows: [a]\n"), "line 12: unknown key"},
 		"server absent":       {strings.Replace(minimal, "server:\n  tls_cert: secret:sag-tls-cert\n  tls_key: secret:sag-tls-key\n", "", 1), "server.tls_cert"},
 		"tls_key absent":      {strings.Replace(minimal, "  tls_key: secret:sag-tls-key\n", "", 1), "server.tls_key"},
 		"bad listen":          {strings.Replace(minimal, "server:\n", "server:\n  listen: nope\n", 1), "server.listen"},
 		"auth version 0":      {minimal + "auth:\n  version: 0\n", "auth.version"},
 		"lifetime 0":          {minimal + "auth:\n  token_lifetime: 0s\n", "auth.token_lifetime"},
-		"lifetime integer":    {minimal + "auth:\n  token_lifetime: 3600\n", "time.Duration"},
+		"lifetime integer":    {minimal + "auth:\n  token_lifetime: 3600\n", "line 11: wrong type"},
 		"no resources":        {strings.SplitN(minimal, "resources:", 2)[0], "resources"},
-		"bad resource name":   {strings.Replace(minimal, "  main:", "  Main:", 1), "Main"},
+		"bad resource name":   {strings.Replace(minimal, "  main:", "  Main:", 1), "resources.<invalid name>: name must match"},
 		"long resource name":  {strings.Replace(minimal, "  main:", "  a"+strings.Repeat("b", 63)+":", 1), "resources"},
 		"kind absent":         {strings.Replace(minimal, "    kind: postgres\n", "", 1), "resources.main.kind"},
 		"connection absent":   {strings.Replace(minimal, "    connection: secret:sag-main\n", "", 1), "resources.main.connection"},
@@ -308,12 +335,12 @@ func TestSchemaRejects(t *testing.T) {
 		"bad tls":             {withResourceKeys("tls: require"), "resources.main.tls"},
 		"long description":    {withResourceKeys("description: " + strings.Repeat("x", 501)), "resources.main.description"},
 		"bad glob":            {withResourceKeys("redact:\n  columns: [\"[\"]"), "redact.columns"},
-		"duplicate key":       {minimal + "version: 1\n", "version"},
+		"duplicate key":       {minimal + "version: 1\n", "line 10: duplicate key"},
 		"second document":     {minimal + "---\nversion: 1\n", "document"},
-		"string limit":        {withDefaults("limits:\n  max_rows: lots\n"), "cannot unmarshal"},
-		"integer duration":    {withDefaults("limits:\n  statement_timeout: 15\n"), "time.Duration"},
+		"string limit":        {withDefaults("limits:\n  max_rows: lots\n"), "line 12: wrong type"},
+		"integer duration":    {withDefaults("limits:\n  statement_timeout: 15\n"), "line 12: wrong type"},
 		"sub-ms timeout":      {withDefaults("limits:\n  lock_timeout: 500us\n"), "lock_timeout"},
-		"resources not a map": {strings.SplitN(minimal, "resources:", 2)[0] + "resources: [a]\n", "rawResource"},
+		"resources not a map": {strings.SplitN(minimal, "resources:", 2)[0] + "resources: [a]\n", "line 5: wrong type"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

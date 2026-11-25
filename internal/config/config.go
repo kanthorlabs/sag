@@ -96,7 +96,7 @@ var (
 	defaultRedactColumns = []string{"*password*", "*passwd*", "*secret*", "*token*", "*api_key*", "*apikey*", "*private_key*"}
 	namePattern          = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	secretNamePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$`)
-	yamlValuePattern     = regexp.MustCompile("`[^`]*`")
+	yamlLinePattern      = regexp.MustCompile(`^(?:yaml: )?line (\d+): `)
 	tlsModes             = []core.TLSMode{core.TLSVerifyFull, core.TLSInsecureSkipVerify, core.TLSDisable}
 )
 
@@ -142,13 +142,45 @@ func decode(data []byte) (rawConfig, error) {
 		if errors.Is(err, io.EOF) {
 			return raw, errors.New("config: empty file")
 		}
-		return raw, fmt.Errorf("config: %s", yamlValuePattern.ReplaceAllString(err.Error(), "value"))
+		return raw, decodeError(err)
 	}
 	var extra yaml.Node
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return raw, errors.New("config: the file must hold exactly one YAML document")
 	}
 	return raw, nil
+}
+
+func decodeError(err error) error {
+	var typeErr *yaml.TypeError
+	if !errors.As(err, &typeErr) {
+		return errors.New("config: " + yamlProblem(err.Error(), "invalid YAML syntax"))
+	}
+	var p problems
+	for _, msg := range typeErr.Errors {
+		p = append(p, yamlProblem(msg, yamlClass(msg)))
+	}
+	return p.err()
+}
+
+func yamlClass(msg string) string {
+	switch {
+	case strings.Contains(msg, " not found in type "):
+		return "unknown key"
+	case strings.Contains(msg, " already defined at line "):
+		return "duplicate key"
+	case strings.Contains(msg, " cannot unmarshal "):
+		return "wrong type"
+	default:
+		return "invalid value"
+	}
+}
+
+func yamlProblem(msg, class string) string {
+	if m := yamlLinePattern.FindStringSubmatch(msg); m != nil {
+		return "line " + m[1] + ": " + class
+	}
+	return class
 }
 
 func build(raw rawConfig, p *problems) *Config {
@@ -229,6 +261,7 @@ func buildPreflight(raw rawPreflight, p *problems) Preflight {
 func buildResource(name string, raw rawResource, defaults rawLimits, redact []string, p *problems) Resource {
 	path := "resources." + name
 	if !namePattern.MatchString(name) {
+		path = "resources.<invalid name>"
 		p.add(path, "name must match "+namePattern.String())
 	}
 	r := Resource{
@@ -244,6 +277,8 @@ func buildResource(name string, raw rawResource, defaults rawLimits, redact []st
 	}
 	if r.Kind == "" {
 		p.add(path+".kind", "is required")
+	} else if !namePattern.MatchString(r.Kind) {
+		p.add(path+".kind", "must match "+namePattern.String())
 	}
 	if utf8.RuneCountInString(r.Description) > maxDescriptionRunes {
 		p.add(path+".description", fmt.Sprintf("must be at most %d characters", maxDescriptionRunes))

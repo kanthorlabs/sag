@@ -90,9 +90,6 @@ func assertRefused(t *testing.T, err, stage error) {
 	if err == nil {
 		t.Fatal("Run returned nil; want a refusal")
 	}
-	if errors.Is(err, errors.ErrUnsupported) {
-		t.Skipf("waits on T1.1 and T1.2: a stub refused before the %v check: %v", stage, err)
-	}
 	if !errors.Is(err, stage) {
 		t.Fatalf("Run error = %v; want stage %v", err, stage)
 	}
@@ -113,4 +110,27 @@ func TestRefusesSecretMode(t *testing.T) {
 	err := Run(context.Background(), f.opts)
 	assertRefused(t, err, errSecrets)
 	f.assertNoSecret(t, err)
+}
+
+func TestConfigErrorHidesDSN(t *testing.T) {
+	for name, text := range map[string]string{
+		"dsn as kind":          strings.Replace(testConfig, "kind: postgres", "kind: "+testDSN, 1),
+		"dsn as unknown key":   testConfig + "    \"" + testDSN + "\": 1\n",
+		"dsn as resource name": strings.Replace(testConfig, "  main:", "  \""+testDSN+"\":", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, make([]byte, 32))
+			if err := os.WriteFile(f.opts.ConfigPath, []byte(text), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := Run(context.Background(), f.opts)
+			assertRefused(t, err, errConfig)
+			f.assertNoSecret(t, err)
+			for _, out := range []string{err.Error(), f.log.String()} {
+				if strings.Contains(out, "db.example.net") {
+					t.Fatalf("output holds the DSN host: %s", out)
+				}
+			}
+		})
+	}
 }
