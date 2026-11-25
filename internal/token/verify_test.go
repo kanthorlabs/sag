@@ -5,10 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/kanthorlabs/sag/internal/keys"
 )
 
 var (
@@ -73,6 +76,12 @@ func unsignedNone(t *testing.T, c jwt.MapClaims) string {
 	return enc.EncodeToString(header) + "." + enc.EncodeToString(payload) + "."
 }
 
+func nonCanonicalLastChar(raw string) string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := strings.IndexByte(alphabet, raw[len(raw)-1])
+	return raw[:len(raw)-1] + string(alphabet[last^1])
+}
+
 func assertCause(t *testing.T, raw string, key []byte, want Cause) {
 	t.Helper()
 	claims, err := Verify(key, raw, testNow)
@@ -89,44 +98,61 @@ func assertCause(t *testing.T, raw string, key []byte, want Cause) {
 }
 
 func TestAC03_Rejects(t *testing.T) {
+	master := bytes.Repeat([]byte{0x33}, 32)
+	keyV1, err := keys.JWTKey(master, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyV2, err := keys.JWTKey(master, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name string
 		raw  func(t *testing.T) string
+		key  []byte
 		want Cause
 	}{
 		{"wrong signature", func(t *testing.T) string {
 			return sign(t, jwt.SigningMethodHS256, otherKey, validClaims())
-		}, CauseUnauthenticated},
+		}, nil, CauseUnauthenticated},
 		{"alg none", func(t *testing.T) string {
 			return unsignedNone(t, validClaims())
-		}, CauseUnauthenticated},
+		}, nil, CauseUnauthenticated},
 		{"alg HS512", func(t *testing.T) string {
 			return sign(t, jwt.SigningMethodHS512, testKey, validClaims())
-		}, CauseUnauthenticated},
+		}, nil, CauseUnauthenticated},
 		{"unknown claim", func(t *testing.T) string {
 			return signHS256(t, with(validClaims(), "role", "admin"))
-		}, CauseUnknownClaim},
+		}, nil, CauseUnknownClaim},
 		{"missing jti", func(t *testing.T) string {
 			return signHS256(t, without(validClaims(), "jti"))
-		}, CauseMissingClaim},
+		}, nil, CauseMissingClaim},
 		{"kind other than agent", func(t *testing.T) string {
 			return signHS256(t, with(validClaims(), "kind", "human"))
-		}, CauseInvalidType},
+		}, nil, CauseInvalidType},
 		{"expired", func(t *testing.T) string {
 			c := with(validClaims(), "iat", testNow.Unix()-2*hourInSec)
 			return signHS256(t, with(c, "exp", testNow.Unix()-hourInSec))
-		}, CauseExpired},
+		}, nil, CauseExpired},
 		{"iat in the future", func(t *testing.T) string {
 			c := with(validClaims(), "iat", testNow.Unix()+hourInSec)
 			return signHS256(t, with(c, "exp", testNow.Unix()+2*hourInSec))
-		}, CauseNotYetIssued},
+		}, nil, CauseNotYetIssued},
 		{"auth.version change", func(t *testing.T) string {
-			return sign(t, jwt.SigningMethodHS256, otherKey, validClaims())
-		}, CauseUnauthenticated},
+			return sign(t, jwt.SigningMethodHS256, keyV1, validClaims())
+		}, keyV2, CauseUnauthenticated},
+		{"non-canonical signature base64", func(t *testing.T) string {
+			return nonCanonicalLastChar(signHS256(t, validClaims()))
+		}, nil, CauseUnauthenticated},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assertCause(t, tc.raw(t), testKey, tc.want)
+			key := tc.key
+			if key == nil {
+				key = testKey
+			}
+			assertCause(t, tc.raw(t), key, tc.want)
 		})
 	}
 }

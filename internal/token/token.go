@@ -115,6 +115,7 @@ func Verify(key []byte, raw string, now time.Time) (Claims, error) {
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 		jwt.WithoutClaimsValidation(),
 		jwt.WithJSONNumber(),
+		jwt.WithStrictDecoding(),
 	)
 	rawClaims := jwt.MapClaims{}
 	if _, err := parser.ParseWithClaims(raw, rawClaims, func(*jwt.Token) (any, error) { return key, nil }); err != nil {
