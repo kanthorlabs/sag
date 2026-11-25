@@ -24,7 +24,7 @@ const (
 	ac23Waiters     = "SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'"
 	ac23ServeWindow = 70 * time.Second
 	ac23WaitWindow  = 1500 * time.Millisecond
-	ac23Rounds      = 3
+	ac23Rounds      = 5
 )
 
 func init() {
