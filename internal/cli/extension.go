@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -96,7 +95,10 @@ func extensionRevoke(args []string, std IO) int {
 		fmt.Fprintln(std.Err, extensionRevokeUsage)
 		return ExitUsage
 	}
-	store := approval.NewStore(filepath.Join(paths.State, approval.DirName), nil)
+	store, err := loadApprovals()
+	if err != nil {
+		return fail(std, err)
+	}
 	if err := store.Revoke(args[0]); err != nil {
 		return fail(std, err)
 	}

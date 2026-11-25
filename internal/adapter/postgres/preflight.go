@@ -43,6 +43,7 @@ const (
 	detailApproved          = "approved: %s"
 	detailNotApproved       = "not approved: %s"
 	detailApprovalInvalid   = "approval record is not valid for the current objects: %s"
+	detailApprovalExpired   = "approval record expired: %s"
 	detailNoOperators       = "none"
 	approvalHint            = "resource %s has risky objects %s; to approve, run on the host: podman exec -it sag sag extension approve %s"
 )
@@ -175,7 +176,10 @@ func (d *dialect) checkRisky(ctx context.Context, r sql.CatalogReader) (core.Pre
 		return refused, hint, nil
 	}
 	if err := d.cfg.Approvals.Verify(d.cfg.Name, fingerprint); err != nil {
-		if !errors.Is(err, approval.ErrNotApproved) {
+		switch {
+		case errors.Is(err, approval.ErrExpired):
+			refused.Detail = fmt.Sprintf(detailApprovalExpired, list)
+		case !errors.Is(err, approval.ErrNotApproved):
 			refused.Detail = fmt.Sprintf(detailApprovalInvalid, list)
 		}
 		return refused, hint, nil

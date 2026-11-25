@@ -226,7 +226,45 @@ func revokePaths(t *testing.T) string {
 	saved := paths
 	t.Cleanup(func() { paths = saved })
 	paths.State = t.TempDir()
-	return filepath.Join(paths.State, approval.DirName)
+	dir := filepath.Join(paths.State, approval.DirName)
+	savedLoad := loadApprovals
+	t.Cleanup(func() { loadApprovals = savedLoad })
+	loadApprovals = func() (*approval.Store, error) {
+		return approval.NewStore(dir, approvalTestKey), nil
+	}
+	return dir
+}
+
+func TestRevokeRefusesReplayedRecord(t *testing.T) {
+	dir := revokePaths(t)
+	store := approval.NewStore(dir, approvalTestKey)
+	fp := strings.Repeat("a", 64)
+	if _, err := store.Save("ext", fp, approval.Objects{Languages: []string{"plperlu"}}, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	saved, err := os.ReadFile(filepath.Join(dir, "ext.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	std, _, errOut := approveIO("", false, false)
+	if code := Run([]string{"extension", "revoke", "ext"}, std); code != ExitOK {
+		t.Fatalf("exit = %d; want %d; stderr %q", code, ExitOK, errOut.String())
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ext.json"), saved, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Verify("ext", fp); !errors.Is(err, approval.ErrRevoked) {
+		t.Fatalf("Verify of a replayed record after revoke = %v; want ErrRevoked", err)
+	}
+}
+
+func TestRevokeLoadError(t *testing.T) {
+	revokePaths(t)
+	loadApprovals = func() (*approval.Store, error) { return nil, errors.New("master key is missing") }
+	std, _, errOut := approveIO("", false, false)
+	if code := Run([]string{"extension", "revoke", "ext"}, std); code != ExitFailure || !strings.Contains(errOut.String(), "master key is missing") {
+		t.Fatalf("exit = %d, stderr %q; want a failure with the load error", code, errOut.String())
+	}
 }
 
 func TestApproveEscapesCatalogText(t *testing.T) {

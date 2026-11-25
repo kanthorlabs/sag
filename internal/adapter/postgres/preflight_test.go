@@ -254,6 +254,18 @@ func TestPreflightRiskyVerifyErrorsRefuse(t *testing.T) {
 	}
 }
 
+func TestPreflightRiskyExpiredDetail(t *testing.T) {
+	report := runPreflight(t, testDialect(core.TLSVerifyFull, &approvalsFake{err: approval.ErrExpired}), riskyCatalog())
+	c := reportCheck(t, report, checkRiskyObjects)
+	if report.Passed || c.Passed || c.Detail != "approval record expired: dblink, file_fdw, plperlu" {
+		t.Fatalf("check = %+v; want refused with the expiry detail", c)
+	}
+	report = runPreflight(t, testDialect(core.TLSVerifyFull, &approvalsFake{err: approval.ErrRevoked}), riskyCatalog())
+	if c := reportCheck(t, report, checkRiskyObjects); report.Passed || c.Detail != "approval record is not valid for the current objects: dblink, file_fdw, plperlu" {
+		t.Fatalf("check = %+v; want refused with the invalid detail after a revoke", c)
+	}
+}
+
 func TestPreflightRiskyApprovedPasses(t *testing.T) {
 	a := &approvalsFake{}
 	report := runPreflight(t, testDialect(core.TLSVerifyFull, a), riskyCatalog())

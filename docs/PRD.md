@@ -346,7 +346,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO sag_ro;
 
 ### 9.1 PostgreSQL preflight
 
-SAG runs preflight at `sag resource test <name>` and at daemon start for each resource. A resource that fails preflight is not served. The daemon starts and serves the other resources. The daemon runs preflight again every 60 s for each failed resource. The daemon runs preflight again for each served resource at each `preflight.recheck_interval` (default 10 minutes). A failed re-check marks the resource unavailable until a check passes.
+SAG runs preflight at `sag resource test <name>` and at daemon start for each resource. A resource that fails preflight is not served. The daemon starts and serves the other resources. The daemon runs preflight again every 60 s for each failed resource. The daemon also tries again every 60 s to open a resource whose open failed. After a successful open, the resource gets its first preflight. The daemon runs preflight again for each served resource at each `preflight.recheck_interval` (default 10 minutes). A failed re-check marks the resource unavailable until a check passes.
 
 | Check | Pass condition | On failure |
 |---|---|---|
@@ -383,7 +383,10 @@ Rules:
 
 - Preflight accepts an approval only with a valid `mac` and a fingerprint equal to the current one.
 - A new risky object, a version change, or a change of the target fields makes the approval invalid. Preflight then refuses the resource.
-- `sag extension revoke <resource>` deletes the approval record. The daemon reads the record only at a preflight run. A served resource stays served until the next re-check or a daemon restart. The command prints this fact.
+- `sag extension revoke <resource>` writes a revoke tombstone `/var/lib/sag/approvals/<resource>.revoked.json`, then deletes the approval record. The tombstone holds the resource name and the revoke time. Its `mac` is HMAC-SHA-256 with the approval key, so the command needs the master key. The daemon reads the record only at a preflight run. A served resource stays served until the next re-check or a daemon restart. The command prints this fact.
+- Preflight refuses a record with an `approved_at` that is not after the tombstone time. A new approval after the revoke is valid.
+- An approval record is valid for one year after `approved_at`. Preflight refuses an expired record with the check detail `approval record expired: <list>`.
+- The approvals directory must be a directory, not a symbolic link, with mode 0700 and the process user as owner. Otherwise preflight refuses the risky objects.
 - No HTTP path and no MCP tool reads or writes approvals.
 
 ### 9.3 Catalog objects that SAG reads

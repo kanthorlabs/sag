@@ -90,7 +90,7 @@ func TestMACValid(t *testing.T) {
 }
 
 func TestMACSaveReturnsRecord(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), DirName)
 	s := NewStore(dir, testKey)
 	fp, _ := Fingerprint(testTarget(), testObjects())
 	rec, err := s.Save("ext", fp, testObjects(), testNow)
@@ -332,9 +332,102 @@ func TestFileModeRevokeRemoves(t *testing.T) {
 	}
 }
 
-func TestFileModeRevokeWithoutKey(t *testing.T) {
-	_, dir, _ := savedStore(t)
-	if err := NewStore(dir, nil).Revoke("ext"); err != nil {
-		t.Fatalf("Revoke without a key: %v", err)
+func TestRevokeNeedsKey(t *testing.T) {
+	_, dir, fp := savedStore(t)
+	if err := NewStore(dir, nil).Revoke("ext"); !errors.Is(err, errKeySize) {
+		t.Fatalf("Revoke without a key = %v; want errKeySize", err)
+	}
+	if err := NewStore(dir, testKey).Verify("ext", fp); err != nil {
+		t.Fatalf("Verify after a refused Revoke: %v", err)
+	}
+}
+
+func TestStoreDirRefusesWideMode(t *testing.T) {
+	s, dir, fp := savedStore(t)
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify("ext", fp); !errors.Is(err, errStoreDir) {
+		t.Fatalf("Verify in a 0755 dir = %v; want errStoreDir", err)
+	}
+	if _, err := s.Save("ext", fp, testObjects(), testNow); !errors.Is(err, errStoreDir) {
+		t.Fatalf("Save in a 0755 dir = %v; want errStoreDir", err)
+	}
+}
+
+func TestStoreDirRefusesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), DirName)
+	if err := os.WriteFile(path, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewStore(path, testKey).Verify("ext", strings.Repeat("a", 64)); !errors.Is(err, errStoreDir) {
+		t.Fatalf("Verify with a file as store dir = %v; want errStoreDir", err)
+	}
+}
+
+func TestExpiredRecordRefused(t *testing.T) {
+	s, _, fp := savedStore(t)
+	s.now = func() time.Time { return testNow.Add(RecordLifetime) }
+	if err := s.Verify("ext", fp); err != nil {
+		t.Fatalf("Verify at the end of the lifetime: %v", err)
+	}
+	s.now = func() time.Time { return testNow.Add(RecordLifetime + time.Nanosecond) }
+	if err := s.Verify("ext", fp); !errors.Is(err, ErrExpired) {
+		t.Fatalf("Verify after the lifetime = %v; want ErrExpired", err)
+	}
+}
+
+func TestRevokeTombstoneRefusesReplay(t *testing.T) {
+	s, dir, fp := savedStore(t)
+	s.now = func() time.Time { return testNow.Add(time.Hour) }
+	saved, err := os.ReadFile(recordPath(dir, "ext"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Revoke("ext"); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if err := os.WriteFile(recordPath(dir, "ext"), saved, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify("ext", fp); !errors.Is(err, ErrRevoked) {
+		t.Fatalf("Verify of a replayed record = %v; want ErrRevoked", err)
+	}
+	if _, err := s.Save("ext", fp, testObjects(), testNow.Add(2*time.Hour)); err != nil {
+		t.Fatalf("Save after Revoke: %v", err)
+	}
+	if err := s.Verify("ext", fp); err != nil {
+		t.Fatalf("Verify of a new approval after Revoke: %v", err)
+	}
+	ts := filepath.Join(dir, "ext.revoked.json")
+	data, err := os.ReadFile(ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["revoked_at"] = testNow.Add(-time.Hour)
+	tampered, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ts, tampered, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify("ext", fp); !errors.Is(err, ErrInvalidMAC) {
+		t.Fatalf("Verify with a changed tombstone = %v; want ErrInvalidMAC", err)
+	}
+}
+
+func TestRevokeWithoutRecordWritesTombstone(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), DirName)
+	s := NewStore(dir, testKey)
+	if err := s.Revoke("ext"); !errors.Is(err, ErrNotApproved) {
+		t.Fatalf("Revoke without a record = %v; want ErrNotApproved", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "ext.revoked.json")); err != nil {
+		t.Fatalf("no tombstone after Revoke without a record: %v", err)
 	}
 }

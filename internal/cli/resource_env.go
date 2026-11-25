@@ -19,7 +19,26 @@ type resourceTarget struct {
 	Approvals *approval.Store
 }
 
-var loadResource = resourceFromPaths
+var (
+	loadResource  = resourceFromPaths
+	loadApprovals = approvalsFromPaths
+)
+
+func approvalsFromPaths() (*approval.Store, error) {
+	creds, err := secret.Load(paths.Secrets, paths.SecretUID, []string{secret.MasterKeyName})
+	if err != nil {
+		return nil, err
+	}
+	master, err := secret.DecodeMasterKey(creds[secret.MasterKeyName])
+	if err != nil {
+		return nil, err
+	}
+	key, err := keys.ApprovalKey(master)
+	if err != nil {
+		return nil, err
+	}
+	return approval.NewStore(filepath.Join(paths.State, approval.DirName), key), nil
+}
 
 func resourceFromPaths(name string) (resourceTarget, error) {
 	cfg, err := config.Load(paths.Config)
