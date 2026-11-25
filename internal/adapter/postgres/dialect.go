@@ -97,7 +97,7 @@ func (d *dialect) ViolationCodes() []string {
 }
 
 func validateStaticTree(t *pgTree) error {
-	t.Funcs, t.Operators, t.Relations, t.Validated = nil, nil, nil, false
+	t.Funcs, t.FieldNames, t.Operators, t.Validated = nil, nil, nil, false
 	for _, check := range []func(*pgTree) error{
 		checkStatementShape,
 		walkAllowlist,

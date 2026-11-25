@@ -33,7 +33,7 @@ type ac15Case struct {
 
 func ac15Cases() []ac15Case {
 	return []ac15Case{
-		{"SELECT pg_advisory_lock(15001) AS ac15_r01", "function_prefix:pg_advisory_lock", "ac15_r01", ac15NoAdvisoryLock},
+		{"SELECT pg_advisory_lock(15001) AS ac15_r01", "function_prefix:pg_advisory_lock", "ac15_r01", ac15NoAdvisoryLock(15001)},
 		{"SELECT brin_summarize_new_values('ac15_brin_idx'::regclass) AS ac15_r02", "function_denied:brin_summarize_new_values", "ac15_r02", nil},
 		{"SELECT gin_clean_pending_list('ac15_gin_idx'::regclass) AS ac15_r03", "function_denied:gin_clean_pending_list", "ac15_r03", nil},
 		{"SELECT * FROM ts_stat('SELECT to_tsvector(''ac15_r04'')')", "function_denied:ts_stat", "ac15_r04", nil},
@@ -54,6 +54,22 @@ func ac15Cases() []ac15Case {
 		{"SELECT * FROM pg_settings AS ac15_r19", "relation:pg_settings", "ac15_r19", nil},
 		{"SELECT * FROM pg_file_settings AS ac15_r20", "relation:pg_file_settings", "ac15_r20", nil},
 		{"SELECT current_setting('primary_conninfo') AS ac15_r21", "function_denied:current_setting", "ac15_r21", nil},
+		{"SELECT (SELECT 15022).pg_advisory_lock AS ac15_r22", "function_prefix:pg_advisory_lock", "ac15_r22", ac15NoAdvisoryLock(15022)},
+		{"SELECT ('ssl_key_file'::text).current_setting AS ac15_r23", "function_denied:current_setting", "ac15_r23", nil},
+		{"SELECT ('PG_VERSION'::text).pg_read_file AS ac15_r24", "function_prefix:pg_read_file", "ac15_r24", nil},
+		{"SELECT ('SELECT to_tsvector(''ac15_r25'')'::text).ts_stat", "function_denied:ts_stat", "ac15_r25", nil},
+		{"SELECT (7::int).ac15_fn AS ac15_r26", "function_catalog:ac15_fn", "ac15_r26", ac15NoAdvisoryLock(15026)},
+		{"SELECT r.ac15_rowfn AS ac15_r27 FROM ac15_row r", "function_catalog:ac15_rowfn", "ac15_r27", ac15NoAdvisoryLock(15026)},
+		{"SELECT setseed(0.5) AS ac15_r28", "function_volatile:setseed", "ac15_r28", nil},
+		{"SELECT ac15_fn(1) AS ac15_r29", "function_catalog:ac15_fn", "ac15_r29", ac15NoAdvisoryLock(15026)},
+		{"SELECT 1 === 1 AS ac15_r30", "operator_catalog:===", "ac15_r30", nil},
+		{"SELECT * FROM pg_statistic AS ac15_r31", "relation:pg_statistic", "ac15_r31", nil},
+		{"SELECT * FROM pg_stats AS ac15_r32", "relation:pg_stats", "ac15_r32", nil},
+		{"SELECT * FROM pg_statistic_ext_data AS ac15_r33", "relation:pg_statistic_ext_data", "ac15_r33", nil},
+		{"SELECT * FROM pg_stats_ext AS ac15_r34", "relation:pg_stats_ext", "ac15_r34", nil},
+		{"SELECT * FROM pg_stats_ext_exprs AS ac15_r35", "relation:pg_stats_ext_exprs", "ac15_r35", nil},
+		{"SELECT * FROM information_schema.user_mapping_options AS ac15_r36", "relation:information_schema.user_mapping_options", "ac15_r36", nil},
+		{"SELECT * FROM information_schema._pg_user_mappings AS ac15_r37", "relation:information_schema._pg_user_mappings", "ac15_r37", nil},
 	}
 }
 
@@ -73,7 +89,13 @@ func init() {
 			"INSERT INTO ac15_brin SELECT g FROM generate_series(1, 1000) g; " +
 			"CREATE TABLE ac15_gin (v int[]); " +
 			"CREATE INDEX ac15_gin_idx ON ac15_gin USING gin (v) WITH (fastupdate = on); " +
-			"INSERT INTO ac15_gin SELECT ARRAY[g] FROM generate_series(1, 100) g",
+			"INSERT INTO ac15_gin SELECT ARRAY[g] FROM generate_series(1, 100) g; " +
+			"CREATE FUNCTION ac15_fn(int) RETURNS int LANGUAGE plpgsql VOLATILE AS $$BEGIN PERFORM pg_advisory_lock(15026); RETURN $1; END$$; " +
+			"CREATE TABLE ac15_row (id int); " +
+			"INSERT INTO ac15_row VALUES (1); " +
+			"CREATE FUNCTION ac15_rowfn(ac15_row) RETURNS int LANGUAGE plpgsql VOLATILE AS $$BEGIN PERFORM pg_advisory_lock(15026); RETURN 1; END$$; " +
+			"CREATE FUNCTION ac15_eq(int, int) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT $1 = $2'; " +
+			"CREATE OPERATOR === (LEFTARG = int, RIGHTARG = int, FUNCTION = ac15_eq)",
 		Run: runAC15,
 	})
 }
@@ -126,9 +148,11 @@ func ac15Count(ctx context.Context, t *testing.T, db *pgx.Conn, query string, ar
 	return n
 }
 
-func ac15NoAdvisoryLock(ctx context.Context, t *testing.T, db *pgx.Conn, logs string) {
-	if n := ac15Count(ctx, t, db, "SELECT count(*) FROM pg_catalog.pg_locks WHERE locktype = 'advisory' AND objid = 15001"); n != 0 {
-		t.Fatalf("pg_locks holds %d advisory locks on key 15001; want 0", n)
+func ac15NoAdvisoryLock(key int64) func(ctx context.Context, t *testing.T, db *pgx.Conn, logs string) {
+	return func(ctx context.Context, t *testing.T, db *pgx.Conn, logs string) {
+		if n := ac15Count(ctx, t, db, "SELECT count(*) FROM pg_catalog.pg_locks WHERE locktype = 'advisory' AND objid::int8 = $1", key); n != 0 {
+			t.Fatalf("pg_locks holds %d advisory locks on key %d; want 0", n, key)
+		}
 	}
 }
 

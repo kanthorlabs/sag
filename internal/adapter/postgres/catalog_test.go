@@ -84,7 +84,7 @@ func catalogReason(t *testing.T, err error) string {
 
 func TestCatalogEmptyListsSendNoQuery(t *testing.T) {
 	f := &catalogCheckFake{}
-	if err := validateCatalog(context.Background(), f, &pgTree{Relations: names("t")}); err != nil {
+	if err := validateCatalog(context.Background(), f, &pgTree{}); err != nil {
 		t.Fatalf("validateCatalog = %v; want nil", err)
 	}
 	if len(f.calls) != 0 {
@@ -242,4 +242,48 @@ func TestCatalogQueriesImmuneToSearchPath(t *testing.T) {
 			t.Fatalf("%q: %v", text, err)
 		}
 	}
+}
+
+func TestCatalogFieldNames(t *testing.T) {
+	rows := func(values ...[]any) map[string]*catalogCheckRows {
+		return map[string]*catalogCheckRows{
+			queryFunctionCatalog: {values: values},
+			queryOperatorCatalog: {values: [][]any{{"=", true, false}}},
+		}
+	}
+	cases := []struct {
+		name   string
+		rows   map[string]*catalogCheckRows
+		funcs  []string
+		fields []string
+		ops    []string
+		want   string
+	}{
+		{"no match is a column", rows(), nil, []string{"id", "total"}, nil, ""},
+		{"trusted stable match", rows([]any{"name", true, false}), nil, []string{"name"}, nil, ""},
+		{"volatile allowed name", rows([]any{"random", true, true}), nil, []string{"random"}, nil, ""},
+		{"volatile match", rows([]any{"setseed", true, true}), nil, []string{"setseed"}, nil, "function_volatile:setseed"},
+		{"match outside pg_catalog", rows([]any{"p3_one", false, false}), nil, []string{"p3_one"}, nil, "function_catalog:p3_one"},
+		{"shadowed built-in", rows([]any{"lower", true, false}, []any{"lower", false, false}), nil, []string{"lower"}, nil, "function_catalog:lower"},
+		{"functions checked first", rows([]any{"setseed", true, true}, []any{"f", false, false}), []string{"setseed"}, []string{"f"}, nil, "function_volatile:setseed"},
+		{"field before operator", rows([]any{"f", false, false}), nil, []string{"f"}, []string{"="}, "function_catalog:f"},
+		{"function without match still rejects", rows(), []string{"id"}, []string{"id"}, nil, "function_catalog:id"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tree := &pgTree{Funcs: names(c.funcs...), FieldNames: names(c.fields...), Operators: names(c.ops...)}
+			got := catalogReason(t, validateCatalog(context.Background(), &catalogCheckFake{rows: c.rows}, tree))
+			if got != c.want {
+				t.Fatalf("reason = %q; want %q", got, c.want)
+			}
+		})
+	}
+	t.Run("one query with all names as one bind value", func(t *testing.T) {
+		f := &catalogCheckFake{rows: rows()}
+		tree := &pgTree{Funcs: names("lower"), FieldNames: names("id", "lower", "c")}
+		_ = validateCatalog(context.Background(), f, tree)
+		if len(f.calls) != 1 || f.calls[0].text != queryFunctionCatalog || !slices.Equal(f.calls[0].args[0].([]string), []string{"c", "id", "lower"}) {
+			t.Fatalf("queries = %+v; want one function query with [c id lower]", f.calls)
+		}
+	})
 }

@@ -21,17 +21,20 @@ type catalogMatches struct {
 }
 
 func validateCatalog(ctx context.Context, tx sql.CatalogReader, t *pgTree) error {
-	funcs, err := readCatalogMatches(ctx, tx, queryFunctionCatalog, t.Funcs)
+	funcs, err := readCatalogMatches(ctx, tx, queryFunctionCatalog, slices.Concat(t.Funcs, t.FieldNames))
 	if err != nil {
 		return err
 	}
 	for _, f := range t.Funcs {
-		m := funcs[f.Name]
-		if m.untrusted || !m.builtin {
-			return &Rejection{Rule: ruleFunctionCatalog, Name: f.Name}
+		if err := checkFunctionMatches(f.Name, funcs[f.Name]); err != nil {
+			return err
 		}
-		if m.volatile && !slices.Contains(volatileAllowed, f.Name) {
-			return &Rejection{Rule: ruleFunctionVolatile, Name: f.Name}
+	}
+	for _, f := range t.FieldNames {
+		if m := funcs[f.Name]; m.builtin || m.untrusted {
+			if err := checkFunctionMatches(f.Name, m); err != nil {
+				return err
+			}
 		}
 	}
 	ops, err := readCatalogMatches(ctx, tx, queryOperatorCatalog, t.Operators)
@@ -43,6 +46,16 @@ func validateCatalog(ctx context.Context, tx sql.CatalogReader, t *pgTree) error
 		if m.untrusted || !m.builtin {
 			return &Rejection{Rule: ruleOperatorCatalog, Name: o.Name}
 		}
+	}
+	return nil
+}
+
+func checkFunctionMatches(name string, m catalogMatches) error {
+	if m.untrusted || !m.builtin {
+		return &Rejection{Rule: ruleFunctionCatalog, Name: name}
+	}
+	if m.volatile && !slices.Contains(volatileAllowed, name) {
+		return &Rejection{Rule: ruleFunctionVolatile, Name: name}
 	}
 	return nil
 }

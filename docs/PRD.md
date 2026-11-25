@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 8 |
+| Status | Revision 9 |
 | Date | 2026-11-25 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
@@ -186,9 +186,9 @@ Node-based agent clients, for example Claude Code, do not read the macOS trust s
 
 - **R1.** A person with shell access to the container host as the Podman user reads Podman secrets and the master key. The security of the host is outside SAG.
 - **R2.** A JWT is a bearer token. A copied JWT works from any network location that reaches SAG, until expiry or an `auth.version` increment. v1 has no revocation of one JWT.
-- **R3.** Code that the AST does not show runs inside the request transaction: a view that calls a user function, a user cast, a domain check, a row-level security policy, a foreign table. The engine read-only mode blocks transactional writes in that code. Non-transactional side effects in that code are outside C2. Preflight refuses the extensions with known external side effects (section 9.1). A read-only database role removes this risk.
+- **R3.** Code that the AST does not show runs inside the request transaction: a view that calls a user function, a user cast, a domain check, a type input function, an operator class, a row-level security policy, a foreign table. User casts, domain checks, type input functions, and operator classes run without a name rule. A view or a materialized view that the database owner created can take a session-level advisory lock or call a volatile function that does not write. The engine read-only mode blocks transactional writes in that code. Non-transactional side effects in that code are outside C2. Preflight refuses the extensions with known external side effects (section 9.1). A read-only database role removes this risk.
 - **R4.** An approved extension (section 9.2) keeps R3 open for that extension.
-- **R5.** An agent can read all data that the credential can read, except the credential catalogs. Column redaction is not a security boundary (section 10.4).
+- **R5.** An agent can read all data that the credential can read, except the credential catalogs. A view that the database owner created over a credential catalog exposes that catalog. Column redaction is not a security boundary (section 10.4).
 - **R6.** An agent can read the database user, the port, and server settings through SQL. SAG keeps only the password and the DSN text secret.
 - **R7.** Read queries on a primary server use its resources up to the limits in section 10.1.
 - **R8.** On the development machine, the mkcert root CA key can sign a certificate for any host name, and that machine trusts it. This applies to development only. The mkcert root CA is never installed on a server or on an agent host outside development.
@@ -250,6 +250,8 @@ Fail-closed rules:
 
 - SAG rejects a statement that the parser cannot parse.
 - SAG rejects an empty statement and a text with more than one statement.
+- SAG rejects a text that holds a NUL byte.
+- SAG rejects a parse tree with more than 500 levels of nested messages. This check runs in `ValidateStatic`, before `Render`.
 - SAG rejects any AST node type that is not on the allowlist.
 - For each allowed node type, the allowlist names each permitted field. A non-zero field outside the list rejects the statement.
 - The walk uses `protoreflect` over the pg_query parse tree. The walk does not use a visitor that can skip fields.
@@ -262,6 +264,7 @@ Allowlist walk:
 - Rejected anywhere in the tree: writable CTEs, `SELECT ... INTO`, row locks (`FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE`, `FOR KEY SHARE`).
 - All other statement types are absent from the allowlist: DML, DDL, `COPY`, `SET`, `RESET`, `DO`, `CALL`, `LOCK`, `GRANT`, `PREPARE`, `EXECUTE`, `LISTEN`, `NOTIFY`, `VACUUM`, `ANALYZE`, and transaction control.
 - The parser grammar is PostgreSQL 17. The supported server range is PostgreSQL 14 to 19. Syntax that the parser does not know fails to parse, and SAG rejects it. Examples: PostgreSQL 19 `IGNORE NULLS` in window functions, `REPACK`, `WAIT`.
+- These read forms are not on the allowlist, and SAG rejects them: `TABLESAMPLE`, `GROUPING()`, XML functions, SQL/JSON constructors and predicates, bit-string literals, a column definition list (`f() AS x(a int)`), and the `SEARCH` and `CYCLE` clauses of recursive CTEs.
 
 Render rule:
 
@@ -287,6 +290,7 @@ Driver rules:
 
 - SAG builds the pgx config from the secret fields: host, port, database, user, password. SAG rejects a DSN with any query parameter.
 - SAG sets `DefaultQueryExecMode` to `QueryExecModeExec`.
+- SAG sets the startup parameter `client_encoding` to `UTF8`.
 - SAG sends agent-derived text only through `Conn.Query` or `pgconn.ExecParams`. These use the extended query protocol, which accepts exactly one statement.
 - SAG sends `SessionGuard` and `RequestBegin` text only. This text contains no agent input.
 
@@ -298,12 +302,20 @@ Row cap (`PlanRowCap`):
 
 Function and operator rules (`ValidateCatalog` and `ValidateStatic`):
 
-1. SAG resolves each function name in `pg_proc`. SAG rejects a name that has any match outside `pg_catalog`.
-2. SAG resolves each operator name in `pg_operator`. SAG rejects a name that has any match outside `pg_catalog`.
-3. SAG rejects a schema-qualified function name with a schema other than `pg_catalog`.
+1. SAG resolves each function name in `pg_proc`. SAG rejects a name that has any match outside `pg_catalog`. SAG rejects a name that has no match.
+2. SAG resolves each operator name in `pg_operator`. SAG rejects a name that has any match outside `pg_catalog`. SAG rejects a name that has no match.
+3. SAG rejects a schema-qualified function name with a schema other than `pg_catalog`. SAG rejects a schema-qualified operator name with a schema other than `pg_catalog`.
 4. SAG rejects each function with `provolatile = 'v'`, except `random`, `clock_timestamp`, `gen_random_uuid`, and `timeofday`.
 5. SAG rejects each function with the prefix `pg_` or `lo_`, except this allowlist: `pg_typeof`, `pg_size_pretty`, `pg_column_size`, `pg_relation_size`, `pg_table_size`, `pg_indexes_size`, `pg_total_relation_size`, `pg_get_viewdef`, `pg_get_indexdef`, `pg_get_constraintdef`, `pg_get_expr`, `pg_get_userbyid`.
-6. SAG rejects these functions and families: `set_config`, `current_setting`, `nextval`, `setval`, `txid_current*`, `pg_current_xact_id*`, `ts_stat`, `ts_rewrite`, `query_to_xml*`, `cursor_to_xml*`, `table_to_xml*`, `schema_to_xml*`, `database_to_xml*`.
+6. SAG rejects these functions and families: `set_config`, `current_setting`, `nextval`, `setval`, `txid_current*`, `pg_current_xact_id*`, `ts_stat`, `ts_rewrite`, `brin_summarize_new_values`, `brin_summarize_range`, `brin_desummarize_range`, `gin_clean_pending_list`, `loread`, `lowrite`, `query_to_xml*`, `cursor_to_xml*`, `table_to_xml*`, `schema_to_xml*`, `database_to_xml*`, `dblink*`, `binary_upgrade_*`.
+
+Rules for names:
+
+- A match counts as a match in `pg_catalog` only when its schema is `pg_catalog` and its OID is below 16384. Each other match is a match outside `pg_catalog`.
+- Rules 1, 2, and 4 apply to the bare name, also when the statement qualifies it with `pg_catalog`.
+- Rules 5 and 6 compare the name in lower case.
+- Field selection: PostgreSQL resolves `(expr).name` and `alias.name` as the call `name(expr)` when no column has that name. SAG takes each field name of an indirection and each part after the first of a column reference as a function name. Rules 5 and 6 apply to this name, so a column with such a name rejects. SAG resolves this name in `pg_proc`. A name with no match is a column and passes. A name with a match passes only when it passes rules 1 and 4.
+- SAG adds the operator `=` for each `JOIN ... USING` and each `NATURAL JOIN`, because PostgreSQL resolves `=` by name there. Rule 2 applies to it.
 
 ### 8.5 PostgreSQL effects that only C1 blocks
 
@@ -325,7 +337,7 @@ C2 and C3 do not block these effects. The conformance suite asserts that C1 reje
 
 ### 8.6 Credential catalogs
 
-The credential can read catalogs that store other credentials. SAG rejects a reference to these relations at any depth of the AST: `pg_authid`, `pg_shadow`, `pg_user_mapping`, `pg_user_mappings`, `pg_subscription`, `pg_settings`, `pg_file_settings`. Rule 6 in section 8.4 rejects `current_setting`.
+The credential can read catalogs that store other credentials. SAG rejects a reference to these relations at any depth of the AST: `pg_authid`, `pg_shadow`, `pg_user_mapping`, `pg_user_mappings`, `pg_subscription`, `pg_settings`, `pg_file_settings`, `pg_statistic`, `pg_stats`, `pg_statistic_ext_data`, `pg_stats_ext`, `pg_stats_ext_exprs`, `user_mapping_options`, `_pg_user_mappings`. SAG compares the relation name in lower case, in any schema. Rule 6 in section 8.4 rejects `current_setting`.
 
 ### 8.7 Recommended read-only database role (defense in depth only)
 
@@ -395,8 +407,8 @@ SAG reads only these catalog objects and settings. The conformance suite runs ea
 
 | Object | Used by | PostgreSQL 19 status |
 |---|---|---|
-| `pg_proc.proname`, `pronamespace`, `provolatile` | Function rules | Present in the PostgreSQL 19 documentation. |
-| `pg_operator.oprname`, `oprnamespace` | Operator rule, operator name report | Present in the PostgreSQL 19 documentation. |
+| `pg_proc.oid`, `proname`, `pronamespace`, `provolatile` | Function rules | Present in the PostgreSQL 19 documentation. |
+| `pg_operator.oid`, `oprname`, `oprnamespace` | Operator rule, operator name report | Present in the PostgreSQL 19 documentation. |
 | `pg_namespace.nspname` | Schema of functions, operators, extensions | Catalog present in the PostgreSQL 19 documentation. Column not checked. |
 | `pg_extension.extname`, `extversion`, `extnamespace` | Risky object check, fingerprint | Present in the PostgreSQL 19 documentation. |
 | `pg_language.lanname`, `lanpltrusted` | Untrusted language check | Present in the PostgreSQL 19 documentation. |

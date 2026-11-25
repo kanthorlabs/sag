@@ -144,3 +144,31 @@ func TestCatalogReadErrorFailsClosedOnServer(t *testing.T) {
 		}
 	}
 }
+
+func TestFieldNamesOnServer(t *testing.T) {
+	pg := startPostgres(t)
+	fixture(t, pg, catalogHostileFixture...)
+	ctx, c := catalogRequest(t, pg)
+	field := func(list ...string) *pgTree {
+		return &pgTree{FieldNames: names(list...), Validated: true}
+	}
+	for _, tc := range []struct {
+		name string
+		tree *pgTree
+		want string
+	}{
+		{"column names pass", field("id", "total", "t38_missing"), ""},
+		{"stable built-ins pass", field("name", "text", "upper", "abs", "now"), ""},
+		{"volatile built-in rejects", field("id", "setseed"), "function_volatile:setseed"},
+		{"name only outside pg_catalog rejects", field("t34_only"), "function_catalog:t34_only"},
+		{"shadow in search_path rejects", field("lower"), "function_catalog:lower"},
+		{"match outside search_path rejects", field("length"), "function_catalog:length"},
+		{"user function in pg_catalog rejects", field("t34_injected"), "function_catalog:t34_injected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := catalogReason(t, validateCatalog(ctx, c, tc.tree)); got != tc.want {
+				t.Fatalf("reason = %q; want %q", got, tc.want)
+			}
+		})
+	}
+}

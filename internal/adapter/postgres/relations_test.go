@@ -3,8 +3,6 @@ package postgres
 import (
 	"errors"
 	"fmt"
-	"slices"
-	"strings"
 	"testing"
 )
 
@@ -16,6 +14,13 @@ var credentialCatalogNames = []string{
 	"pg_subscription",
 	"pg_settings",
 	"pg_file_settings",
+	"pg_statistic",
+	"pg_stats",
+	"pg_statistic_ext_data",
+	"pg_stats_ext",
+	"pg_stats_ext_exprs",
+	"user_mapping_options",
+	"_pg_user_mappings",
 }
 
 func assertRelationsReason(t *testing.T, text, want string) {
@@ -82,54 +87,33 @@ func TestCredentialCatalogsAnySchema(t *testing.T) {
 	assertRelationsReason(t, "SELECT * FROM t JOIN db.s.u ON true", "name_parts:db.s.u")
 }
 
-func TestRelationsRecorded(t *testing.T) {
-	tree := mustParseTree(t, `WITH c AS (SELECT * FROM s1.a)
+func TestRelationsAccepted(t *testing.T) {
+	for _, text := range []string{
+		`WITH c AS (SELECT * FROM s1.a)
 SELECT * FROM b JOIN "S2"."B" ON true, LATERAL (SELECT * FROM c) l
 WHERE x IN (SELECT y FROM pg_catalog.pg_class)
-UNION ALL SELECT * FROM pg_roles AS pg_authid, pg_user`)
-	if err := checkRelations(tree); err != nil {
-		t.Fatalf("checkRelations() = %v; want nil", err)
-	}
-	want := []qualifiedName{
-		{Schema: "", Name: "b"},
-		{Schema: "", Name: "c"},
-		{Schema: "", Name: "pg_roles"},
-		{Schema: "", Name: "pg_user"},
-		{Schema: "S2", Name: "B"},
-		{Schema: "pg_catalog", Name: "pg_class"},
-		{Schema: "s1", Name: "a"},
-	}
-	got := slices.Clone(tree.Relations)
-	slices.SortFunc(got, func(a, b qualifiedName) int {
-		if c := strings.Compare(a.Schema, b.Schema); c != 0 {
-			return c
+UNION ALL SELECT * FROM pg_roles AS pg_authid, pg_user`,
+		"SELECT 1, pg_typeof(1), 'pg_authid'::regclass",
+		"SELECT * FROM pg_statistic_ext, pg_user_mappings_x, information_schema.user_mappings",
+	} {
+		if err := checkRelations(mustParseTree(t, text)); err != nil {
+			t.Fatalf("checkRelations(%q) = %v; want nil", text, err)
 		}
-		return strings.Compare(a.Name, b.Name)
-	})
-	if !slices.Equal(got, want) {
-		t.Fatalf("Relations = %v; want %v", got, want)
-	}
-}
-
-func TestRelationsNoneForPlainSelect(t *testing.T) {
-	tree := mustParseTree(t, "SELECT 1, pg_typeof(1), 'pg_authid'::regclass")
-	if err := checkRelations(tree); err != nil || len(tree.Relations) != 0 {
-		t.Fatalf("checkRelations() = %v with %v; want nil and no relations", err, tree.Relations)
 	}
 }
 
 func TestFixedToolTextsPassShapeAndRelations(t *testing.T) {
-	for text, want := range map[string]qualifiedName{
-		"SELECT table_schema AS schema, table_name AS name, table_type AS type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name": {Schema: "information_schema", Name: "tables"},
-		"SELECT table_schema AS schema, table_name AS name, table_type AS type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_schema, table_name":                                  {Schema: "information_schema", Name: "tables"},
-		"SELECT column_name AS name, data_type AS type, is_nullable AS nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'pg_authid' ORDER BY ordinal_position":           {Schema: "information_schema", Name: "columns"},
+	for _, text := range []string{
+		"SELECT table_schema AS schema, table_name AS name, table_type AS type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name",
+		"SELECT table_schema AS schema, table_name AS name, table_type AS type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_schema, table_name",
+		"SELECT column_name AS name, data_type AS type, is_nullable AS nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'pg_authid' ORDER BY ordinal_position",
 	} {
 		tree := mustParseTree(t, text)
 		if err := checkStatementShape(tree); err != nil {
 			t.Fatalf("checkStatementShape(%q) = %v; want nil", text, err)
 		}
-		if err := checkRelations(tree); err != nil || !slices.Equal(tree.Relations, []qualifiedName{want}) {
-			t.Fatalf("checkRelations(%q) = %v with %v; want nil and %v", text, err, tree.Relations, want)
+		if err := checkRelations(tree); err != nil {
+			t.Fatalf("checkRelations(%q) = %v; want nil", text, err)
 		}
 	}
 }

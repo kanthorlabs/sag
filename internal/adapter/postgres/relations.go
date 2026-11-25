@@ -8,13 +8,20 @@ import (
 )
 
 var credentialCatalogs = map[string]bool{
-	"pg_authid":        true,
-	"pg_shadow":        true,
-	"pg_user_mapping":  true,
-	"pg_user_mappings": true,
-	"pg_subscription":  true,
-	"pg_settings":      true,
-	"pg_file_settings": true,
+	"pg_authid":             true,
+	"pg_shadow":             true,
+	"pg_user_mapping":       true,
+	"pg_user_mappings":      true,
+	"pg_subscription":       true,
+	"pg_settings":           true,
+	"pg_file_settings":      true,
+	"pg_statistic":          true,
+	"pg_stats":              true,
+	"pg_statistic_ext_data": true,
+	"pg_stats_ext":          true,
+	"pg_stats_ext_exprs":    true,
+	"user_mapping_options":  true,
+	"_pg_user_mappings":     true,
 }
 
 func checkRelations(t *pgTree) error {
@@ -30,7 +37,6 @@ func checkRelations(t *pgTree) error {
 		if credentialCatalogs[strings.ToLower(name.Name)] {
 			return &Rejection{Rule: ruleRelation, Name: name.String()}
 		}
-		t.Relations = append(t.Relations, name)
 		return nil
 	})
 }

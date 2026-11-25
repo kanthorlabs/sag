@@ -83,6 +83,16 @@ func checkFunctionNames(t *pgTree) error {
 			if n.GetArg() != nil {
 				addBareOperators(t, "=")
 			}
+		case *pg_query.JoinExpr:
+			if n.GetIsNatural() || len(n.GetUsingClause()) > 0 {
+				addBareOperators(t, "=")
+			}
+		case *pg_query.A_Indirection:
+			return addFieldNames(t, n.GetIndirection())
+		case *pg_query.ColumnRef:
+			if fields := n.GetFields(); len(fields) > 1 {
+				return addFieldNames(t, fields[1:])
+			}
 		}
 		return nil
 	})
@@ -96,6 +106,29 @@ func addFunction(t *pgTree, parts []*pg_query.Node) error {
 	if name.Schema != "" && name.Schema != catalogSchema {
 		return &Rejection{Rule: ruleFunctionSchema, Name: name.String()}
 	}
+	if err := checkFunctionNameRules(name); err != nil {
+		return err
+	}
+	t.Funcs = append(t.Funcs, name)
+	return nil
+}
+
+func addFieldNames(t *pgTree, nodes []*pg_query.Node) error {
+	for _, node := range nodes {
+		field := node.GetString_()
+		if field == nil {
+			continue
+		}
+		name := qualifiedName{Name: field.GetSval()}
+		if err := checkFunctionNameRules(name); err != nil {
+			return err
+		}
+		t.FieldNames = append(t.FieldNames, name)
+	}
+	return nil
+}
+
+func checkFunctionNameRules(name qualifiedName) error {
 	bare := strings.ToLower(name.Name)
 	if isDeniedFunction(bare) {
 		return &Rejection{Rule: ruleFunctionDenied, Name: name.String()}
@@ -103,7 +136,6 @@ func addFunction(t *pgTree, parts []*pg_query.Node) error {
 	if hasDeniedPrefix(bare) && !prefixAllowedFunctions[bare] {
 		return &Rejection{Rule: ruleFunctionPrefix, Name: name.String()}
 	}
-	t.Funcs = append(t.Funcs, name)
 	return nil
 }
 

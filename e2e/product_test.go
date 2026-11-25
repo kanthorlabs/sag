@@ -28,7 +28,7 @@ const (
 
 func init() {
 	harness.Register(harness.AC{
-		ID:     "Product_RejectsAllUntilC1",
+		ID:     "Product_C1ServesReadsOnly",
 		Phase:  harness.PhaseParallel,
 		Agents: []harness.AgentSpec{{Sub: productSub, Name: "Product"}},
 		Resources: []harness.ResourceSpec{{
@@ -38,7 +38,7 @@ func init() {
 			Agents:     []string{productSub},
 		}},
 		Fixture: "CREATE TABLE IF NOT EXISTS product_t (id int)",
-		Run:     runProductRejectsAll,
+		Run:     runProductC1ServesReadsOnly,
 	})
 	harness.Register(harness.AC{
 		ID:    "Product_SQLSizeLimit",
@@ -116,7 +116,7 @@ func productServed(ctx context.Context, t *testing.T, env harness.Env) {
 	}
 }
 
-func runProductRejectsAll(t *testing.T, env harness.Env) {
+func runProductC1ServesReadsOnly(t *testing.T, env harness.Env) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	productServed(ctx, t, env)
@@ -165,8 +165,12 @@ func runProductSQLSizeLimit(t *testing.T, env harness.Env) {
 	if len(atLimit) != productSQLLimit {
 		t.Fatalf("chain length = %d; want %d", len(atLimit), productSQLLimit)
 	}
-	if got, isError := productCall(ctx, t, env, atLimit); isError && got.Code == "invalid_argument" {
-		t.Fatalf("sql_query at %d bytes = %+v; want no invalid_argument", len(atLimit), got)
+	if got := productQuery(ctx, t, env, atLimit); got.Code != "query_rejected" || got.Message != "statement does not parse" {
+		t.Fatalf("sql_query at %d bytes = %+v; want query_rejected \"statement does not parse\"", len(atLimit), got)
+	}
+	deep := "SELECT ARRAY" + strings.Repeat("[", 4700) + "1" + strings.Repeat("]", 4700)
+	if got := productQuery(ctx, t, env, deep); got.Code != "query_rejected" || got.Message != "statement rejected: depth:500" {
+		t.Fatalf("sql_query of %d nested arrays = %+v; want query_rejected \"statement rejected: depth:500\"", 4700, got)
 	}
 	for _, text := range []string{atLimit + "1", chain(22000)} {
 		if got := productQuery(ctx, t, env, text); got.Code != "invalid_argument" || got.Message != "sql exceeds 16384 bytes" {

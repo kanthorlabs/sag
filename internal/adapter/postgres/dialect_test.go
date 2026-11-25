@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/kanthorlabs/sag/internal/approval"
@@ -40,7 +41,7 @@ func TestParseReturnsPGTree(t *testing.T) {
 	if tree.Result == nil || len(tree.Result.GetStmts()) != 1 {
 		t.Fatalf("Parse() result = %+v; want one statement", tree.Result)
 	}
-	if tree.Validated || tree.Funcs != nil || tree.Operators != nil || tree.Relations != nil {
+	if tree.Validated || tree.Funcs != nil || tree.FieldNames != nil || tree.Operators != nil {
 		t.Fatalf("Parse() = %+v; want an unvalidated tree without names", tree)
 	}
 }
@@ -80,12 +81,12 @@ func TestValidateStaticClearsStaleState(t *testing.T) {
 	tree.Validated = true
 	tree.Funcs = []qualifiedName{{Name: "f"}}
 	tree.Operators = []qualifiedName{{Name: "="}}
-	tree.Relations = []qualifiedName{{Name: "t"}}
+	tree.FieldNames = []qualifiedName{{Name: "c"}}
 	assertQueryRejected(t, emptyDialect().ValidateStatic(tree))
 	if tree.Validated {
 		t.Fatal("ValidateStatic() kept Validated after a rejection")
 	}
-	if tree.Funcs != nil || tree.Operators != nil || tree.Relations != nil {
+	if tree.Funcs != nil || tree.FieldNames != nil || tree.Operators != nil {
 		t.Fatalf("ValidateStatic() kept names from a previous run: %+v", tree)
 	}
 }
@@ -149,4 +150,83 @@ func TestReadCorpusFullStaticPath(t *testing.T) {
 			t.Errorf("PlanRowCap(%q): %v", rendered, err)
 		}
 	}
+}
+
+func assertStaticReason(t *testing.T, text, want string) {
+	t.Helper()
+	tree := mustParseTree(t, text)
+	err := emptyDialect().ValidateStatic(tree)
+	var coreErr *core.Error
+	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeQueryRejected || coreErr.Message != rejectionPrefix+want {
+		t.Fatalf("ValidateStatic(%q) = %v; want query_rejected %q", text, err, rejectionPrefix+want)
+	}
+	if tree.Validated {
+		t.Fatalf("ValidateStatic(%q) marked the tree as validated", text)
+	}
+}
+
+func TestValidateStaticEachCheckOnPath(t *testing.T) {
+	for _, c := range []struct{ check, text, want string }{
+		{"checkStatementShape", "SELECT 1; SELECT 2", "statement_count:2"},
+		{"checkStatementShape", "EXPLAIN (ANALYZE) SELECT 1", "explain_option:analyze"},
+		{"walkAllowlist", "SELECT $1", "node:ParamRef"},
+		{"walkAllowlist", "SELECT B'1'", "A_Const.bsval"},
+		{"walkAllowlist", "SELECT * FROM t TABLESAMPLE SYSTEM (50)", "node:RangeTableSample"},
+		{"checkRelations", "SELECT * FROM pg_authid", "relation:pg_authid"},
+		{"checkFunctionNames", "SELECT pg_sleep(1)", "function_prefix:pg_sleep"},
+		{"checkFunctionNames", "SELECT ('x'::text).current_setting", "function_denied:current_setting"},
+	} {
+		t.Run(c.check+" "+c.text, func(t *testing.T) {
+			assertStaticReason(t, c.text, c.want)
+		})
+	}
+}
+
+func TestDeepTreeRejected(t *testing.T) {
+	shapes := map[string]func(int) string{
+		"array": func(n int) string { return "SELECT ARRAY" + strings.Repeat("[", n) + "1" + strings.Repeat("]", n) },
+		"call":  func(n int) string { return "SELECT " + strings.Repeat("a(", n) + "1" + strings.Repeat(")", n) },
+		"cast":  func(n int) string { return "SELECT 1" + strings.Repeat("::a", n) },
+		"plus":  func(n int) string { return "SELECT 1" + strings.Repeat("+1", n) },
+		"sub":   func(n int) string { return "SELECT " + strings.Repeat("(SELECT ", n) + "1" + strings.Repeat(")", n) },
+	}
+	for name, shape := range shapes {
+		t.Run(name, func(t *testing.T) {
+			for _, levels := range []int{4995, 4700, 1000} {
+				text := shape(levels)
+				if len(text) > sql.MaxSQLBytes {
+					continue
+				}
+				if _, err := emptyDialect().Parse(text); err != nil {
+					continue
+				}
+				assertStaticReason(t, text, "depth:500")
+			}
+			n := 1
+			for len(shape(n+1)) <= sql.MaxSQLBytes {
+				n++
+			}
+			text := shape(n)
+			tree, err := emptyDialect().Parse(text)
+			if err != nil {
+				var coreErr *core.Error
+				if !errors.As(err, &coreErr) || coreErr.Message != msgParseFailed {
+					t.Fatalf("Parse(%d bytes) = %v; want %q", len(text), err, msgParseFailed)
+				}
+				return
+			}
+			assertQueryRejected(t, emptyDialect().ValidateStatic(tree))
+		})
+	}
+	t.Run("limit", func(t *testing.T) {
+		d := emptyDialect()
+		below := mustParseTree(t, shapes["plus"](245))
+		if err := d.ValidateStatic(below); err != nil {
+			t.Fatalf("ValidateStatic(245 additions) = %v; want nil", err)
+		}
+		if _, err := d.Render(below); err != nil {
+			t.Fatalf("Render(245 additions) = %v; want nil", err)
+		}
+		assertStaticReason(t, shapes["plus"](246), "depth:500")
+	})
 }

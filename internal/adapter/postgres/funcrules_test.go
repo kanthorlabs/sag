@@ -295,3 +295,65 @@ func TestFixedToolTextsPassFunctionRules(t *testing.T) {
 		}
 	}
 }
+
+func TestFieldSelectionNameRules(t *testing.T) {
+	for text, want := range map[string]string{
+		"SELECT (SELECT 1).pg_advisory_lock":                                  "function_prefix:pg_advisory_lock",
+		"SELECT ('ssl_key_file'::text).current_setting":                       "function_denied:current_setting",
+		"SELECT ('PG_VERSION'::text).pg_read_file":                            "function_prefix:pg_read_file",
+		"SELECT ('SELECT 1'::text).ts_stat":                                   "function_denied:ts_stat",
+		"SELECT (1::float8).pg_sleep":                                         "function_prefix:pg_sleep",
+		"SELECT ('x'::text).PG_CREATE_RESTORE_POINT":                          "function_prefix:pg_create_restore_point",
+		`SELECT ('x'::text)."Set_Config"`:                                     "function_denied:Set_Config",
+		"SELECT t.pg_sleep FROM t":                                            "function_prefix:pg_sleep",
+		"SELECT s.t.nextval FROM s.t":                                         "function_denied:nextval",
+		"SELECT 1 FROM t WHERE t.lo_unlink IS NULL":                           "function_prefix:lo_unlink",
+		"SELECT 1 FROM t ORDER BY (t.a).txid_current":                         "function_denied:txid_current",
+		"SELECT (ARRAY[1])[1], (SELECT 1).pg_cancel_backend":                  "function_prefix:pg_cancel_backend",
+		"SELECT * FROM t WHERE a IN (SELECT (b).dblink_exec FROM u)":          "function_denied:dblink_exec",
+		"WITH c AS (SELECT (x).query_to_xml FROM t) SELECT * FROM c":          "function_denied:query_to_xml",
+		"SELECT count(*) FILTER (WHERE (a).pg_terminate_backend) FROM t":      "function_prefix:pg_terminate_backend",
+		"SELECT * FROM t JOIN u ON (t.a).pg_reload_conf":                      "function_prefix:pg_reload_conf",
+		"SELECT sum(a) OVER (PARTITION BY (a).setval) FROM t":                 "function_denied:setval",
+		"SELECT 1 FROM t, LATERAL (SELECT t.pg_notify) l":                     "function_prefix:pg_notify",
+		"EXPLAIN SELECT (1).pg_sleep":                                         "function_prefix:pg_sleep",
+		"SELECT ((SELECT 1).a).pg_advisory_unlock_all":                        "function_prefix:pg_advisory_unlock_all",
+		"SELECT coalesce((x).brin_summarize_new_values, 0) FROM t":            "function_denied:brin_summarize_new_values",
+		"SELECT CASE WHEN true THEN (x).gin_clean_pending_list END FROM t":    "function_denied:gin_clean_pending_list",
+		"SELECT (x).pg_typeofx FROM t":                                        "function_prefix:pg_typeofx",
+		"SELECT t.pg_size_pretty, t.lo_import FROM t":                         "function_prefix:lo_import",
+		"SELECT (SELECT 1).binary_upgrade_set_next_pg_type_oid FROM t":        "function_denied:binary_upgrade_set_next_pg_type_oid",
+		"SELECT (SELECT 1).database_to_xml_and_xmlschema":                     "function_denied:database_to_xml_and_xmlschema",
+		"SELECT (SELECT 1).pg_current_xact_id_if_assigned":                    "function_denied:pg_current_xact_id_if_assigned",
+		"SELECT ('x'::text).loread":                                           "function_denied:loread",
+		"SELECT * FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.pg_sleep = 1)": "function_prefix:pg_sleep",
+	} {
+		assertFunctionRulesReason(t, text, want)
+	}
+}
+
+func TestFieldSelectionNamesCollected(t *testing.T) {
+	tree := assertFunctionRulesAccepted(t, `SELECT t.id, s.u.name, (t.c).f1, ((t.c).f2).f3, (ARRAY[1])[1], t.*, (t.c).*, id, pg_typeof(1), (x).pg_typeof
+FROM s.u, t WHERE t.setseed > 0`)
+	assertNames(t, "FieldNames", tree.FieldNames, []string{"id", "u", "name", "c", "f1", "c", "f2", "f3", "c", "pg_typeof", "setseed"})
+	assertNames(t, "Funcs", tree.Funcs, []string{"pg_typeof"})
+}
+
+func TestJoinUsingAndNaturalAddEquals(t *testing.T) {
+	for text, want := range map[string][]string{
+		"SELECT * FROM a JOIN b USING (k)":                             {"="},
+		"SELECT * FROM a JOIN b USING (k, l)":                          {"="},
+		"SELECT * FROM a LEFT JOIN b USING (k) AS j":                   {"="},
+		"SELECT * FROM a NATURAL JOIN b":                               {"="},
+		"SELECT * FROM a NATURAL FULL JOIN b":                          {"="},
+		"SELECT * FROM a JOIN (b NATURAL JOIN c) USING (k)":            {"=", "="},
+		"SELECT * FROM (SELECT 1 FROM a NATURAL JOIN b) s":             {"="},
+		"SELECT * FROM a JOIN b ON a.k < b.k":                          {"<"},
+		"SELECT * FROM a CROSS JOIN b":                                 nil,
+		"SELECT * FROM a JOIN b ON true":                               nil,
+		"WITH c AS (SELECT * FROM a JOIN b USING (k)) SELECT * FROM c": {"="},
+	} {
+		tree := assertFunctionRulesAccepted(t, text)
+		assertNames(t, "Operators of "+text, tree.Operators, want)
+	}
+}

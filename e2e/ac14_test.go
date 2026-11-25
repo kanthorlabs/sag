@@ -19,6 +19,9 @@ const (
 	ac14Marker   = "ac14_probe_5e1"
 	ac14Locking  = "SELECT * FROM ac14_t AS " + ac14Marker + " FOR UPDATE"
 	ac14Message  = "statement rejected: SelectStmt.locking_clause"
+	ac14WalkMark = "ac14_probe_9b4"
+	ac14Sample   = "SELECT * FROM ac14_t AS " + ac14WalkMark + " TABLESAMPLE SYSTEM (50)"
+	ac14WalkMsg  = "statement rejected: node:RangeTableSample"
 )
 
 func init() {
@@ -49,30 +52,34 @@ func runAC14(t *testing.T, env harness.Env) {
 
 	start := time.Now()
 	deadline := start.Add(70 * time.Second)
-	for {
-		res := conformanceQuery(ctx, t, session, ac14Resource, ac14Locking)
-		if !res.IsError {
-			t.Fatalf("sql_query %q: no error result: %s", ac14Locking, conformanceText(res))
+	for _, c := range []struct{ text, message string }{{ac14Locking, ac14Message}, {ac14Sample, ac14WalkMsg}} {
+		for {
+			res := conformanceQuery(ctx, t, session, ac14Resource, c.text)
+			if !res.IsError {
+				t.Fatalf("sql_query %q: no error result: %s", c.text, conformanceText(res))
+			}
+			var te conformanceToolError
+			if err := json.Unmarshal([]byte(conformanceText(res)), &te); err != nil {
+				t.Fatalf("sql_query %q: error text: %v", c.text, err)
+			}
+			if te.Code == "resource_unavailable" && time.Now().Before(deadline) {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			if te.Code != "query_rejected" || te.Message != c.message {
+				t.Fatalf("sql_query %q: error %+v, want code query_rejected and message %q", c.text, te, c.message)
+			}
+			break
 		}
-		var te conformanceToolError
-		if err := json.Unmarshal([]byte(conformanceText(res)), &te); err != nil {
-			t.Fatalf("sql_query %q: error text: %v", ac14Locking, err)
-		}
-		if te.Code == "resource_unavailable" && time.Now().Before(deadline) {
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		if te.Code != "query_rejected" || te.Message != ac14Message {
-			t.Fatalf("sql_query %q: error %+v, want code query_rejected and message %q", ac14Locking, te, ac14Message)
-		}
-		break
 	}
 
 	logs, err := env.Postgres(env.Major()).Logs(ctx, start.Add(-time.Second))
 	if err != nil {
 		t.Fatalf("PostgreSQL logs: %v", err)
 	}
-	if strings.Contains(logs, ac14Marker) {
-		t.Fatalf("PostgreSQL log holds %q; the rejected statement reached the server:\n%s", ac14Marker, logs)
+	for _, marker := range []string{ac14Marker, ac14WalkMark} {
+		if strings.Contains(logs, marker) {
+			t.Fatalf("PostgreSQL log holds %q; the rejected statement reached the server:\n%s", marker, logs)
+		}
 	}
 }

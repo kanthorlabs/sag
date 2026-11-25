@@ -15,7 +15,7 @@ const (
 	ruleOperatorSchema   = "operator_schema"
 	ruleOperatorCatalog  = "operator_catalog"
 	ruleRender           = "render"
-	ruleNotImplemented   = "not_implemented"
+	ruleDepth            = "depth"
 )
 
 const rejectionPrefix = "statement rejected: "
@@ -36,8 +36,4 @@ func (r *Rejection) Reason() string {
 
 func (r *Rejection) Error() string {
 	return rejectionPrefix + r.Reason()
-}
-
-func notImplemented(check string) error {
-	return &Rejection{Rule: ruleNotImplemented, Name: check}
 }
