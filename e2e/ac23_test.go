@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kanthorlabs/sag/e2e/harness"
@@ -20,7 +21,8 @@ const (
 	ac23ResourceB   = "rate-b"
 	ac23Database    = "sag_ac23"
 	ac23Select      = "SELECT id FROM ac23_t"
-	ac23Lock        = "LOCK TABLE ac23_t IN ACCESS EXCLUSIVE MODE"
+	ac23Hold        = "DO $$BEGIN LOCK TABLE ac23_t IN ACCESS EXCLUSIVE MODE; PERFORM pg_catalog.pg_sleep(4); END$$"
+	ac23Holders     = "SELECT count(*) FROM pg_catalog.pg_locks l JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid WHERE a.datname = $1 AND l.mode = 'AccessExclusiveLock' AND l.granted AND l.relation = 'ac23_t'::pg_catalog.regclass"
 	ac23Waiters     = "SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'"
 	ac23ServeWindow = 70 * time.Second
 	ac23WaitWindow  = 1500 * time.Millisecond
@@ -136,28 +138,30 @@ func runAC23(t *testing.T, env harness.Env) {
 
 func ac23Round(ctx context.Context, t *testing.T, env harness.Env, sessions []*mcp.ClientSession) (bool, string) {
 	t.Helper()
-	conn, err := harness.ConnectDB(ctx, env.Postgres(env.Major()), ac23Database)
+	pg := env.Postgres(env.Major())
+	holder, err := harness.ConnectDB(ctx, pg, ac23Database)
 	if err != nil {
 		t.Fatalf("connect %s: %v", ac23Database, err)
 	}
-	defer conn.Close(context.Background())
-	tx, err := conn.Begin(ctx)
+	defer holder.Close(context.Background())
+	watcher, err := harness.ConnectDB(ctx, pg, ac23Database)
 	if err != nil {
-		t.Fatalf("begin: %v", err)
+		t.Fatalf("connect %s: %v", ac23Database, err)
 	}
-	rolledBack := false
-	rollback := func() {
-		if rolledBack {
-			return
+	defer watcher.Close(context.Background())
+
+	locked := make(chan error, 1)
+	go func() {
+		_, err := holder.PgConn().ExecParams(ctx, ac23Hold, nil, nil, nil, nil).Close()
+		locked <- err
+	}()
+	defer func() {
+		if err := <-locked; err != nil {
+			t.Errorf("%s: %v", ac23Hold, err)
 		}
-		rolledBack = true
-		if err := tx.Rollback(context.Background()); err != nil {
-			t.Errorf("rollback: %v", err)
-		}
-	}
-	defer rollback()
-	if _, err := tx.Exec(ctx, ac23Lock); err != nil {
-		t.Fatalf("%s: %v", ac23Lock, err)
+	}()
+	if !ac23Poll(ctx, t, watcher, ac23Holders, 1) {
+		return false, "the fixture session did not take the lock"
 	}
 
 	held := make([]ac23Held, 4)
@@ -171,20 +175,8 @@ func ac23Round(ctx context.Context, t *testing.T, env harness.Env, sessions []*m
 			held[i] = ac23Held{code: code, done: time.Now()}
 		})
 	}
-
-	deadline := time.Now().Add(ac23WaitWindow)
-	waiting := 0
-	for waiting < 4 && time.Now().Before(deadline) {
-		if err := tx.QueryRow(ctx, ac23Waiters, ac23Database).Scan(&waiting); err != nil {
-			t.Fatalf("count lock waiters: %v", err)
-		}
-		if waiting < 4 {
-			time.Sleep(20 * time.Millisecond)
-		}
-	}
-	if waiting < 4 {
-		rollback()
-		wg.Wait()
+	defer wg.Wait()
+	if !ac23Poll(ctx, t, watcher, ac23Waiters, 4) {
 		return false, "the four requests did not wait on the lock together"
 	}
 
@@ -201,7 +193,6 @@ func ac23Round(ctx context.Context, t *testing.T, env harness.Env, sessions []*m
 	}
 	fwg.Wait()
 	fifthDone := time.Now()
-	rollback()
 	wg.Wait()
 
 	for i, h := range held {
@@ -218,4 +209,22 @@ func ac23Round(ctx context.Context, t *testing.T, env harness.Env, sessions []*m
 		}
 	}
 	return true, ""
+}
+
+func ac23Poll(ctx context.Context, t *testing.T, conn *pgx.Conn, query string, want int) bool {
+	t.Helper()
+	deadline := time.Now().Add(ac23WaitWindow)
+	for {
+		var n int
+		if err := conn.QueryRow(ctx, query, ac23Database).Scan(&n); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		if n >= want {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
