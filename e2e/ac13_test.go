@@ -26,8 +26,8 @@ const (
 )
 
 type ac13Case struct {
-	text    string
-	message string
+	text   string
+	reason string
 }
 
 func ac13Cases() []ac13Case {
@@ -75,8 +75,9 @@ func init() {
 }
 
 type ac13ToolError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id"`
 }
 
 func ac13Query(ctx context.Context, t *testing.T, session *mcp.ClientSession, text string) ac13ToolError {
@@ -114,10 +115,10 @@ func ac13WaitServed(ctx context.Context, t *testing.T, session *mcp.ClientSessio
 }
 
 func ac13WantMessage(c ac13Case) string {
-	if c.message == "" {
+	if c.reason == "" {
 		return ac13ParseMessage
 	}
-	return "statement rejected: " + c.message
+	return rejectionMessage(c.reason)
 }
 
 func runAC13(t *testing.T, env harness.Env) {
@@ -142,12 +143,17 @@ func runAC13(t *testing.T, env harness.Env) {
 
 	start := time.Now()
 	ac13WaitServed(ctx, t, session, cases[0].text)
+	reasons := map[string]string{}
 	for _, c := range cases {
 		got := ac13Query(ctx, t, session, c.text)
 		if got.Code != ac13Rejected || got.Message != ac13WantMessage(c) {
 			t.Errorf("sql_query %q = %+v; want code %q and message %q", c.text, got, ac13Rejected, ac13WantMessage(c))
 		}
+		if c.reason != "" {
+			reasons[got.RequestID] = c.reason
+		}
 	}
+	assertAuditReasons(ctx, t, env, harness.ContainerSAG, reasons)
 
 	logs, err := env.Postgres(env.Major()).Logs(ctx, start.Add(-time.Second))
 	if err != nil {

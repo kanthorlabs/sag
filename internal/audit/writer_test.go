@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -207,5 +209,72 @@ func TestConcurrentAppendsKeepWholeLines(t *testing.T) {
 	wg.Wait()
 	if n := len(readLines(t, filepath.Join(dir, "audit-2026-11-25.jsonl"))); n != 50 {
 		t.Fatalf("lines = %d; want 50", n)
+	}
+}
+
+func TestFailedWriteLeavesNoPartialLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("RLIMIT_FSIZE does not apply")
+	}
+	w, dir := newWriter(t)
+	ts := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	if err := w.Append(allowRecord(ts)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "audit-2026-11-25.jsonl")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	signal.Ignore(syscall.SIGXFSZ)
+	defer signal.Reset(syscall.SIGXFSZ)
+	var old syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &old); err != nil {
+		t.Fatal(err)
+	}
+	limit := old
+	limit.Cur = uint64(len(before) + 100)
+	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
+		t.Fatal(err)
+	}
+	big := allowRecord(ts)
+	big.SQL = strings.Repeat("x", 8<<10)
+	appendErr := w.Append(big)
+	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &old); err != nil {
+		t.Fatal(err)
+	}
+	if appendErr == nil {
+		t.Fatal("Append above RLIMIT_FSIZE: want error")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("file has %d bytes after the failed write; want the %d bytes before it", len(after), len(before))
+	}
+	if err := w.Append(allowRecord(ts)); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(readLines(t, path)); n != 2 {
+		t.Fatalf("file has %d lines; want 2", n)
+	}
+}
+
+func TestAppendDoesNotFollowSymlink(t *testing.T) {
+	w, dir := newWriter(t)
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "audit-2026-11-25.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Append(allowRecord(time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC))); err == nil {
+		t.Fatal("Append through a symbolic link: want error")
+	}
+	if data, err := os.ReadFile(target); err != nil || len(data) != 0 {
+		t.Fatalf("link target holds %d bytes, %v; want 0", len(data), err)
 	}
 }

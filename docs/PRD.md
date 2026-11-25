@@ -193,6 +193,7 @@ Node-based agent clients, for example Claude Code, do not read the macOS trust s
 - **R7.** Read queries on a primary server use its resources up to the limits in section 10.1.
 - **R8.** On the development machine, the mkcert root CA key can sign a certificate for any host name, and that machine trusts it. This applies to development only. The mkcert root CA is never installed on a server or on an agent host outside development.
 - **R9.** A risky object that a database owner adds stays usable for up to one `preflight.recheck_interval`, until the next preflight re-check.
+- **R10.** Audit growth has no limit. One agent can fill the state volume with audit records, and then each `tools/call` returns `internal`. The operator monitors the free space of the state volume.
 
 Operator guidance for Claude Code:
 
@@ -253,6 +254,7 @@ Fail-closed rules:
 - SAG rejects a text that holds a NUL byte.
 - SAG rejects a parse tree with more than 500 levels of nested messages. This check runs in `ValidateStatic`, before `Render`.
 - SAG rejects any AST node type that is not on the allowlist.
+- A rejection returns `query_rejected` with the message `statement rejected: <rule>` or `statement rejected: <Node.Field>`. The message does not hold the rejected name. The audit `reason` holds the full reason (section 10.2).
 - For each allowed node type, the allowlist names each permitted field. A non-zero field outside the list rejects the statement.
 - The walk uses `protoreflect` over the pg_query parse tree. The walk does not use a visitor that can skip fields.
 
@@ -449,7 +451,9 @@ Value encoding: `NULL` is `null`. Integers inside ±(2^53 − 1) are JSON number
 
 ### 10.2 Secret scrub and errors
 
-- Before SAG returns or logs an error, SAG removes every exact occurrence of each loaded secret value and of its password part.
+- An error message to the agent holds fixed text only. It never holds agent text or driver text.
+- A rejected statement returns `statement rejected: <rule>` or `statement rejected: <Node.Field>`, without the rejected name. The full reason with the name goes to the audit `reason` only.
+- Before SAG logs a line or appends an audit record, SAG removes every exact occurrence of each loaded secret value and of its password part. The scrub applies to log text, error causes, and the audit fields `sql` and `reason`. The scrub does not apply to the agent message.
 - SAG never puts a DSN string into an error or a log line.
 - For a connect error, the agent receives the code `resource_unavailable`, a fixed message, and the `request_id`. The scrubbed driver error goes to the daemon log only.
 - The `Credential` type returns `[REDACTED]` from `String`, `GoString`, `MarshalJSON`, and `LogValue`.
@@ -476,18 +480,20 @@ SAG appends one JSON line to `/var/lib/sag/audit/audit-YYYY-MM-DD.jsonl`, mode 0
 | `remote_addr` | Client address and port |
 | `sub`, `jti` | JWT claims, or `null` on authentication failure |
 | `auth_cause` | JWT refusal cause, or `null` |
-| `resource`, `capability`, `operation` | Target of the request |
-| `sql` | Full statement text from the agent |
+| `resource`, `capability`, `operation` | Target of the request. `resource` and `operation` hold at most the first 63 bytes. |
+| `sql` | Full statement text from the agent, after the secret scrub (section 10.2) |
 | `sql_sha256` | Hash of the statement text |
 | `rendered_sha256` | Hash of the rendered text that SAG sent |
 | `decision` | `allow` or `deny` |
-| `reason` | Deny or error code, with the rejected node, field, function, or operator name |
+| `reason` | Deny or error code, with the rejected node, field, function, or operator name, after the secret scrub (section 10.2) |
 | `rows`, `bytes`, `truncated`, `duration_ms` | Result metadata |
 
 Rules:
 
 - The audit log never contains result values, credentials, or JWTs.
-- SAG writes the record before it returns the result. If the append fails, SAG returns `internal` and no data.
+- SAG writes the record before it returns the result. If the append fails, SAG returns `internal` and no data, and logs `audit append failed` with the `request_id`.
+- A failed write leaves no partial line in the file.
+- Exception: a `tools/call` request that the JSON-RPC layer rejects before dispatch writes no record. Examples: `params` that is `null`, not an object, or has a tool name that is not a string; no `params`; no `id`; a batch. No tool runs for such a request, and no data returns.
 
 ## 11. Agent authentication and authorization
 

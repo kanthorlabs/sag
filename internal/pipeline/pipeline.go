@@ -22,6 +22,8 @@ const (
 	messageInternal     = "internal error"
 )
 
+const maxRecordName = 63
+
 type Resolver interface {
 	Lookup(sub, name string) (inventory.Entry, error)
 }
@@ -136,10 +138,22 @@ func (p *Pipeline) finish(req Request, start time.Time, res core.Result, err err
 }
 
 func (p *Pipeline) append(rec audit.Record) error {
+	rec.Resource = bounded(rec.Resource)
+	rec.Operation = bounded(rec.Operation)
+	rec.SQL = p.opts.Scrubber.String(rec.SQL)
+	rec.Reason = p.opts.Scrubber.String(rec.Reason)
 	if err := p.stages.audit(rec); err != nil {
+		p.opts.Log.Error("audit append failed", "request_id", rec.RequestID, "error", err.Error())
 		return &core.Error{Code: core.CodeInternal, Message: messageInternal, Cause: err}
 	}
 	return nil
+}
+
+func bounded(s string) string {
+	if len(s) > maxRecordName {
+		return s[:maxRecordName]
+	}
+	return s
 }
 
 func (p *Pipeline) record(req Request, start time.Time, res core.Result, err error) audit.Record {

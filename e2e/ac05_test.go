@@ -72,8 +72,9 @@ func runAC05(t *testing.T, env harness.Env) {
 }
 
 type conformanceToolError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id"`
 }
 
 type conformanceQueryResult struct {

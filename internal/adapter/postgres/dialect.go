@@ -137,7 +137,7 @@ func queryRejected(err error) error {
 	}
 	var rejection *Rejection
 	if errors.As(err, &rejection) {
-		return &core.Error{Code: core.CodeQueryRejected, Message: rejection.Error(), Cause: rejection}
+		return &core.Error{Code: core.CodeQueryRejected, Message: rejection.Message(), Cause: rejection}
 	}
 	var coreErr *core.Error
 	var engineErr *sql.EngineError

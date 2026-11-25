@@ -11,6 +11,19 @@ import (
 	"github.com/kanthorlabs/sag/internal/sql"
 )
 
+func rejectionMessage(reason string) string {
+	rule, _, _ := strings.Cut(reason, ":")
+	return rejectionPrefix + rule
+}
+
+func assertRejectionReason(t *testing.T, err error, want string) {
+	t.Helper()
+	var rejection *Rejection
+	if !errors.As(err, &rejection) || rejection.Reason() != want {
+		t.Fatalf("error = %v; want rejection reason %q", err, want)
+	}
+}
+
 func assertQueryRejected(t *testing.T, err error) {
 	t.Helper()
 	var coreErr *core.Error
@@ -157,9 +170,10 @@ func assertStaticReason(t *testing.T, text, want string) {
 	tree := mustParseTree(t, text)
 	err := emptyDialect().ValidateStatic(tree)
 	var coreErr *core.Error
-	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeQueryRejected || coreErr.Message != rejectionPrefix+want {
-		t.Fatalf("ValidateStatic(%q) = %v; want query_rejected %q", text, err, rejectionPrefix+want)
+	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeQueryRejected || coreErr.Message != rejectionMessage(want) {
+		t.Fatalf("ValidateStatic(%q) = %v; want query_rejected %q", text, err, rejectionMessage(want))
 	}
+	assertRejectionReason(t, err, want)
 	if tree.Validated {
 		t.Fatalf("ValidateStatic(%q) marked the tree as validated", text)
 	}
