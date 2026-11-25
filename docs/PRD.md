@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 13 |
+| Status | Revision 14 |
 | Date | 2026-11-25 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
@@ -106,6 +106,7 @@ Operational rules:
 - The daemon reads `sag.yaml` and all secrets at start. A change to `sag.yaml` or to a secret needs a container restart in v1.
 - The daemon removes each `PG*` environment variable at start.
 - The daemon refuses to start if a secret file has an owner other than UID 65532 or a mode other than exactly 0400.
+- The owner and mode rule covers the regular files of the SAG secrets in `/run/secrets`. A directory that Podman adds to `/run/secrets` from `mounts.conf`, for example `rhsm`, is outside SAG control.
 - The operator runs CLI commands inside the container with `podman exec`. No CLI function is reachable through MCP.
 - `GET /healthz` returns `200` with an empty body and needs no token. All other paths need a JWT.
 
@@ -878,7 +879,7 @@ Do not start a step before every acceptance criterion of the previous step passe
 | ID | Criterion | Check |
 |---|---|---|
 | AC32 | `podman inspect sag` shows a read-only root filesystem, user 65532, no capabilities, `no-new-privileges`, and a port binding with host IP `127.0.0.1` or an address in `100.64.0.0/10`. | Shell script with `podman inspect` and `jq`. |
-| AC33 | Inside the container, `stat` shows owner 65532 and mode 0400 for each file in `/run/secrets`. | Shell script with `podman exec`. Only the e2e harness mounts a static busybox, read-only, for `stat`. The product image and the Quadlet file contain no busybox. |
+| AC33 | Inside the container, `stat` shows owner 65532 and mode 0400 for each regular file in `/run/secrets`. The count of regular files equals the count of Podman secrets of the container. | Shell script with `podman exec`. Only the e2e harness mounts a static busybox, read-only, for `stat`. The product image and the Quadlet file contain no busybox. |
 | AC34 | `podman exec sag sag jwt generate a` without `-t` exits non-zero. | Shell script. |
 | AC35 | The full suite passes against the container on Linux amd64 for each PostgreSQL major version from 14 to 19. `go build ./...` passes on macOS arm64. | CI job with a version matrix, and a macOS build job. Needs a git remote and a push by Ulrich. |
 

@@ -43,7 +43,7 @@ func writeMarkdown(w io.Writer, r report) error {
 			row = append(row, ac.ByMajor[strconv.Itoa(major)])
 		}
 		duration := ""
-		if ac.Status != statusNotImplemented {
+		if ac.Status != statusNotImplemented && ac.Status != statusExcluded {
 			duration = fmt.Sprintf("%d ms", ac.DurationMS)
 		}
 		row = append(row, duration, cell(ac.Message))

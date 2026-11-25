@@ -57,7 +57,7 @@ A task is done only when its verify command passes and the task is merged (READM
 - Depends on: `T6.0`.
 - Method: copy `/bin/busybox` out of `busybox:1.37.0-musl` with `podman create` and `podman cp`. Mount it read-only at `/e2e/busybox` in the e2e `sag` container only.
 - Tests first: `busybox_integration_test.go`: `TestBusyboxExtracted`, `TestMountReadOnly`.
-- e2e: `AC33_SecretMounts`: `podman exec sag /e2e/busybox sh -c 'stat -c "%u %a" /run/secrets/*'` shows `65532 400` for each file.
+- e2e: `AC33_SecretMounts`: `podman exec sag /e2e/busybox sh -c '/e2e/busybox stat -c "%n %u %a %F" /run/secrets/*'` shows `65532 400` for each regular file. The busybox shell has no `stat` in `PATH`, so the command calls the applet through `/e2e/busybox`. The count of regular files equals the count of secrets in `podman container inspect`. A directory that Podman adds from `mounts.conf`, for example `rhsm`, is outside SAG control and outside the check.
 - ACs: AC33.
 - Verify: `make test-integration PG=17 PKG=./e2e/harness/... RUN='TestBusybox|TestMountReadOnly'`. Expected: `ok`.
 - Done when: the production image and the Quadlet file stay without busybox.

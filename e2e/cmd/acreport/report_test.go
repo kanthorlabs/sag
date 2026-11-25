@@ -374,6 +374,19 @@ func TestRunGateExcludesSkipped(t *testing.T) {
 	}
 }
 
+func TestMarkdownNoDurationForExcluded(t *testing.T) {
+	run := parsed(t, skeletonPass(), finished("TestE2E/parallel/AC31_ClaudeCode", "pass", 2))
+	r := buildReport(6, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, []string{"AC31"}, buildInfo{})
+	var b bytes.Buffer
+	if err := writeMarkdown(&b, r); err != nil {
+		t.Fatal(err)
+	}
+	want := "| AC31 | 5 | `TestE2E/parallel/AC31_ClaudeCode` | EXCLUDED | EXCLUDED |  | " + skipMessage + " |"
+	if !strings.Contains(b.String(), want) {
+		t.Errorf("markdown misses %q:\n%s", want, b.String())
+	}
+}
+
 func TestRunSkipFlag(t *testing.T) {
 	events := slices.Concat(skeletonPass(), finished("TestE2E/parallel/AC01_ConfigCheckRejects", "pass", 1), finished("TestE2E/parallel/AC02_StartRefusesBadSecrets", "pass", 1), finished("TestE2E/parallel/AC03_JWTRejects", "pass", 1))
 	dir := t.TempDir()
