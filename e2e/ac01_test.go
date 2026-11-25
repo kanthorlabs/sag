@@ -61,7 +61,7 @@ func runAC01(t *testing.T, env harness.Env) {
 			t.Fatal(err)
 		}
 		args := []string{"run", "--rm", "--network", "none"}
-		args = append(args, harness.SecurityFlags...)
+		args = append(args, harness.ContainerFlags.SecurityArgs()...)
 		for _, name := range ac01Secrets {
 			source := "sag-e2e-ac01-" + hex.EncodeToString(suffix) + "-" + name
 			res, err := testenv.Podman(ctx, strings.NewReader("x"), "secret", "create", source, "-")
@@ -93,7 +93,7 @@ func runAC01(t *testing.T, env harness.Env) {
 	for _, c := range invalid {
 		t.Run(c.fixture, func(t *testing.T) {
 			args := []string{"run", "--rm", "--network", "none"}
-			args = append(args, harness.SecurityFlags...)
+			args = append(args, harness.ContainerFlags.SecurityArgs()...)
 			args = append(args, "-v", fixtures+":/fixtures:ro", env.Image(), "config", "check", "--config", "/fixtures/"+c.fixture+".yaml")
 			res, err := env.Podman(ctx, args...)
 			if err != nil {

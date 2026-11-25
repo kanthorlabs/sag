@@ -51,6 +51,9 @@ func main() {
 }
 
 func run(args []string, stderr io.Writer, probe func() buildInfo) int {
+	if len(args) > 0 && args[0] == mergeCommand {
+		return runMerge(args[1:], stderr)
+	}
 	flags := flag.NewFlagSet("acreport", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	layer := flags.Int("layer", 0, "gate layer, 1 to 6")

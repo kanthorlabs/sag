@@ -72,3 +72,25 @@ func TestReadOnlyAuditProfile(t *testing.T) {
 		}
 	}
 }
+
+func TestRunArgsBusybox(t *testing.T) {
+	args := strings.Join(runArgs(runSpec{Name: "n", Busybox: "/tmp/run/busybox", Image: "i"}), " ")
+	if !strings.Contains(args, "-v /tmp/run/busybox:/e2e/busybox:ro") {
+		t.Errorf("args lack the read-only busybox mount: %s", args)
+	}
+	if strings.Contains(strings.Join(runArgs(runSpec{Name: "n", Image: "i"}), " "), BusyboxTarget) {
+		t.Error("args mount busybox without Busybox")
+	}
+}
+
+func TestProductFlagsExcludeTestOnlyFlags(t *testing.T) {
+	product := strings.Join(append(ContainerFlags.SecurityArgs(), ContainerFlags.Publish(ListenPort), ContainerFlags.ConfigVolume("c"), ContainerFlags.StateVolume("s"), ContainerFlags.Secret("a", "b", "")), " ")
+	for _, flag := range TestOnlyFlags {
+		if strings.Contains(product, flag) {
+			t.Errorf("product flags hold the test-only flag %q: %s", flag, product)
+		}
+	}
+	if got := ContainerFlags.Publish(ListenPort); got != "127.0.0.1:8443:8443" {
+		t.Errorf("Publish(8443) = %q; want 127.0.0.1:8443:8443", got)
+	}
+}

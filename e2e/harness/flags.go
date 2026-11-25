@@ -15,11 +15,71 @@ const (
 	DefaultSecretMode = "0400"
 )
 
-var SecurityFlags = []string{
-	"--read-only",
-	"--cap-drop=all",
-	"--security-opt=no-new-privileges",
-	"--user", strconv.Itoa(secret.ContainerUID) + ":" + strconv.Itoa(secret.ContainerUID),
+type ProductFlags struct {
+	ReadOnly        bool
+	UID             int
+	GID             int
+	CapDrop         string
+	NoNewPrivileges bool
+	PublishHost     string
+	ContainerPort   int
+	ConfigTarget    string
+	StateTarget     string
+	SecretType      string
+	SecretUID       int
+	SecretMode      string
+}
+
+var ContainerFlags = ProductFlags{
+	ReadOnly:        true,
+	UID:             secret.ContainerUID,
+	GID:             secret.ContainerUID,
+	CapDrop:         "all",
+	NoNewPrivileges: true,
+	PublishHost:     PublishHost,
+	ContainerPort:   ListenPort,
+	ConfigTarget:    ConfigPath,
+	StateTarget:     StateDir,
+	SecretType:      "mount",
+	SecretUID:       secret.ContainerUID,
+	SecretMode:      DefaultSecretMode,
+}
+
+var TestOnlyFlags = []string{"--log-driver", "k8s-file"}
+
+func (f ProductFlags) SecurityArgs() []string {
+	var args []string
+	if f.ReadOnly {
+		args = append(args, "--read-only")
+	}
+	args = append(args, "--cap-drop="+f.CapDrop)
+	if f.NoNewPrivileges {
+		args = append(args, "--security-opt=no-new-privileges")
+	}
+	return append(args, "--user", strconv.Itoa(f.UID)+":"+strconv.Itoa(f.GID))
+}
+
+func (f ProductFlags) Publish(hostPort int) string {
+	host := ""
+	if hostPort != 0 {
+		host = strconv.Itoa(hostPort)
+	}
+	return f.PublishHost + ":" + host + ":" + strconv.Itoa(f.ContainerPort)
+}
+
+func (f ProductFlags) ConfigVolume(source string) string {
+	return source + ":" + f.ConfigTarget + ":ro"
+}
+
+func (f ProductFlags) StateVolume(source string) string {
+	return source + ":" + f.StateTarget
+}
+
+func (f ProductFlags) Secret(source, target, mode string) string {
+	if mode == "" {
+		mode = f.SecretMode
+	}
+	return source + ",type=" + f.SecretType + ",target=" + target + ",uid=" + strconv.Itoa(f.SecretUID) + ",mode=" + mode
 }
 
 type secretMount struct {
@@ -33,6 +93,7 @@ type runSpec struct {
 	ConfigFile  string
 	StateVolume string
 	AuditDir    string
+	Busybox     string
 	Secrets     []secretMount
 	SecretMode  string
 	Image       string
@@ -40,10 +101,7 @@ type runSpec struct {
 }
 
 func SecretFlag(source, target, mode string) string {
-	if mode == "" {
-		mode = DefaultSecretMode
-	}
-	return source + ",type=mount,target=" + target + ",uid=" + strconv.Itoa(secret.ContainerUID) + ",mode=" + mode
+	return ContainerFlags.Secret(source, target, mode)
 }
 
 func runArgs(s runSpec) []string {
@@ -51,17 +109,20 @@ func runArgs(s runSpec) []string {
 	if s.Network != "" {
 		args = append(args, "--network", s.Network)
 	}
-	args = append(args, "--log-driver", "k8s-file")
-	args = append(args, SecurityFlags...)
-	args = append(args, "-p", PublishHost+"::"+strconv.Itoa(ListenPort))
+	args = append(args, TestOnlyFlags...)
+	args = append(args, ContainerFlags.SecurityArgs()...)
+	args = append(args, "-p", ContainerFlags.Publish(0))
 	if s.ConfigFile != "" {
-		args = append(args, "-v", s.ConfigFile+":"+ConfigPath+":ro")
+		args = append(args, "-v", ContainerFlags.ConfigVolume(s.ConfigFile))
 	}
 	if s.StateVolume != "" {
-		args = append(args, "-v", s.StateVolume+":"+StateDir)
+		args = append(args, "-v", ContainerFlags.StateVolume(s.StateVolume))
 	}
 	if s.AuditDir != "" {
 		args = append(args, "-v", s.AuditDir+":"+AuditDir+":ro")
+	}
+	if s.Busybox != "" {
+		args = append(args, "-v", s.Busybox+":"+BusyboxTarget+":ro")
 	}
 	for _, m := range s.Secrets {
 		args = append(args, "--secret", SecretFlag(m.Source, m.Target, s.SecretMode))

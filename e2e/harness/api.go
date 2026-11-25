@@ -124,6 +124,19 @@ var ErrClaudePrerequisite = errors.New("prerequisite missing")
 
 var _ ClaudeRunner = RunClaude
 
+const (
+	BusyboxImage  = "docker.io/library/busybox:1.37.0-musl"
+	BusyboxTarget = "/e2e/busybox"
+)
+
+type BusyboxMounter func(ctx context.Context, dir string) (string, error)
+
+var _ BusyboxMounter = BusyboxMount
+
+type PublishHostCheck func(host string) bool
+
+var _ PublishHostCheck = PublishHostAllowed
+
 var registered []AC
 
 func Register(ac AC) {
