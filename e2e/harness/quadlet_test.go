@@ -77,7 +77,12 @@ func TestQuadletMatchesHarnessFlags(t *testing.T) {
 		key  string
 		want string
 	}{
+		{"ContainerName", "sag"},
+		{"Image", "localhost/sag:latest"},
+		{"Pull", "never"},
+		{"Exec", "serve"},
 		{"ReadOnly", strconv.FormatBool(f.ReadOnly)},
+		{"ReadOnlyTmpfs", strconv.FormatBool(f.ReadOnlyTmpfs)},
 		{"User", strconv.Itoa(f.UID)},
 		{"Group", strconv.Itoa(f.GID)},
 		{"DropCapability", f.CapDrop},
@@ -124,16 +129,40 @@ func TestQuadletMatchesHarnessFlags(t *testing.T) {
 		}
 	}
 
+	allowed := []string{"ContainerName", "Image", "Pull", "Exec", "ReadOnly", "ReadOnlyTmpfs", "User", "Group", "DropCapability", "NoNewPrivileges", "PublishPort", "Volume", "Secret"}
 	for _, k := range keys {
 		if k.Section != "Container" {
 			continue
 		}
-		switch k.Key {
-		case "LogDriver", "PodmanArgs", "Network", "AddCapability", "SecurityLabelDisable":
+		if !slices.Contains(allowed, k.Key) {
 			t.Errorf("[Container] %s=%s is not a product flag", k.Key, k.Value)
 		}
 		if strings.Contains(k.Value, BusyboxTarget) || strings.Contains(k.Value, "busybox") {
 			t.Errorf("[Container] %s=%s holds the test-only busybox", k.Key, k.Value)
+		}
+	}
+}
+
+func TestQuadletUnitSections(t *testing.T) {
+	want := map[string][]string{
+		"Unit":    {"Description=SAG Secure Access Gateway", "Wants=network-online.target", "After=network-online.target"},
+		"Service": {"Restart=on-failure", "RestartSec=10"},
+		"Install": {"WantedBy=default.target"},
+	}
+	got := map[string][]string{}
+	for _, k := range readQuadlet(t) {
+		if k.Section != "Container" {
+			got[k.Section] = append(got[k.Section], k.Key+"="+k.Value)
+		}
+	}
+	for section, lines := range got {
+		if _, ok := want[section]; !ok {
+			t.Errorf("section [%s] %q is not in the unit", section, lines)
+		}
+	}
+	for section, lines := range want {
+		if !slices.Equal(got[section], lines) {
+			t.Errorf("[%s] = %q; want %q", section, got[section], lines)
 		}
 	}
 }

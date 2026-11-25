@@ -17,6 +17,7 @@ const (
 
 type ProductFlags struct {
 	ReadOnly        bool
+	ReadOnlyTmpfs   bool
 	UID             int
 	GID             int
 	CapDrop         string
@@ -25,6 +26,7 @@ type ProductFlags struct {
 	ContainerPort   int
 	ConfigTarget    string
 	StateTarget     string
+	StateOptions    string
 	SecretType      string
 	SecretUID       int
 	SecretMode      string
@@ -32,6 +34,7 @@ type ProductFlags struct {
 
 var ContainerFlags = ProductFlags{
 	ReadOnly:        true,
+	ReadOnlyTmpfs:   false,
 	UID:             secret.ContainerUID,
 	GID:             secret.ContainerUID,
 	CapDrop:         "all",
@@ -40,6 +43,7 @@ var ContainerFlags = ProductFlags{
 	ContainerPort:   ListenPort,
 	ConfigTarget:    ConfigPath,
 	StateTarget:     StateDir,
+	StateOptions:    "noexec",
 	SecretType:      "mount",
 	SecretUID:       secret.ContainerUID,
 	SecretMode:      DefaultSecretMode,
@@ -52,6 +56,7 @@ func (f ProductFlags) SecurityArgs() []string {
 	if f.ReadOnly {
 		args = append(args, "--read-only")
 	}
+	args = append(args, "--read-only-tmpfs="+strconv.FormatBool(f.ReadOnlyTmpfs))
 	args = append(args, "--cap-drop="+f.CapDrop)
 	if f.NoNewPrivileges {
 		args = append(args, "--security-opt=no-new-privileges")
@@ -72,7 +77,7 @@ func (f ProductFlags) ConfigVolume(source string) string {
 }
 
 func (f ProductFlags) StateVolume(source string) string {
-	return source + ":" + f.StateTarget
+	return source + ":" + f.StateTarget + ":" + f.StateOptions
 }
 
 func (f ProductFlags) Secret(source, target, mode string) string {

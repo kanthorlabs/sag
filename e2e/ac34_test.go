@@ -33,4 +33,7 @@ func runAC34(t *testing.T, env harness.Env) {
 	if !strings.Contains(res.Stderr, "not a terminal") {
 		t.Fatalf("sag jwt generate stderr = %q; want the no-terminal cause", res.Stderr)
 	}
+	if res.Stdout != "" {
+		t.Errorf("sag jwt generate without a terminal stdout = %q; want empty", res.Stdout)
+	}
 }

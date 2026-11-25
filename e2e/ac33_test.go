@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,8 @@ func init() {
 		Run:   runAC33,
 	})
 }
+
+var ac33ForbiddenBinaries = []string{"busybox", "sh", "bash", "dash", "ash", "toybox"}
 
 var ac33RequiredSecrets = []string{secret.MasterKeyName, "sag-tls-cert", "sag-tls-key"}
 
@@ -98,7 +101,7 @@ func runAC33(t *testing.T, env harness.Env) {
 				t.Fatalf("read export: %v", err)
 			}
 			entries++
-			if path.Base(h.Name) == "busybox" {
+			if slices.Contains(ac33ForbiddenBinaries, path.Base(h.Name)) {
 				t.Errorf("image %s holds %s", env.Image(), h.Name)
 			}
 		}

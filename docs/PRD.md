@@ -92,14 +92,14 @@ Container constraints:
 |---|---|
 | Image | Multi-stage build. Runtime base is a minimal glibc image with CA certificates. |
 | User | Non-root UID 65532 inside the container. |
-| Root filesystem | Read-only (`--read-only`). |
+| Root filesystem | Read-only (`--read-only`, `--read-only-tmpfs=false`). Podman adds no writable tmpfs at `/tmp`, `/var/tmp`, or `/run`. |
 | Capabilities | `--cap-drop=all`, `--security-opt=no-new-privileges`. |
 | Listen | `0.0.0.0:8443` inside the container network namespace. |
 | Port publish | Only on `127.0.0.1` or on the Tailscale address of the host, for example `PublishPort=100.101.102.103:8443:8443`. Never on `0.0.0.0` or on a public address. |
 | Config | `/etc/sag/sag.yaml`, bind mount, read-only. |
-| State volume | `/var/lib/sag`, owner UID 65532, mode 0700. Contains `audit/` and `approvals/`. |
+| State volume | `/var/lib/sag`, owner UID 65532, mode 0700, mount option `noexec`. Contains `audit/` and `approvals/`. Except for `/dev/shm` (`noexec`), it is the only writable path. No writable path permits execution. |
 | Secrets | Podman secrets, `type=mount`, target `/run/secrets/<name>`, `uid=65532`, `mode=0400`. |
-| Unit | A Quadlet file `deploy/sag.container` for systemd. |
+| Unit | A Quadlet file `deploy/sag.container` for systemd. `Pull=never`, `Restart=on-failure`, `RestartSec=10`. |
 
 Operational rules:
 

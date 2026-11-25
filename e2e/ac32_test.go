@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,8 +73,8 @@ func runAC32(t *testing.T, env harness.Env) {
 	if len(c.BoundingCaps) != 0 {
 		t.Errorf("BoundingCaps = %q; want none", c.BoundingCaps)
 	}
-	if !slices.Contains(c.HostConfig.SecurityOpt, "no-new-privileges") {
-		t.Errorf("SecurityOpt = %q; want no-new-privileges", c.HostConfig.SecurityOpt)
+	if want := []string{"no-new-privileges"}; !slices.Equal(c.HostConfig.SecurityOpt, want) {
+		t.Errorf("SecurityOpt = %q; want %q", c.HostConfig.SecurityOpt, want)
 	}
 	port := strconv.Itoa(harness.ContainerFlags.ContainerPort) + "/tcp"
 	bindings := c.NetworkSettings.Ports[port]
@@ -84,5 +85,30 @@ func runAC32(t *testing.T, env harness.Env) {
 		if !harness.PublishHostAllowed(b.HostIp) {
 			t.Errorf("Ports[%s] host IP %q; want 127.0.0.1 or an address in 100.64.0.0/10", port, b.HostIp)
 		}
+	}
+
+	ac32WritableAndExec(ctx, t, env)
+}
+
+func ac32WritableAndExec(ctx context.Context, t *testing.T, env harness.Env) {
+	b := harness.BusyboxTarget
+	script := `for d in / /tmp /var/tmp /run /etc /var /usr /home /root; do
+  if ` + b + ` touch "$d/.ac32-probe" 2>/dev/null; then echo "writable $d"; ` + b + ` rm -f "$d/.ac32-probe"; fi
+done
+for d in ` + harness.StateDir + ` /dev/shm; do
+  f="$d/busybox-ac32"
+  if ! ` + b + ` cp ` + b + ` "$f"; then if [ "$d" = ` + harness.StateDir + ` ]; then echo "not-writable $d"; fi; continue; fi
+  if "$f" true 2>/dev/null; then echo "exec $d"; fi
+  ` + b + ` rm -f "$f"
+done`
+	res, err := env.Exec(ctx, harness.ContainerSAG, b, "sh", "-c", script)
+	if err != nil {
+		t.Fatalf("podman exec: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("probe exit = %d, stdout %q, stderr %q", res.ExitCode, res.Stdout, res.Stderr)
+	}
+	if out := strings.TrimSpace(res.Stdout); out != "" {
+		t.Errorf("UID %d writes or runs files outside the rule (only %s writable, no path permits execution):\n%s", harness.ContainerFlags.UID, harness.StateDir, out)
 	}
 }
