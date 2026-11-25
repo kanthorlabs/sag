@@ -16,11 +16,11 @@ const (
 	fetchFormat     = "FETCH %d FROM " + cursorName
 )
 
-func planRowCap(tree *pg_query.ParseResult, rendered string, maxRows int) (sql.RowCapPlan, error) {
+func planRowCap(t *pgTree, rendered string, maxRows int) (sql.RowCapPlan, error) {
 	if maxRows < 1 {
 		return sql.RowCapPlan{}, rowCapRejected()
 	}
-	stmt, ok := singleStatement(tree)
+	stmt, ok := singleStatement(t.Result)
 	if !ok {
 		return sql.RowCapPlan{}, rowCapRejected()
 	}

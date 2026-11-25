@@ -15,12 +15,11 @@ func TestParseRejectsInvalidText(t *testing.T) {
 }
 
 func TestRenderDeparses(t *testing.T) {
-	d := newDialect(core.ResourceConfig{}, approval.Target{})
-	tree, err := d.Parse("select  a ,b from   t /* note */ where c = 'it''s' -- tail")
+	tree, err := parse("select  a ,b from   t /* note */ where c = 'it''s' -- tail")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := d.Render(tree)
+	got, err := render(tree)
 	if err != nil {
 		t.Fatal(err)
 	}

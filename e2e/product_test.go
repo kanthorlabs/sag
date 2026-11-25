@@ -99,7 +99,7 @@ func runProductRejectsAll(t *testing.T, env harness.Env) {
 			t.Fatalf("sql_query %q = %+v; want query_rejected", productSelect, got)
 		}
 	})
-	t.Run("INSERT rejected", func(t *testing.T) {
+	t.Run("INSERT rejected by C1", func(t *testing.T) {
 		if got := productQuery(ctx, t, env, productInsert); got.Code != "query_rejected" {
 			t.Fatalf("sql_query %q = %+v; want query_rejected", productInsert, got)
 		}

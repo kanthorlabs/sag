@@ -18,7 +18,7 @@ func renderedTree(t *testing.T, text string) (sql.Tree, string) {
 	if err != nil {
 		t.Fatalf("render(%q): %v", text, err)
 	}
-	return tree, rendered
+	return &pgTree{Result: tree, Validated: true}, rendered
 }
 
 func TestSelectPlanUsesCursor(t *testing.T) {
