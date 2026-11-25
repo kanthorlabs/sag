@@ -49,6 +49,7 @@ type Suite struct {
 	pgs       map[int]*testenv.Postgres
 	http      *http.Client
 	secrets   []secretMount
+	snapshots map[string][]DatabaseSnapshot
 
 	mu         sync.Mutex
 	containers map[string]*sagContainer
@@ -106,6 +107,9 @@ func NewSuite(ctx context.Context, acs []AC) (s *Suite, err error) {
 		return s, err
 	}
 	if err = s.runFixtures(ctx); err != nil {
+		return s, err
+	}
+	if err = s.takeSnapshots(ctx); err != nil {
 		return s, err
 	}
 	if err = s.startContainers(ctx); err != nil {

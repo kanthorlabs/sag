@@ -12,16 +12,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/kanthorlabs/sag/e2e/harness"
+	"github.com/kanthorlabs/sag/internal/testenv"
 )
 
 const (
-	ac19Sub           = "ac19"
-	ac19Resource      = "ac19"
-	ac19Database      = "sag_e2e"
-	ac19SnapshotTable = "sag_ac19.ac19_snapshot"
+	ac19Sub          = "ac19"
+	ac19Resource     = "ac19"
+	ac19Database     = "sag_e2e"
+	ac19ControlTable = "public.ac19_t"
 )
 
 const ac19ObjectQuery = `SELECT o.type AS kind, o.identity AS identity, d.detail AS detail
@@ -46,8 +45,7 @@ FROM (
   UNION ALL SELECT 'pg_largeobject'::regclass, lo.oid, coalesce(lo.lomacl::text, '') FROM pg_largeobject_metadata lo
 ) d
 CROSS JOIN LATERAL pg_identify_object(d.classid, d.objid, 0) o
-WHERE o.schema IS DISTINCT FROM 'sag_ac19' AND o.schema IS DISTINCT FROM 'pg_toast'
-  AND NOT (o.type = 'schema' AND o.identity = 'sag_ac19')`
+WHERE o.schema IS DISTINCT FROM 'pg_toast'`
 
 const ac19DataQuery = `SELECT 'data' AS kind, format('%I.%I', n.nspname, c.relname) AS identity,
   (xpath('/row/d/text()', query_to_xml(format(
@@ -57,7 +55,7 @@ const ac19DataQuery = `SELECT 'data' AS kind, format('%I.%I', n.nspname, c.relna
     END,
     n.nspname, c.relname), false, true, '')))[1]::text AS detail
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.oid >= 16384 AND n.nspname NOT IN ('sag_ac19', 'pg_toast') AND c.relpersistence <> 't'
+WHERE c.oid >= 16384 AND n.nspname <> 'pg_toast' AND c.relpersistence <> 't'
   AND (c.relkind IN ('r', 'p', 'S') OR (c.relkind = 'm' AND c.relispopulated))`
 
 const ac19StateQuery = ac19ObjectQuery + "\nUNION ALL\n" + ac19DataQuery
@@ -78,11 +76,10 @@ func init() {
 			Database:   ac19Database,
 			Agents:     []string{ac19Sub},
 		}},
-		Fixture: "CREATE TABLE public.ac19_t (id int PRIMARY KEY, v text); " +
-			"INSERT INTO public.ac19_t VALUES (1, 'ac19_a'), (2, 'ac19_b'), (3, 'ac19_c'); " +
-			"CREATE SCHEMA sag_ac19; " +
-			"CREATE TABLE " + ac19SnapshotTable + " AS " + ac19StateQuery,
-		Run: runAC19,
+		Fixture: "CREATE TABLE " + ac19ControlTable + " (id int PRIMARY KEY, v text); " +
+			"INSERT INTO " + ac19ControlTable + " VALUES (1, 'ac19_a'), (2, 'ac19_b'), (3, 'ac19_c')",
+		Snapshot: ac19StateQuery,
+		Run:      runAC19,
 	})
 }
 
@@ -102,22 +99,55 @@ func ac19Compare(a, b ac19Entry) int {
 	return strings.Compare(a.Detail, b.Detail)
 }
 
-func ac19Read(ctx context.Context, t *testing.T, conn *pgx.Conn, query string) []ac19Entry {
+func ac19Entries(t *testing.T, rows [][]string) []ac19Entry {
 	t.Helper()
-	rows, err := conn.Query(ctx, query)
-	if err != nil {
-		t.Fatalf("query %s: %v", query, err)
-	}
-	entries, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ac19Entry, error) {
-		var e ac19Entry
-		err := row.Scan(&e.Kind, &e.Identity, &e.Detail)
-		return e, err
-	})
-	if err != nil {
-		t.Fatalf("query %s: %v", query, err)
+	entries := make([]ac19Entry, 0, len(rows))
+	for _, r := range rows {
+		if len(r) != 3 {
+			t.Fatalf("state row has %d columns, want 3: %q", len(r), r)
+		}
+		entries = append(entries, ac19Entry{Kind: r[0], Identity: r[1], Detail: r[2]})
 	}
 	slices.SortFunc(entries, ac19Compare)
 	return entries
+}
+
+func ac19Read(ctx context.Context, t *testing.T, pg *testenv.Postgres, database string) []ac19Entry {
+	t.Helper()
+	conn, err := harness.ConnectDB(ctx, pg, database)
+	if err != nil {
+		t.Fatalf("connect PostgreSQL %d database %s: %v", pg.Major, database, err)
+	}
+	defer conn.Close(context.WithoutCancel(ctx))
+	rows, err := harness.QueryText(ctx, conn, ac19StateQuery)
+	if err != nil {
+		t.Fatalf("state query in PostgreSQL %d database %s: %v", pg.Major, database, err)
+	}
+	return ac19Entries(t, rows)
+}
+
+func ac19CheckDatabases(ctx context.Context, t *testing.T, env harness.Env, snapshots []harness.DatabaseSnapshot) {
+	t.Helper()
+	before := map[int][]string{}
+	for _, s := range snapshots {
+		before[s.Major] = append(before[s.Major], s.Database)
+	}
+	for major, names := range before {
+		after, err := harness.Databases(ctx, env.Postgres(major))
+		if err != nil {
+			t.Fatalf("list databases of PostgreSQL %d: %v", major, err)
+		}
+		for _, db := range after {
+			if !slices.Contains(names, db) {
+				t.Errorf("PostgreSQL %d database %s exists after the suite and has no snapshot", major, db)
+			}
+		}
+		for _, db := range names {
+			if !slices.Contains(after, db) {
+				t.Errorf("PostgreSQL %d database %s has a snapshot and does not exist after the suite", major, db)
+			}
+		}
+	}
 }
 
 func ac19ControlEntry() ac19Entry {
@@ -161,39 +191,49 @@ func runAC19(t *testing.T, env harness.Env) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	pg := env.Postgres(env.Major())
-	conn, err := harness.ConnectDB(ctx, pg, ac19Database)
-	if err != nil {
-		t.Fatalf("connect %s: %v", ac19Database, err)
-	}
-	defer conn.Close(context.WithoutCancel(ctx))
-
-	before := ac19Read(ctx, t, conn, "SELECT kind, identity, detail FROM "+ac19SnapshotTable)
-	after := ac19Read(ctx, t, conn, ac19StateQuery)
-
+	snapshots := env.Snapshots("AC19")
 	control := ac19ControlEntry()
-	if _, found := slices.BinarySearchFunc(before, control, ac19Compare); !found {
-		t.Fatalf("snapshot has no entry %+v; the snapshot query does not see the fixture tables: %+v", control, before)
+	var controlFound bool
+	for _, s := range snapshots {
+		before := ac19Entries(t, s.Rows)
+		if !slices.ContainsFunc(before, func(e ac19Entry) bool { return e.Kind == "schema" && e.Identity == "public" }) {
+			t.Fatalf("snapshot of PostgreSQL %d database %s has no entry for schema public: %+v", s.Major, s.Database, before)
+		}
+		if s.Major == env.Major() && s.Database == ac19Database {
+			if _, found := slices.BinarySearchFunc(before, control, ac19Compare); !found {
+				t.Fatalf("snapshot has no entry %+v; the snapshot query does not see the fixture tables: %+v", control, before)
+			}
+			if !slices.ContainsFunc(before, func(e ac19Entry) bool { return e.Kind == "table" && e.Identity == ac19ControlTable }) {
+				t.Fatalf("snapshot has no object entry for table %s: %+v", ac19ControlTable, before)
+			}
+			controlFound = true
+		}
 	}
-	if !slices.ContainsFunc(before, func(e ac19Entry) bool { return e.Kind == "table" && e.Identity == "public.ac19_t" }) {
-		t.Fatalf("snapshot has no object entry for table public.ac19_t: %+v", before)
+	if !controlFound {
+		t.Fatalf("no snapshot of PostgreSQL %d database %s; snapshots: %d", env.Major(), ac19Database, len(snapshots))
 	}
 
-	missing, added := ac19Diff(before, after)
-	for _, e := range missing {
-		t.Errorf("entry changed or removed after the suite: %+v", e)
-	}
-	for _, e := range added {
-		t.Errorf("entry changed or added after the suite: %+v", e)
+	ac19CheckDatabases(ctx, t, env, snapshots)
+	for _, s := range snapshots {
+		before := ac19Entries(t, s.Rows)
+		after := ac19Read(ctx, t, env.Postgres(s.Major), s.Database)
+		missing, added := ac19Diff(before, after)
+		for _, e := range missing {
+			t.Errorf("PostgreSQL %d database %s: entry changed or removed after the suite: %+v", s.Major, s.Database, e)
+		}
+		for _, e := range added {
+			t.Errorf("PostgreSQL %d database %s: entry changed or added after the suite: %+v", s.Major, s.Database, e)
+		}
 	}
 
+	pg := env.Postgres(env.Major())
 	logs, err := pg.Logs(ctx, time.Time{})
 	if err != nil {
 		t.Fatalf("PostgreSQL logs: %v", err)
 	}
 	statements := ac19Statements(logs)
-	if !slices.ContainsFunc(statements, func(s string) bool { return strings.Contains(s, ac19SnapshotTable) }) {
-		t.Fatalf("PostgreSQL log parse found no statement with %s; the log check cannot see statements", ac19SnapshotTable)
+	if !slices.ContainsFunc(statements, func(s string) bool { return strings.Contains(s, ac19ControlTable) }) {
+		t.Fatalf("PostgreSQL log parse found no statement with %s; the log check cannot see statements", ac19ControlTable)
 	}
 	for _, s := range statements {
 		if ac19CommitStatement.MatchString(s) {

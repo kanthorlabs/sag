@@ -62,6 +62,7 @@ type AC struct {
 	Agents    []AgentSpec
 	Resources []ResourceSpec
 	Fixture   string
+	Snapshot  string
 	Run       func(t *testing.T, env Env)
 }
 
@@ -104,6 +105,7 @@ type Env interface {
 	Client(ctx context.Context, container, sub string) (*mcp.ClientSession, error)
 	Logs(ctx context.Context, container string) (string, error)
 	Audit(ctx context.Context, container string) ([]json.RawMessage, error)
+	Snapshots(id string) []DatabaseSnapshot
 }
 
 var registered []AC
