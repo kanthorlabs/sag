@@ -86,7 +86,7 @@ func (r *Run) Close(ctx context.Context) error {
 	r.mu.Unlock()
 	var errs []error
 	if len(containers) > 0 {
-		errs = append(errs, podmanOK(ctx, nil, append([]string{"rm", "--force", "--ignore", "--time", "0"}, containers...)...))
+		errs = append(errs, podmanOK(ctx, nil, append([]string{"rm", "--force", "--ignore", "--volumes", "--time", "0"}, containers...)...))
 	}
 	errs = append(errs, podmanOK(ctx, nil, "network", "rm", "--force", r.Network))
 	if len(secrets) > 0 {
