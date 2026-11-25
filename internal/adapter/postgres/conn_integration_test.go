@@ -4,13 +4,18 @@ package postgres
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/kanthorlabs/sag/internal/core"
+	"github.com/kanthorlabs/sag/internal/scrub"
 	"github.com/kanthorlabs/sag/internal/secret"
 	"github.com/kanthorlabs/sag/internal/sql"
 	"github.com/kanthorlabs/sag/internal/testenv"
@@ -296,7 +301,7 @@ func TestAfterConnectRunsSessionGuard(t *testing.T) {
 	}
 }
 
-func TestAcquireExhaustedPoolTimesOut(t *testing.T) {
+func TestPoolExhaustedTimeout(t *testing.T) {
 	pg := startPostgres(t)
 	p := openPool(t, pg, testResourceConfig(pg, 1))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -308,12 +313,95 @@ func TestAcquireExhaustedPoolTimesOut(t *testing.T) {
 	defer waitCancel()
 	_, err := p.Acquire(waitCtx)
 	var coreErr *core.Error
-	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeTimeout {
-		t.Fatalf("Acquire error = %v; want core.Error %s", err, core.CodeTimeout)
+	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeTimeout || coreErr.Message != acquireTimedOut {
+		t.Fatalf("Acquire error = %v; want core.Error %s %q", err, core.CodeTimeout, acquireTimedOut)
 	}
 }
 
-func TestStatementTimeoutIsTimeoutClass(t *testing.T) {
+func TestLockTimeoutClass(t *testing.T) {
+	pg := startPostgres(t)
+	fixture(t, pg, "CREATE TABLE lt_rows (id int)")
+	cfg := testResourceConfig(pg, 1)
+	cfg.LockTimeout = 300 * time.Millisecond
+	p := openPool(t, pg, cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	holder, err := pg.Connect(ctx)
+	if err != nil {
+		t.Fatalf("holder connect: %v", err)
+	}
+	defer closeConn(ctx, holder)
+	for _, s := range []string{"BEGIN", "LOCK TABLE lt_rows IN ACCESS EXCLUSIVE MODE"} {
+		if err := execText(ctx, holder, s); err != nil {
+			t.Fatalf("holder %q: %v", s, err)
+		}
+	}
+	c := acquire(t, ctx, p)
+	defer c.Close()
+
+	beginRequest(t, ctx, c, testLimits, cfg)
+	start := time.Now()
+	_, err = queryValues(ctx, c, "SELECT * FROM lt_rows")
+	assertEngineError(t, err, "55P03", sql.Timeout)
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("lock wait = %s; want lock_timeout near %s", elapsed, cfg.LockTimeout)
+	}
+	if err := execText(ctx, holder, "ROLLBACK"); err != nil {
+		t.Fatalf("holder ROLLBACK: %v", err)
+	}
+}
+
+func TestConnectErrorFixedMessage(t *testing.T) {
+	pg := startPostgres(t)
+	u, err := url.Parse(pg.HostDSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong := make([]byte, 16)
+	if _, err := rand.Read(wrong); err != nil {
+		t.Fatal(err)
+	}
+	password := "wrong-" + hex.EncodeToString(wrong)
+	u.User = url.UserPassword(u.User.Username(), password)
+	cred := secret.NewCredential("conn-main", []byte(u.String()))
+	cfg := testResourceConfig(pg, 1)
+	cc, err := connConfig(cfg, cred)
+	if err != nil {
+		t.Fatalf("connConfig: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	p, err := newPool(ctx, cc, cfg)
+	if err != nil {
+		t.Fatalf("newPool: %v", err)
+	}
+	defer p.Close()
+	s := scrub.New([]secret.Credential{cred})
+
+	for name, open := range map[string]func(context.Context) (sql.Conn, error){"Acquire": p.Acquire, "Dedicated": p.Dedicated} {
+		_, err := open(ctx)
+		var coreErr *core.Error
+		if !errors.As(err, &coreErr) || coreErr.Code != core.CodeResourceUnavailable || coreErr.Message != core.PreflightConnectFailed {
+			t.Fatalf("%s error = %v; want core.Error %s %q", name, err, core.CodeResourceUnavailable, core.PreflightConnectFailed)
+		}
+		if strings.Contains(err.Error(), "28P01") {
+			t.Fatalf("%s error text %q holds driver text", name, err.Error())
+		}
+		scrubbed := s.Error(err)
+		if !errors.As(scrubbed, &coreErr) || coreErr.Cause == nil {
+			t.Fatalf("%s scrubbed error = %v; want a cause", name, scrubbed)
+		}
+		cause := coreErr.Cause.Error()
+		if strings.Contains(cause, password) || strings.Contains(cause, u.String()) {
+			t.Fatalf("%s scrubbed cause holds the password", name)
+		}
+		if !strings.Contains(cause, "28P01") {
+			t.Fatalf("%s scrubbed cause = %q; want the driver SQLSTATE 28P01", name, cause)
+		}
+	}
+}
+
+func TestStatementTimeoutClass(t *testing.T) {
 	pg := startPostgres(t)
 	cfg := testResourceConfig(pg, 1)
 	p := openPool(t, pg, cfg)
