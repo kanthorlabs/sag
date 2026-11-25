@@ -34,12 +34,19 @@ func stageError(stage, err error) error {
 	return fmt.Errorf("%w: %w", stage, err)
 }
 
-func Run(ctx context.Context, opts Options) error {
+func ApplyProcessRules() error {
 	if err := removePGEnv(); err != nil {
 		return stageError(errEnv, err)
 	}
 	if err := disableCoreDumps(); err != nil {
 		return stageError(errCoreLimit, err)
+	}
+	return nil
+}
+
+func Run(ctx context.Context, opts Options) error {
+	if err := ApplyProcessRules(); err != nil {
+		return err
 	}
 	log := slog.New(slog.NewJSONHandler(opts.Log, nil))
 	log.Info("sag starting", "version", opts.Version)

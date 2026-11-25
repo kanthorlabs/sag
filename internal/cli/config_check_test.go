@@ -60,6 +60,35 @@ func TestConfigCheckSecretsDirMissingSecret(t *testing.T) {
 	}
 }
 
+func TestConfigCheckMasterKey(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"sag-tls-cert", "sag-tls-key", "sag-orders", "sag-partner-ledger"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setConfigCheckPaths(t, Paths{Secrets: dir, SecretUID: os.Getuid()})
+	code, _, errOut := runConfigCheck("--config", configFixture("ac01-valid"))
+	if code != ExitFailure || !strings.Contains(errOut, "sag-master-key") {
+		t.Fatalf("absent master key: exit = %d, stderr %q; want %d and the secret name", code, errOut, ExitFailure)
+	}
+	key := filepath.Join(dir, "sag-master-key")
+	if err := os.WriteFile(key, []byte("x"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut = runConfigCheck("--config", configFixture("ac01-valid"))
+	if code != ExitFailure || !strings.Contains(errOut, "want -r--------") {
+		t.Fatalf("master key mode 0444: exit = %d, stderr %q; want %d and the mode", code, errOut, ExitFailure)
+	}
+	if err := os.Chmod(key, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runConfigCheck("--config", configFixture("ac01-valid"))
+	if code != ExitOK || !strings.Contains(out, "config ok") {
+		t.Fatalf("all secrets valid: exit = %d, stdout %q, stderr %q; want %d and config ok", code, out, errOut, ExitOK)
+	}
+}
+
 func TestConfigCheckUnknownKind(t *testing.T) {
 	data, err := os.ReadFile(configFixture("ac01-valid"))
 	if err != nil {

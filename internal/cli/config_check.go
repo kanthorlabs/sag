@@ -56,7 +56,7 @@ func checkSecretFiles(cfg *config.Config) error {
 	} else if err != nil {
 		return err
 	}
-	for _, name := range cfg.SecretNames() {
+	for _, name := range append(cfg.SecretNames(), secret.MasterKeyName) {
 		if err := secret.CheckFile(filepath.Join(paths.Secrets, name), paths.SecretUID); err != nil {
 			return fmt.Errorf("secret %s: %w", name, err)
 		}

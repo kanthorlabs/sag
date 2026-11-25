@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/kanthorlabs/sag/internal/config"
+	"github.com/kanthorlabs/sag/internal/daemon"
 	"github.com/kanthorlabs/sag/internal/secret"
 )
 
@@ -68,6 +69,9 @@ var commands = []command{
 }
 
 func Run(args []string, std IO) int {
+	if err := daemon.ApplyProcessRules(); err != nil {
+		return fail(std, err)
+	}
 	for _, c := range commands {
 		if len(args) >= len(c.path) && slices.Equal(args[:len(c.path)], c.path) {
 			return c.run(args[len(c.path):], std)
