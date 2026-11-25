@@ -158,7 +158,7 @@ func (p *Postgres) Close(ctx context.Context) error {
 	if os.Getenv(KeepEnv) == "1" {
 		return nil
 	}
-	return podmanOK(ctx, nil, "rm", "--force", "--ignore", "--time", "0", p.Container)
+	return podmanOK(ctx, nil, "rm", "--force", "--ignore", "--volumes", "--time", "0", p.Container)
 }
 
 func (p *Postgres) waitReady(ctx context.Context) error {
