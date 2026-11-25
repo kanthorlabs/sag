@@ -51,6 +51,7 @@ func runArgs(s runSpec) []string {
 	if s.Network != "" {
 		args = append(args, "--network", s.Network)
 	}
+	args = append(args, "--log-driver", "k8s-file")
 	args = append(args, SecurityFlags...)
 	args = append(args, "-p", PublishHost+"::"+strconv.Itoa(ListenPort))
 	if s.ConfigFile != "" {

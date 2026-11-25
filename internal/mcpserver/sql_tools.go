@@ -9,7 +9,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/oklog/ulid/v2"
 
-	"github.com/kanthorlabs/sag/internal/audit"
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/pipeline"
 	"github.com/kanthorlabs/sag/internal/sql"
@@ -50,8 +49,7 @@ type resultOutput struct {
 	RequestID       string               `json:"request_id"`
 }
 
-func addSQLTools(srv *mcp.Server, calls caller) {
-	added := map[string]bool{}
+func addSQLTools(srv *mcp.Server, calls caller, added map[string]bool) {
 	for _, c := range registeredCapabilities() {
 		if c.Name != sql.CapabilityName {
 			continue
@@ -75,37 +73,42 @@ func addSQLTools(srv *mcp.Server, calls caller) {
 
 func callOperation(calls caller, capability, operation string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
-		id := ulid.Make().String()
+		preq := toolRequest(req, ulid.Make().String())
+		preq.Capability = capability
+		preq.Operation = operation
+		audited := false
 		defer func() {
 			if recover() != nil {
-				result, err = errorResult(id, core.NewError(core.CodeInternal, messageInternal))
+				result, err = panicResult(calls, preq, audited)
 			}
 		}()
 		input := json.RawMessage(req.Params.Arguments)
 		if len(input) == 0 {
 			input = json.RawMessage(`{}`)
 		}
-		preq := pipeline.Request{
-			ID:         id,
-			Sub:        subject(req),
-			JTI:        tokenExtra(req, audit.ExtraJTI),
-			RemoteAddr: tokenExtra(req, audit.ExtraRemoteAddr),
-			Capability: capability,
-			Operation:  operation,
-			Input:      input,
-		}
+		preq.Input = input
 		var target toolTarget
 		if err := json.Unmarshal(input, &target); err != nil {
-			return errorResult(id, calls.Reject(preq, core.NewError(core.CodeInvalidArgument, messageInvalidArguments)))
+			audited = true
+			return errorResult(preq.ID, calls.Reject(preq, core.NewError(core.CodeInvalidArgument, messageInvalidArguments)))
 		}
 		preq.Resource = target.Resource
 		start := time.Now()
 		res, err := calls.Execute(ctx, preq)
+		audited = true
 		if err != nil {
-			return errorResult(id, err)
+			return errorResult(preq.ID, err)
 		}
-		return successResult(id, res, time.Since(start))
+		return successResult(preq.ID, res, time.Since(start))
 	}
+}
+
+func panicResult(calls caller, preq pipeline.Request, audited bool) (*mcp.CallToolResult, error) {
+	err := error(core.NewError(core.CodeInternal, messageInternal))
+	if !audited {
+		err = calls.Reject(preq, err)
+	}
+	return errorResult(preq.ID, err)
 }
 
 func successResult(id string, res core.Result, elapsed time.Duration) (*mcp.CallToolResult, error) {
