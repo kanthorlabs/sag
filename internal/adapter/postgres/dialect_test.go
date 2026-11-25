@@ -126,3 +126,27 @@ func TestQueryRejectedMapping(t *testing.T) {
 		t.Fatalf("queryRejected(other) = %#v", err)
 	}
 }
+
+func TestReadCorpusFullStaticPath(t *testing.T) {
+	d := emptyDialect()
+	for _, text := range readCorpus {
+		tree := mustParseTree(t, text)
+		if err := d.ValidateStatic(tree); err != nil {
+			t.Errorf("ValidateStatic(%q): %v", text, err)
+			continue
+		}
+		rendered, err := d.Render(tree)
+		if err != nil {
+			t.Errorf("Render(%q): %v", text, err)
+			continue
+		}
+		again := mustParseTree(t, rendered)
+		if err := d.ValidateStatic(again); err != nil {
+			t.Errorf("ValidateStatic(Render(%q) = %q): %v", text, rendered, err)
+			continue
+		}
+		if _, err := d.PlanRowCap(again, rendered, 10); err != nil {
+			t.Errorf("PlanRowCap(%q): %v", rendered, err)
+		}
+	}
+}

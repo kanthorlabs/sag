@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"crypto/tls"
+	"maps"
 	"net"
 	"strings"
 	"testing"
@@ -40,6 +41,8 @@ func assertNoSecret(t *testing.T, err error) {
 	}
 }
 
+var wantRuntimeParams = map[string]string{"client_encoding": "UTF8"}
+
 func TestBuildsFromSecretFields(t *testing.T) {
 	cc := mustConnConfig(t, verifyFull(), "postgres://app:"+testPassword+"@db.example.net:6543/orders")
 	if cc.Host != "db.example.net" || cc.Port != 6543 || cc.Database != "orders" || cc.User != "app" || cc.Password != testPassword {
@@ -48,8 +51,8 @@ func TestBuildsFromSecretFields(t *testing.T) {
 	if cc.ConnectTimeout != 5*time.Second {
 		t.Fatalf("ConnectTimeout = %v; want 5s", cc.ConnectTimeout)
 	}
-	if len(cc.RuntimeParams) != 0 {
-		t.Fatalf("RuntimeParams = %v; want empty", cc.RuntimeParams)
+	if !maps.Equal(cc.RuntimeParams, wantRuntimeParams) {
+		t.Fatalf("RuntimeParams = %v; want %v", cc.RuntimeParams, wantRuntimeParams)
 	}
 }
 
@@ -214,8 +217,9 @@ func TestIgnoresPGEnvironment(t *testing.T) {
 	t.Setenv("PGAPPNAME", "evil")
 	t.Setenv("PGTARGETSESSIONATTRS", "any")
 	t.Setenv("PGOPTIONS", "-c default_transaction_read_only=off")
+	t.Setenv("PGCLIENTENCODING", "SJIS")
 	cc := mustConnConfig(t, verifyFull(), "postgres://app:"+testPassword+"@db.example.net:5432/orders")
-	if cc.Host != "db.example.net" || cc.Port != 5432 || cc.TLSConfig == nil || cc.Fallbacks != nil || len(cc.RuntimeParams) != 0 {
+	if cc.Host != "db.example.net" || cc.Port != 5432 || cc.TLSConfig == nil || cc.Fallbacks != nil || !maps.Equal(cc.RuntimeParams, wantRuntimeParams) {
 		t.Fatalf("PG environment leaked into the config: host %q port %d params %v", cc.Host, cc.Port, cc.RuntimeParams)
 	}
 }

@@ -54,7 +54,7 @@ func connConfig(cfg core.ResourceConfig, cred secret.Credential) (*pgx.ConnConfi
 	cc.Password = f.password
 	cc.TLSConfig = tlsConfig
 	cc.Fallbacks = nil
-	cc.RuntimeParams = map[string]string{}
+	cc.RuntimeParams = map[string]string{"client_encoding": "UTF8"}
 	cc.ConnectTimeout = cfg.ConnectTimeout
 	cc.DefaultQueryExecMode = pgx.QueryExecModeExec
 	return cc, nil

@@ -19,7 +19,9 @@ const (
 	productSub      = "product"
 	productResource = "product"
 	productDatabase = "sag_product"
-	productSelect   = "SELECT 1 AS sag_product_probe_7f3"
+	productProbe    = "sag_product_probe_7f3"
+	productSelect   = "select  1  as  " + productProbe
+	productRendered = "DECLARE sag_c NO SCROLL CURSOR FOR SELECT 1 AS " + productProbe
 	productInsert   = "INSERT INTO product_t VALUES (7317)"
 	productSQLLimit = 16 * 1024
 )
@@ -45,12 +47,13 @@ func init() {
 	})
 }
 
-type productError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+type productOutput struct {
+	Code    string  `json:"code"`
+	Message string  `json:"message"`
+	Rows    [][]any `json:"rows"`
 }
 
-func productQuery(ctx context.Context, t *testing.T, env harness.Env, text string) productError {
+func productCall(ctx context.Context, t *testing.T, env harness.Env, text string) (productOutput, bool) {
 	t.Helper()
 	session, err := env.Client(ctx, harness.ContainerSAG, productSub)
 	if err != nil {
@@ -64,24 +67,48 @@ func productQuery(ctx context.Context, t *testing.T, env harness.Env, text strin
 	if err != nil {
 		t.Fatalf("sql_query of %d bytes: %v", len(text), err)
 	}
-	if !res.IsError || len(res.Content) != 1 {
-		t.Fatalf("sql_query of %d bytes returned a result; want an error: %+v", len(text), res.Content)
+	if len(res.Content) != 1 {
+		t.Fatalf("sql_query of %d bytes content = %+v; want one item", len(text), res.Content)
 	}
 	tc, ok := res.Content[0].(*mcp.TextContent)
 	if !ok {
 		t.Fatalf("sql_query error content is %T", res.Content[0])
 	}
-	var out productError
+	var out productOutput
 	if err := json.Unmarshal([]byte(tc.Text), &out); err != nil {
-		t.Fatalf("sql_query error %q: %v", tc.Text, err)
+		t.Fatalf("sql_query content %q: %v", tc.Text, err)
+	}
+	return out, res.IsError
+}
+
+func productQuery(ctx context.Context, t *testing.T, env harness.Env, text string) productOutput {
+	t.Helper()
+	out, isError := productCall(ctx, t, env, text)
+	if !isError {
+		t.Fatalf("sql_query of %d bytes returned a result; want an error: %+v", len(text), out)
 	}
 	return out
+}
+
+func productSelectRow(ctx context.Context, t *testing.T, env harness.Env) {
+	t.Helper()
+	out, isError := productCall(ctx, t, env, productSelect)
+	if isError {
+		t.Fatalf("sql_query %q = %s %q; want a result", productSelect, out.Code, out.Message)
+	}
+	if len(out.Rows) != 1 || len(out.Rows[0]) != 1 || out.Rows[0][0] != float64(1) {
+		t.Fatalf("sql_query %q rows = %v; want [[1]]", productSelect, out.Rows)
+	}
 }
 
 func productServed(ctx context.Context, t *testing.T, env harness.Env) {
 	t.Helper()
 	deadline := time.Now().Add(70 * time.Second)
-	for productQuery(ctx, t, env, productSelect).Code == "resource_unavailable" {
+	for {
+		out, isError := productCall(ctx, t, env, productSelect)
+		if !isError || out.Code != "resource_unavailable" {
+			return
+		}
 		if time.Now().After(deadline) {
 			t.Fatalf("resource %s is not served after 70 s", productResource)
 		}
@@ -94,24 +121,36 @@ func runProductRejectsAll(t *testing.T, env harness.Env) {
 	defer cancel()
 	productServed(ctx, t, env)
 	start := time.Now()
-	t.Run("SELECT rejected until layer 3", func(t *testing.T) {
-		if got := productQuery(ctx, t, env, productSelect); got.Code != "query_rejected" {
-			t.Fatalf("sql_query %q = %+v; want query_rejected", productSelect, got)
-		}
+	t.Run("SELECT served by C1", func(t *testing.T) {
+		productSelectRow(ctx, t, env)
 	})
 	t.Run("INSERT rejected by C1", func(t *testing.T) {
-		if got := productQuery(ctx, t, env, productInsert); got.Code != "query_rejected" {
-			t.Fatalf("sql_query %q = %+v; want query_rejected", productInsert, got)
+		if got := productQuery(ctx, t, env, productInsert); got.Code != "query_rejected" || got.Message != "statement rejected: statement:InsertStmt" {
+			t.Fatalf("sql_query %q = %+v; want query_rejected \"statement rejected: statement:InsertStmt\"", productInsert, got)
 		}
 	})
-	logs, err := env.Postgres(env.Major()).Logs(ctx, start.Add(-time.Second))
-	if err != nil {
-		t.Fatalf("PostgreSQL logs: %v", err)
-	}
-	for _, text := range []string{"sag_product_probe_7f3", "VALUES (7317)"} {
-		if strings.Contains(logs, text) {
-			t.Fatalf("PostgreSQL log holds %q; the product sent agent text to the server:\n%s", text, logs)
+	pg := env.Postgres(env.Major())
+	var logs string
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var err error
+		logs, err = pg.Logs(ctx, start.Add(-time.Second))
+		if err != nil {
+			t.Fatalf("PostgreSQL logs: %v", err)
 		}
+		if strings.Contains(logs, productRendered) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if !strings.Contains(logs, productRendered) {
+		t.Fatalf("PostgreSQL log has no statement %q:\n%s", productRendered, logs)
+	}
+	if n, rendered := strings.Count(logs, productProbe), strings.Count(logs, productRendered); n != rendered {
+		t.Fatalf("PostgreSQL log holds %q %d times, but only %d times in the rendered form %q:\n%s", productProbe, n, rendered, productRendered, logs)
+	}
+	if strings.Contains(logs, "VALUES (7317)") {
+		t.Fatalf("PostgreSQL log holds %q; the product sent a rejected INSERT to the server:\n%s", "VALUES (7317)", logs)
 	}
 }
 
@@ -126,8 +165,8 @@ func runProductSQLSizeLimit(t *testing.T, env harness.Env) {
 	if len(atLimit) != productSQLLimit {
 		t.Fatalf("chain length = %d; want %d", len(atLimit), productSQLLimit)
 	}
-	if got := productQuery(ctx, t, env, atLimit); got.Code != "query_rejected" {
-		t.Fatalf("sql_query at %d bytes = %+v; want query_rejected", len(atLimit), got)
+	if got, isError := productCall(ctx, t, env, atLimit); isError && got.Code == "invalid_argument" {
+		t.Fatalf("sql_query at %d bytes = %+v; want no invalid_argument", len(atLimit), got)
 	}
 	for _, text := range []string{atLimit + "1", chain(22000)} {
 		if got := productQuery(ctx, t, env, text); got.Code != "invalid_argument" || got.Message != "sql exceeds 16384 bytes" {
@@ -142,7 +181,5 @@ func runProductSQLSizeLimit(t *testing.T, env harness.Env) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /healthz = %d after the size limit calls", resp.StatusCode)
 	}
-	if got := productQuery(ctx, t, env, productSelect); got.Code != "query_rejected" {
-		t.Fatalf("sql_query after the size limit calls = %+v; want query_rejected from a live daemon", got)
-	}
+	productSelectRow(ctx, t, env)
 }

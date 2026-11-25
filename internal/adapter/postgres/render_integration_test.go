@@ -82,6 +82,12 @@ func TestRenderedTextLexerSettings(t *testing.T) {
 	if got := show(t, ctx, c, "standard_conforming_strings"); got != wantSCS {
 		t.Fatalf("session standard_conforming_strings = %q; want %q", got, wantSCS)
 	}
+	if got := show(t, ctx, c, "client_encoding"); got != "UTF8" {
+		t.Fatalf("session client_encoding = %q; want UTF8 from the startup parameter over the role setting", got)
+	}
+	if err := c.Exec(ctx, "SET client_encoding = 'SJIS'"); err != nil {
+		t.Fatalf("SET client_encoding: %v", err)
+	}
 	if got := show(t, ctx, c, "client_encoding"); got != "SJIS" {
 		t.Fatalf("session client_encoding = %q; want SJIS", got)
 	}

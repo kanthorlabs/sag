@@ -34,8 +34,8 @@ type ac15Case struct {
 func ac15Cases() []ac15Case {
 	return []ac15Case{
 		{"SELECT pg_advisory_lock(15001) AS ac15_r01", "function_prefix:pg_advisory_lock", "ac15_r01", ac15NoAdvisoryLock},
-		{"SELECT brin_summarize_new_values('ac15_brin_idx'::regclass) AS ac15_r02", "function_volatile:brin_summarize_new_values", "ac15_r02", nil},
-		{"SELECT gin_clean_pending_list('ac15_gin_idx'::regclass) AS ac15_r03", "function_volatile:gin_clean_pending_list", "ac15_r03", nil},
+		{"SELECT brin_summarize_new_values('ac15_brin_idx'::regclass) AS ac15_r02", "function_denied:brin_summarize_new_values", "ac15_r02", nil},
+		{"SELECT gin_clean_pending_list('ac15_gin_idx'::regclass) AS ac15_r03", "function_denied:gin_clean_pending_list", "ac15_r03", nil},
 		{"SELECT * FROM ts_stat('SELECT to_tsvector(''ac15_r04'')')", "function_denied:ts_stat", "ac15_r04", nil},
 		{"SELECT pg_sleep(10) AS ac15_r05", "function_prefix:pg_sleep", "ac15_r05", nil},
 		{"SELECT pg_read_file('postgresql.conf') AS ac15_r06", "function_prefix:pg_read_file", "ac15_r06", nil},
