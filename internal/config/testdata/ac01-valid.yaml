@@ -1,0 +1,36 @@
+version: 1
+
+server:
+  listen: 0.0.0.0:8443
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+
+auth:
+  version: 1
+  token_lifetime: 8760h
+
+preflight:
+  recheck_interval: 10m
+
+defaults:
+  limits:
+    max_rows: 100
+    max_result_bytes: 32768
+    statement_timeout: 15s
+
+resources:
+  orders:
+    kind: postgres
+    description: Orders service, primary server. Schemas public and billing.
+    connection: secret:sag-orders
+    agents: [claude-code-shop, report-script]
+  partner-ledger:
+    kind: postgres
+    description: Ledger database of a partner company.
+    connection: secret:sag-partner-ledger
+    tls: insecure-skip-verify
+    agents: [claude-code-shop]
+    limits:
+      max_rows: 500
+    redact:
+      columns: ["*iban*"]
