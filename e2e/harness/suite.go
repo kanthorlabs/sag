@@ -503,6 +503,10 @@ func (s *Suite) HTTPClient() *http.Client {
 	return s.http
 }
 
+func (s *Suite) CAPEM() []byte {
+	return slices.Clone(s.run.CA.CertPEM)
+}
+
 func (s *Suite) agentName(sub string) string {
 	for _, ac := range s.acs {
 		for _, a := range ac.Agents {

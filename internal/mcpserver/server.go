@@ -53,7 +53,7 @@ func New(opts Options) (*mcp.Server, error) {
 func Handler(srv *mcp.Server) http.Handler {
 	return mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return srv },
-		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, PropagateRequestCancellation: true},
 	)
 }
 

@@ -147,6 +147,7 @@ func TestListResourcesWithoutIdentity(t *testing.T) {
 }
 
 func TestListResourcesAnnotations(t *testing.T) {
+	withCapabilities(t)
 	inv := &laxInventory{}
 	session := connect(t, Handler(newServer(inv, &recordingCaller{}, "test")), "")
 	tools, err := session.ListTools(context.Background(), nil)

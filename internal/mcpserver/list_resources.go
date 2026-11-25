@@ -41,17 +41,6 @@ var listResourcesOutputSchema = json.RawMessage(`{
   "additionalProperties": false
 }`)
 
-type ResourceInfo struct {
-	Name         string   `json:"name"`
-	Kind         string   `json:"kind"`
-	Description  string   `json:"description"`
-	Capabilities []string `json:"capabilities"`
-}
-
-type ListResourcesOutput struct {
-	Resources []ResourceInfo `json:"resources"`
-}
-
 func addListResources(srv *mcp.Server, inv visibility, calls caller) {
 	srv.AddTool(&mcp.Tool{
 		Name:         listResourcesName,

@@ -33,22 +33,6 @@ type toolTarget struct {
 	Resource string `json:"resource"`
 }
 
-type toolError struct {
-	Code      core.Code `json:"code"`
-	Message   string    `json:"message"`
-	RequestID string    `json:"request_id"`
-}
-
-type resultOutput struct {
-	Columns         []core.Column        `json:"columns"`
-	Rows            [][]any              `json:"rows"`
-	RowCount        int                  `json:"row_count"`
-	Truncated       bool                 `json:"truncated"`
-	TruncatedReason core.TruncatedReason `json:"truncated_reason,omitempty"`
-	DurationMS      int64                `json:"duration_ms"`
-	RequestID       string               `json:"request_id"`
-}
-
 func addSQLTools(srv *mcp.Server, calls caller, added map[string]bool) {
 	for _, c := range registeredCapabilities() {
 		if c.Name != sql.CapabilityName {
@@ -112,7 +96,7 @@ func panicResult(calls caller, preq pipeline.Request, audited bool) (*mcp.CallTo
 }
 
 func successResult(id string, res core.Result, elapsed time.Duration) (*mcp.CallToolResult, error) {
-	out := resultOutput{
+	out := SQLQueryOutput{
 		Columns:         res.Columns,
 		Rows:            res.Rows,
 		RowCount:        len(res.Rows),
@@ -138,7 +122,7 @@ func successResult(id string, res core.Result, elapsed time.Duration) (*mcp.Call
 }
 
 func errorResult(id string, err error) (*mcp.CallToolResult, error) {
-	out := toolError{Code: core.CodeInternal, Message: messageInternal, RequestID: id}
+	out := ErrorResult{Code: core.CodeInternal, Message: messageInternal, RequestID: id}
 	var ce *core.Error
 	if errors.As(err, &ce) && ce.Code != "" && ce.Message != "" {
 		out.Code, out.Message = ce.Code, ce.Message

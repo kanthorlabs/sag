@@ -65,13 +65,13 @@ func (s *Server) Handler() http.Handler {
 	protected.Handle("/mcp", bridgeTokenInfo(s.opts.MCP))
 	authenticated := s.authenticate(protected)
 
-	return limitBody(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.originCheck(limitBody(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == healthzPath && r.URL.RawPath == "" {
 			healthz(w, r)
 			return
 		}
 		authenticated.ServeHTTP(w, r)
-	}))
+	})))
 }
 
 func (s *Server) Run(ctx context.Context) error {

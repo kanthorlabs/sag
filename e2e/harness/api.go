@@ -102,12 +102,27 @@ type Env interface {
 	StartSAG(ctx context.Context, spec ContainerSpec) (Container, error)
 	URL(container string) string
 	HTTPClient() *http.Client
+	CAPEM() []byte
 	Token(ctx context.Context, container, sub string) (string, error)
 	Client(ctx context.Context, container, sub string) (*mcp.ClientSession, error)
 	Logs(ctx context.Context, container string) (string, error)
 	Audit(ctx context.Context, container string) ([]json.RawMessage, error)
 	Snapshots(id string) []DatabaseSnapshot
 }
+
+type ClaudeRequest struct {
+	MCPURL       string
+	Token        string
+	CAPEM        []byte
+	Prompt       string
+	AllowedTools []string
+}
+
+type ClaudeRunner func(ctx context.Context, req ClaudeRequest) (testenv.Result, error)
+
+var ErrClaudePrerequisite = errors.New("prerequisite missing")
+
+var _ ClaudeRunner = RunClaude
 
 var registered []AC
 
