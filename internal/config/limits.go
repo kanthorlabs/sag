@@ -15,7 +15,7 @@ var defaultLimits = Limits{
 	LockTimeout:           2 * time.Second,
 	ConnectTimeout:        5 * time.Second,
 	MaxConcurrentPerAgent: 20,
-	PoolSize:              2,
+	PoolSize:              5,
 }
 
 var hardMaximums = Limits{
@@ -26,7 +26,7 @@ var hardMaximums = Limits{
 	LockTimeout:                     2 * time.Second,
 	IdleInTransactionSessionTimeout: 35 * time.Second,
 	ConnectTimeout:                  5 * time.Second,
-	PoolSize:                        4,
+	PoolSize:                        20,
 }
 
 const minLimitDuration = time.Millisecond

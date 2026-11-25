@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 6 |
+| Status | Revision 7 |
 | Date | 2026-11-25 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
@@ -411,7 +411,7 @@ SAG reads only these catalog objects and settings. The conformance suite runs ea
 | `idle_in_transaction_session_timeout` | `statement_timeout` + 5 s | 35 s | `SET LOCAL idle_in_transaction_session_timeout`. |
 | `connect_timeout` | 5 s | 5 s | Driver setting. |
 | `max_concurrent_per_agent` | 20 | None. Operator config, not a request value. | One core semaphore for each JWT `sub`, shared across all resources. It runs before `Resource.Execute`. Excess requests get `rate_limited`. |
-| `pool_size` | 2 | 4 | Driver pool setting for each resource. This is the database load limit. When the pool is exhausted, a request waits for a connection up to its `statement_timeout`, then returns `timeout`. |
+| `pool_size` | 5 | 20 | Driver pool setting for each resource. This is the database load limit. When the pool is exhausted, a request waits for a connection up to its `statement_timeout`, then returns `timeout`. |
 
 Rules:
 

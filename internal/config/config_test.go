@@ -95,7 +95,7 @@ func TestDefaults(t *testing.T) {
 		IdleInTransactionSessionTimeout: 20 * time.Second,
 		ConnectTimeout:                  5 * time.Second,
 		MaxConcurrentPerAgent:           20,
-		PoolSize:                        2,
+		PoolSize:                        5,
 	}
 	if cfg.Defaults.Limits != want {
 		t.Fatalf("defaults limits = %+v; want %+v", cfg.Defaults.Limits, want)
@@ -194,7 +194,7 @@ func TestHardMaximums(t *testing.T) {
 		{"lock_timeout", "2s", "2001ms", "0s", "-1s"},
 		{"idle_in_transaction_session_timeout", "35s", "35001ms", "0s", "-1s"},
 		{"connect_timeout", "5s", "5001ms", "0s", "-1s"},
-		{"pool_size", "4", "5", "0", "-1"},
+		{"pool_size", "20", "21", "0", "-1"},
 	}
 	scopes := map[string]func(string) string{
 		"defaults": func(line string) string { return withDefaults("limits:\n  " + line + "\n") },
