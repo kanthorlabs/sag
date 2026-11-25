@@ -22,6 +22,7 @@ const (
 	maxMessageLen  = 500
 	reportSchema   = 1
 	noResultReason = "no result (timeout or crash)"
+	skipMessage    = "excluded by AC_SKIP"
 )
 
 var phaseGroups = []string{"parallel", "sequential"}
@@ -75,7 +76,7 @@ type report struct {
 	Gate         gate          `json:"gate"`
 }
 
-func buildReport(layer int, runs []majorRun, table []e2e.ACRow, info buildInfo) report {
+func buildReport(layer int, runs []majorRun, table []e2e.ACRow, skip []string, info buildInfo) report {
 	runs = slices.SortedFunc(slices.Values(runs), func(a, b majorRun) int { return a.Major - b.Major })
 	r := report{
 		Schema:       reportSchema,
@@ -95,8 +96,11 @@ func buildReport(layer int, runs []majorRun, table []e2e.ACRow, info buildInfo) 
 	}
 	for _, row := range table {
 		ac := mergeMajors(row, runs)
+		if slices.Contains(skip, row.ID) {
+			ac = excluded(ac)
+		}
 		r.ACs = append(r.ACs, ac)
-		if ac.Layer <= layer && ac.Status != statusPass {
+		if ac.Layer <= layer && ac.Status != statusPass && ac.Status != statusExcluded && ac.ID != ciAC {
 			r.Gate.Failing = append(r.Gate.Failing, ac.Test)
 		}
 	}
@@ -152,6 +156,15 @@ func mergeMajors(row e2e.ACRow, runs []majorRun) acResult {
 	default:
 		ac.Status = statusFail
 		ac.Message = truncate(strings.Join(messages, "; "))
+	}
+	return ac
+}
+
+func excluded(ac acResult) acResult {
+	ac.Status = statusExcluded
+	ac.Message = skipMessage
+	for major := range ac.ByMajor {
+		ac.ByMajor[major] = statusExcluded
 	}
 	return ac
 }

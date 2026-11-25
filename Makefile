@@ -45,7 +45,7 @@ test-integration:
 e2e: test image image-conformance
 	mkdir -p $(REPORT)/pg$(PG)
 	SAG_TEST_PG_MAJOR=$(PG) SAG_AC_SKIP='$(AC_SKIP)' $(E2E_TEST) $(if $(RUN),-run 'TestE2E/.*/$(RUN)') ./e2e/... > $(REPORT)/pg$(PG)/events.json; \
-	$(GO) run ./e2e/cmd/acreport -layer $(LAYER) -in $(REPORT)/pg$(PG)/events.json -out $(REPORT)
+	$(GO) run ./e2e/cmd/acreport -layer $(LAYER) -skip '$(AC_SKIP)' -in $(REPORT)/pg$(PG)/events.json -out $(REPORT)
 
 e2e-matrix: test image image-conformance
 	for m in $(PGS); do $(MAKE) test-integration PG=$$m PKG=./... RUN= || exit 1; done
@@ -56,7 +56,7 @@ e2e-matrix: test image image-conformance
 		pids="$$pids $$!"; \
 	done; \
 	for p in $$pids; do wait $$p || true; done; \
-	$(GO) run ./e2e/cmd/acreport -layer $(LAYER) $(foreach m,$(PGS),-in $(REPORT)/pg$(m)/events.json) -out $(REPORT)
+	$(GO) run ./e2e/cmd/acreport -layer $(LAYER) -skip '$(AC_SKIP)' $(foreach m,$(PGS),-in $(REPORT)/pg$(m)/events.json) -out $(REPORT)
 
 contract-check:
 	$(GO) build ./...

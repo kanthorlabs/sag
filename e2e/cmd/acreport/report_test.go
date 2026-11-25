@@ -79,7 +79,7 @@ func TestStatusRules(t *testing.T) {
 		finished("TestE2E/parallel/AC03_JWTRejects", "skip", 0.1, "    ac03_test.go:5: no prerequisite\n"),
 		[]event{{Action: "run", Test: "TestE2E/sequential/AC04_JWTGenerateRefuses"}},
 	)
-	r := buildReport(1, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, buildInfo{})
+	r := buildReport(1, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, nil, buildInfo{})
 
 	cases := []struct {
 		id, status, test string
@@ -107,7 +107,7 @@ func TestStatusRules(t *testing.T) {
 
 func TestNotImplementedWhenAbsent(t *testing.T) {
 	run := parsed(t, finished("TestE2E/parallel/AC01_ConfigCheckRejects", "pass", 1))
-	r := buildReport(6, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, buildInfo{})
+	r := buildReport(6, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, nil, buildInfo{})
 
 	if len(r.ACs) != len(e2e.ACTable) {
 		t.Fatalf("report has %d ACs, want %d", len(r.ACs), len(e2e.ACTable))
@@ -160,7 +160,7 @@ func TestGateFailsOnEarlierLayer(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := buildReport(c.layer, []majorRun{{Major: 17, Run: parsed(t, c.events)}}, e2e.ACTable, buildInfo{})
+			r := buildReport(c.layer, []majorRun{{Major: 17, Run: parsed(t, c.events)}}, e2e.ACTable, nil, buildInfo{})
 			if r.Gate.Passed != c.passed || r.Gate.Layer != c.layer || !slices.Equal(r.Gate.Failing, c.failing) {
 				t.Errorf("gate = %+v, want passed %v failing %v", r.Gate, c.passed, c.failing)
 			}
@@ -170,7 +170,7 @@ func TestGateFailsOnEarlierLayer(t *testing.T) {
 
 func TestMarkdownHas35Rows(t *testing.T) {
 	run := parsed(t, finished("TestE2E/parallel/AC01_ConfigCheckRejects", "fail", 1, "    x.go:1: bad | pipe\n"))
-	r := buildReport(1, []majorRun{{Major: 14, Run: run}, {Major: 17, Run: run}}, e2e.ACTable, buildInfo{Commit: "abc123", Dirty: true, Image: "sha256:feed", ImageVersion: "sag-layer-4-1-gabc123"})
+	r := buildReport(1, []majorRun{{Major: 14, Run: run}, {Major: 17, Run: run}}, e2e.ACTable, nil, buildInfo{Commit: "abc123", Dirty: true, Image: "sha256:feed", ImageVersion: "sag-layer-4-1-gabc123"})
 
 	var b bytes.Buffer
 	if err := writeMarkdown(&b, r); err != nil {
@@ -198,7 +198,7 @@ func TestMergeMajors(t *testing.T) {
 		return parsed(t, finished("TestE2E/parallel/AC01_ConfigCheckRejects", "pass", elapsed), finished("TestE2E/parallel/AC03_JWTRejects", "pass", elapsed))
 	}
 	failAC01 := parsed(t, finished("TestE2E/parallel/AC01_ConfigCheckRejects", "fail", 1, "    a.go:1: boom\n"))
-	r := buildReport(1, []majorRun{{Major: 19, Run: failAC01}, {Major: 14, Run: pass(1)}, {Major: 17, Run: pass(3)}}, e2e.ACTable, buildInfo{})
+	r := buildReport(1, []majorRun{{Major: 19, Run: failAC01}, {Major: 14, Run: pass(1)}, {Major: 17, Run: pass(3)}}, e2e.ACTable, nil, buildInfo{})
 
 	if !slices.Equal(r.PGMajors, []int{14, 17, 19}) {
 		t.Errorf("pg_majors = %v, want [14 17 19]", r.PGMajors)
@@ -212,7 +212,7 @@ func TestMergeMajors(t *testing.T) {
 	if ac03.Status != statusFail || ac03.ByMajor["19"] != statusNotImplemented || !strings.Contains(ac03.Message, "pg19: not run") {
 		t.Errorf("AC03 = %+v, want FAIL with pg19 NOT_IMPLEMENTED", ac03)
 	}
-	allPass := buildReport(1, []majorRun{{Major: 14, Run: pass(1)}, {Major: 17, Run: pass(2)}}, e2e.ACTable, buildInfo{})
+	allPass := buildReport(1, []majorRun{{Major: 14, Run: pass(1)}, {Major: 17, Run: pass(2)}}, e2e.ACTable, nil, buildInfo{})
 	if got := find(t, allPass, "AC01"); got.Status != statusPass || got.DurationMS != 2000 {
 		t.Errorf("AC01 = %+v, want PASS duration 2000", got)
 	}
@@ -299,7 +299,7 @@ func TestDurationIncludesParallelSubtests(t *testing.T) {
 		finished("TestE2E/parallel/AC02_StartRefusesBadSecrets/shortMasterKey", "pass", 1.34),
 		finished("TestE2E/parallel/AC02_StartRefusesBadSecrets", "pass", 0),
 	)
-	r := buildReport(1, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, buildInfo{})
+	r := buildReport(1, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, nil, buildInfo{})
 	if got := find(t, r, "AC02"); got.Status != statusPass || got.DurationMS != 1340 {
 		t.Errorf("AC02 = %+v, want PASS duration 1340", got)
 	}
@@ -309,7 +309,7 @@ func TestOtherSubtestsListed(t *testing.T) {
 	r := buildReport(1, []majorRun{
 		{Major: 14, Run: parsed(t, skeletonPass(), finished("TestE2E/parallel/Extra_Check", "fail", 1))},
 		{Major: 17, Run: parsed(t, skeletonPass())},
-	}, e2e.ACTable, buildInfo{})
+	}, e2e.ACTable, nil, buildInfo{})
 	want := []otherResult{
 		{Test: "TestE2E/parallel/Extra_Check", Status: statusFail, ByMajor: map[string]string{"14": statusFail, "17": statusNotRun}},
 		{Test: "TestE2E/parallel/Harness_Skeleton", Status: statusPass, ByMajor: map[string]string{"14": statusPass, "17": statusPass}},
@@ -325,5 +325,66 @@ func TestOtherSubtestsListed(t *testing.T) {
 		if !strings.Contains(b.String(), line) {
 			t.Errorf("markdown misses %q:\n%s", line, b.String())
 		}
+	}
+}
+
+func TestRunGateExcludesAC35(t *testing.T) {
+	r := buildReport(6, []majorRun{{Major: 17, Run: parsed(t, skeletonPass())}}, e2e.ACTable, nil, buildInfo{})
+	if got := find(t, r, "AC35"); got.Status != statusNotImplemented {
+		t.Errorf("AC35 = %+v, want NOT_IMPLEMENTED", got)
+	}
+	if slices.Contains(r.Gate.Failing, "AC35_CI") {
+		t.Errorf("gate failing = %v, want no AC35_CI", r.Gate.Failing)
+	}
+	if !slices.Contains(r.Gate.Failing, "AC31_ClaudeCode") {
+		t.Errorf("gate failing = %v, want AC31_ClaudeCode", r.Gate.Failing)
+	}
+}
+
+func TestRunGateExcludesSkipped(t *testing.T) {
+	events := skeletonPass()
+	for _, row := range e2e.ACTable {
+		if row.ID != "AC31" && row.ID != "AC35" {
+			events = append(events, finished("TestE2E/parallel/"+row.Test, "pass", 1)...)
+		}
+	}
+	runs := []majorRun{{Major: 14, Run: parsed(t, events)}, {Major: 17, Run: parsed(t, events)}}
+
+	r := buildReport(6, runs, e2e.ACTable, []string{"AC31"}, buildInfo{})
+	ac31 := find(t, r, "AC31")
+	wantByMajor := map[string]string{"14": statusExcluded, "17": statusExcluded}
+	if ac31.Status != statusExcluded || fmt.Sprint(ac31.ByMajor) != fmt.Sprint(wantByMajor) || ac31.Message != skipMessage {
+		t.Errorf("AC31 = %+v, want EXCLUDED by_major %v message %q", ac31, wantByMajor, skipMessage)
+	}
+	if !r.Gate.Passed || len(r.Gate.Failing) != 0 {
+		t.Errorf("gate = %+v, want passed", r.Gate)
+	}
+
+	r = buildReport(6, runs, e2e.ACTable, nil, buildInfo{})
+	if r.Gate.Passed || !slices.Equal(r.Gate.Failing, []string{"AC31_ClaudeCode"}) {
+		t.Errorf("gate = %+v, want failing [AC31_ClaudeCode]", r.Gate)
+	}
+
+	r = buildReport(6, runs, e2e.ACTable, []string{"AC01"}, buildInfo{})
+	if got := find(t, r, "AC01"); got.Status != statusExcluded {
+		t.Errorf("AC01 = %+v, want EXCLUDED", got)
+	}
+	if !slices.Equal(r.Gate.Failing, []string{"AC31_ClaudeCode"}) {
+		t.Errorf("gate failing = %v, want [AC31_ClaudeCode]", r.Gate.Failing)
+	}
+}
+
+func TestRunSkipFlag(t *testing.T) {
+	events := slices.Concat(skeletonPass(), finished("TestE2E/parallel/AC01_ConfigCheckRejects", "pass", 1), finished("TestE2E/parallel/AC02_StartRefusesBadSecrets", "pass", 1), finished("TestE2E/parallel/AC03_JWTRejects", "pass", 1))
+	dir := t.TempDir()
+	in := writeEvents(t, dir, 17, events)
+	out := filepath.Join(dir, "out")
+	probe := func() buildInfo { return buildInfo{} }
+	var stderr bytes.Buffer
+	if code := run([]string{"-layer", "1", "-in", in, "-out", out}, &stderr, probe); code != 1 {
+		t.Errorf("exit without -skip = %d, want 1", code)
+	}
+	if code := run([]string{"-layer", "1", "-in", in, "-skip", " AC04, AC31 ", "-out", out}, &stderr, probe); code != 0 {
+		t.Errorf("exit with -skip = %d, want 0; stderr: %s", code, stderr.String())
 	}
 }
