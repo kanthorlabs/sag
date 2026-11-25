@@ -18,8 +18,16 @@ import (
 	"github.com/kanthorlabs/sag/e2e"
 )
 
+var imageRef = imageFromEnv()
+
+func imageFromEnv() string {
+	if v := os.Getenv("SAG_E2E_IMAGE"); v != "" {
+		return v
+	}
+	return "localhost/sag:e2e"
+}
+
 const (
-	imageRef     = "localhost/sag:e2e"
 	jsonFileName = "ac-report.json"
 	mdFileName   = "ac-report.md"
 	maxLayer     = 6

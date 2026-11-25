@@ -29,11 +29,23 @@ import (
 )
 
 const (
-	Image            = "localhost/sag:e2e"
-	ConformanceImage = "localhost/sag-conformance:e2e"
-	defaultDatabase  = "postgres"
-	fixtureHost      = "localhost"
+	ImageEnv            = "SAG_E2E_IMAGE"
+	ConformanceImageEnv = "SAG_E2E_CONFORMANCE_IMAGE"
+	defaultDatabase     = "postgres"
+	fixtureHost         = "localhost"
 )
+
+var (
+	Image            = envOr(ImageEnv, "localhost/sag:e2e")
+	ConformanceImage = envOr(ConformanceImageEnv, "localhost/sag-conformance:e2e")
+)
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 var startOrder = []string{ContainerSAG, ContainerConformance, ContainerV2, ContainerROAudit, ContainerRate}
 
