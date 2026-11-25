@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -21,6 +22,10 @@ import (
 )
 
 const closeTimeout = 5 * time.Second
+
+const maxMessageBodyBytes = 16 << 20
+
+const messageTooLarge = "upstream error, message exceeds 16777216 bytes"
 
 const acquireTimedOut = "timed out waiting for a connection"
 
@@ -43,12 +48,17 @@ func newPool(ctx context.Context, cc *pgx.ConnConfig, cfg core.ResourceConfig) (
 	pc.MaxConns = int32(cfg.PoolSize)
 	pc.MinConns = 0
 	pc.MinIdleConns = 0
-	pc.AfterConnect = runSessionGuard
+	pc.AfterConnect = prepareConn
 	p, err := pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
 		return nil, fmt.Errorf("pool: %w", err)
 	}
 	return &pool{p: p, cc: cc.Copy()}, nil
+}
+
+func prepareConn(ctx context.Context, c *pgx.Conn) error {
+	c.PgConn().Frontend().SetMaxBodyLen(maxMessageBodyBytes)
+	return runSessionGuard(ctx, c)
 }
 
 func runSessionGuard(ctx context.Context, c *pgx.Conn) error {
@@ -73,7 +83,7 @@ func (p *pool) Dedicated(ctx context.Context) (sql.Conn, error) {
 	if err != nil {
 		return nil, acquireError(ctx, err)
 	}
-	if err := runSessionGuard(ctx, c); err != nil {
+	if err := prepareConn(ctx, c); err != nil {
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 		defer cancel()
 		_ = c.Close(closeCtx)
@@ -140,9 +150,14 @@ func (c *conn) Close() error {
 }
 
 type rows struct {
-	ctx   context.Context
-	r     pgx.Rows
-	types *pgtype.Map
+	ctx       context.Context
+	r         pgx.Rows
+	types     *pgtype.Map
+	textLimit int
+}
+
+func (r *rows) LimitText(n int) {
+	r.textLimit = n
 }
 
 func (r *rows) Columns() []core.Column {
@@ -163,7 +178,7 @@ func (r *rows) Values() ([]any, error) {
 	raw := r.r.RawValues()
 	values := make([]any, len(raw))
 	for i := range raw {
-		v, err := decodeValue(r.types, fds[i].DataTypeOID, raw[i])
+		v, err := decodeValue(r.types, fds[i].DataTypeOID, raw[i], r.textLimit)
 		if err != nil {
 			return nil, fmt.Errorf("column %d: %w", i+1, err)
 		}
@@ -194,7 +209,7 @@ func typeName(m *pgtype.Map, oid uint32) string {
 	return "oid:" + strconv.FormatUint(uint64(oid), 10)
 }
 
-func decodeValue(m *pgtype.Map, oid uint32, raw []byte) (any, error) {
+func decodeValue(m *pgtype.Map, oid uint32, raw []byte, textLimit int) (any, error) {
 	if raw == nil {
 		return nil, nil
 	}
@@ -218,6 +233,9 @@ func decodeValue(m *pgtype.Map, oid uint32, raw []byte) (any, error) {
 		}
 		return v, nil
 	default:
+		if textLimit > 0 && len(raw) > textLimit {
+			raw = raw[:textLimit]
+		}
 		return string(raw), nil
 	}
 }
@@ -227,9 +245,12 @@ func engineError(ctx context.Context, err error) error {
 		return nil
 	}
 	var pgErr *pgconn.PgError
+	var tooLarge *pgproto3.ExceededMaxBodyLenErr
 	switch {
 	case errors.As(err, &pgErr):
 		return &sql.EngineError{SQLState: pgErr.Code, Class: stateClass(pgErr.Code)}
+	case errors.As(err, &tooLarge):
+		return &core.Error{Code: core.CodeUpstreamError, Message: messageTooLarge, Cause: err}
 	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded):
 		return &sql.EngineError{Class: sql.Timeout}
 	default:

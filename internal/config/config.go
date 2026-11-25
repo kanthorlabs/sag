@@ -8,7 +8,6 @@ import (
 	"maps"
 	"net"
 	"os"
-	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -19,6 +18,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/kanthorlabs/sag/internal/core"
+	"github.com/kanthorlabs/sag/internal/postexec"
 )
 
 const DefaultPath = "/etc/sag/sag.yaml"
@@ -319,7 +319,7 @@ func secretRef(p *problems, path, value string, required bool) SecretRef {
 
 func checkGlobs(p *problems, key string, patterns []string) {
 	for i, pattern := range patterns {
-		if _, err := path.Match(pattern, ""); err != nil {
+		if _, err := postexec.CompileGlob(pattern); err != nil {
 			p.add(fmt.Sprintf("%s[%d]", key, i), "is not a valid glob")
 		}
 	}

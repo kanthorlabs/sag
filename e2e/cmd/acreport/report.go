@@ -27,10 +27,11 @@ const (
 var phaseGroups = []string{"parallel", "sequential"}
 
 type buildInfo struct {
-	GeneratedAt string
-	Commit      string
-	Dirty       bool
-	Image       string
+	GeneratedAt  string
+	Commit       string
+	Dirty        bool
+	Image        string
+	ImageVersion string
 }
 
 type majorRun struct {
@@ -61,31 +62,33 @@ type gate struct {
 }
 
 type report struct {
-	Schema      int           `json:"schema"`
-	GeneratedAt string        `json:"generated_at"`
-	Commit      string        `json:"commit"`
-	Dirty       bool          `json:"dirty"`
-	Layer       int           `json:"layer"`
-	Image       string        `json:"image"`
-	PGMajors    []int         `json:"pg_majors"`
-	ACs         []acResult    `json:"acs"`
-	Others      []otherResult `json:"others"`
-	Gate        gate          `json:"gate"`
+	Schema       int           `json:"schema"`
+	GeneratedAt  string        `json:"generated_at"`
+	Commit       string        `json:"commit"`
+	Dirty        bool          `json:"dirty"`
+	Layer        int           `json:"layer"`
+	Image        string        `json:"image"`
+	ImageVersion string        `json:"image_version"`
+	PGMajors     []int         `json:"pg_majors"`
+	ACs          []acResult    `json:"acs"`
+	Others       []otherResult `json:"others"`
+	Gate         gate          `json:"gate"`
 }
 
 func buildReport(layer int, runs []majorRun, table []e2e.ACRow, info buildInfo) report {
 	runs = slices.SortedFunc(slices.Values(runs), func(a, b majorRun) int { return a.Major - b.Major })
 	r := report{
-		Schema:      reportSchema,
-		GeneratedAt: info.GeneratedAt,
-		Commit:      info.Commit,
-		Dirty:       info.Dirty,
-		Layer:       layer,
-		Image:       info.Image,
-		PGMajors:    []int{},
-		ACs:         []acResult{},
-		Others:      []otherResult{},
-		Gate:        gate{Layer: layer, Failing: []string{}},
+		Schema:       reportSchema,
+		GeneratedAt:  info.GeneratedAt,
+		Commit:       info.Commit,
+		Dirty:        info.Dirty,
+		Layer:        layer,
+		Image:        info.Image,
+		ImageVersion: info.ImageVersion,
+		PGMajors:     []int{},
+		ACs:          []acResult{},
+		Others:       []otherResult{},
+		Gate:         gate{Layer: layer, Failing: []string{}},
 	}
 	for _, mr := range runs {
 		r.PGMajors = append(r.PGMajors, mr.Major)

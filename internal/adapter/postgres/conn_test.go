@@ -84,7 +84,7 @@ func TestValueDecoding(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := decodeValue(m, c.oid, c.raw)
+			got, err := decodeValue(m, c.oid, c.raw, 0)
 			if err != nil {
 				t.Fatalf("decodeValue: %v", err)
 			}
@@ -98,6 +98,27 @@ func TestValueDecoding(t *testing.T) {
 				t.Fatalf("decodeValue() = %#v; want %#v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestDecodeValueTextLimit(t *testing.T) {
+	m := pgtype.NewMap()
+	cases := []struct {
+		oid  uint32
+		raw  string
+		want any
+	}{
+		{pgtype.TextOID, "abcdef", "abc"},
+		{pgtype.JSONBOID, `{"a": 1}`, `{"a`},
+		{pgtype.TextOID, "ab", "ab"},
+		{pgtype.Int8OID, "123456", int64(123456)},
+		{pgtype.ByteaOID, `\x01020304`, []byte{1, 2, 3, 4}},
+	}
+	for _, c := range cases {
+		got, err := decodeValue(m, c.oid, []byte(c.raw), 3)
+		if err != nil || !reflect.DeepEqual(got, c.want) {
+			t.Fatalf("decodeValue(%d, %q, 3) = %#v, %v; want %#v", c.oid, c.raw, got, err, c.want)
+		}
 	}
 }
 

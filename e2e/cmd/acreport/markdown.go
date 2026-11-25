@@ -21,6 +21,7 @@ func writeMarkdown(w io.Writer, r report) error {
 	fmt.Fprintf(&b, "# AC report\n\n")
 	fmt.Fprintf(&b, "- Commit: `%s`\n", commit)
 	fmt.Fprintf(&b, "- Image: `%s`\n", r.Image)
+	fmt.Fprintf(&b, "- Image version: `%s`\n", r.ImageVersion)
 	fmt.Fprintf(&b, "- Generated: %s\n", r.GeneratedAt)
 	fmt.Fprintf(&b, "- Gate layer %d: %s\n\n", r.Gate.Layer, cell(gateResult))
 

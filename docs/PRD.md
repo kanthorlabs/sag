@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 10 |
+| Status | Revision 11 |
 | Date | 2026-11-25 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
@@ -427,8 +427,8 @@ SAG reads only these catalog objects and settings. The conformance suite runs ea
 | Limit | Default | Hard maximum | Enforcement |
 |---|---|---|---|
 | `max_rows` | 100 | 1000 | `RowCapPlan.Fetch` reads `max_rows + 1` rows. Result has `truncated: true` and `truncated_reason: max_rows`. |
-| `max_result_bytes` | 32 KiB | 2 MiB | Core stops at the cap after JSON encoding. The cap covers the JSON object `{columns, rows, row_count, truncated, truncated_reason}`. `duration_ms` and `request_id` are outside the cap. `truncated_reason: max_result_bytes`. |
-| `max_cell_bytes` | 4 KiB | 8 KiB | Core cuts longer text and adds the suffix `…[truncated]`. |
+| `max_result_bytes` | 32 KiB | 2 MiB | Core stops at the cap after JSON encoding. The cap covers the JSON object `{columns, rows, row_count, truncated, truncated_reason}`. `duration_ms` and `request_id` are outside the cap. `truncated_reason: max_result_bytes`. The executor stops the read when the encoded rows exceed the cap. The column list is outside the row cut: a result with 0 rows keeps all columns. Its size has a fixed bound of 1,664 columns of 63 bytes plus the type names. |
+| `max_cell_bytes` | 4 KiB | 8 KiB | Core cuts longer text and adds the suffix `…[truncated]`. The executor cuts each text cell when the row arrives. |
 | `statement_timeout` | 15 s | 30 s | `SET LOCAL statement_timeout`, and a Go context deadline 2 s later. The server ends the statement, and the executor sends `ROLLBACK`. If the Go deadline ends first, pgx sends a cancel request. |
 | `lock_timeout` | 2 s | 2 s | `SET LOCAL lock_timeout`. |
 | `idle_in_transaction_session_timeout` | `statement_timeout` + 5 s | 35 s | `SET LOCAL idle_in_transaction_session_timeout`. |
@@ -440,8 +440,10 @@ Rules:
 
 - Each key in this table lives under `limits` in `sag.yaml`: `defaults.limits` and `resources.<name>.limits`.
 - Exception: `max_concurrent_per_agent` lives only in `defaults.limits`. `sag config check` rejects it inside `resources.<name>.limits`.
-- `sag.yaml` can change a default and a hard maximum for each resource. A value above the hard maximum in this table fails `sag config check`.
-- A request can set `max_rows`, `max_result_bytes`, and `timeout_seconds` up to the resource hard maximum. A higher value returns `invalid_argument`.
+- `sag.yaml` changes the default for each resource. The hard maximum is one global table, and `sag.yaml` cannot change it. A value above the hard maximum in this table fails `sag config check`.
+- A request can set `max_rows`, `max_result_bytes`, and `timeout_seconds` up to the hard maximum in this table. The resource default is not a ceiling for a request value. A higher value returns `invalid_argument`.
+- The executor counts the row size for the read stop before redaction. A result with redacted columns can hold fewer rows than the cap permits.
+- Each database connection accepts a server message of at most 16 MiB. A larger row returns `upstream_error` with a fixed message.
 - An adapter that needs another limit puts it in its operation input schema.
 - The executor rejects an operation text above 16 KiB (16384 bytes) with `invalid_argument` before `Parse`. No config key and no request value changes this limit.
 
