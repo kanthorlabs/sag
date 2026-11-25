@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 const (
 	ac27Sub      = "ac27"
 	ac27Resource = "ac27"
+	ac27SQL      = "SELECT 27 AS n"
+	ac27Logged   = "27 AS n"
 )
 
 func init() {
@@ -42,8 +45,10 @@ func runAC27(t *testing.T, env harness.Env) {
 	}
 	defer session.Close()
 
+	ac27WaitServed(ctx, t, env)
+	start := time.Now()
 	for _, call := range []*mcp.CallToolParams{
-		{Name: "sql_query", Arguments: map[string]any{"resource": ac27Resource, "sql": "SELECT 27 AS n"}},
+		{Name: "sql_query", Arguments: map[string]any{"resource": ac27Resource, "sql": ac27SQL}},
 		{Name: "list_resources", Arguments: map[string]any{}},
 	} {
 		res, err := session.CallTool(ctx, call)
@@ -69,5 +74,41 @@ func runAC27(t *testing.T, env harness.Env) {
 	}
 	if len(records) != 0 {
 		t.Fatalf("read-only audit directory has %d records; want 0", len(records))
+	}
+
+	logs, err := env.Postgres(env.Major()).Logs(ctx, start.Add(-time.Second))
+	if err != nil {
+		t.Fatalf("PostgreSQL logs: %v", err)
+	}
+	if !strings.Contains(logs, ac27Logged) {
+		t.Fatalf("PostgreSQL log has no statement with %q; the query did not run", ac27Logged)
+	}
+}
+
+func ac27WaitServed(ctx context.Context, t *testing.T, env harness.Env) {
+	t.Helper()
+	deadline := time.Now().Add(70 * time.Second)
+	for {
+		logs, err := env.Logs(ctx, harness.ContainerROAudit)
+		if err != nil {
+			t.Fatalf("logs: %v", err)
+		}
+		for _, line := range strings.Split(logs, "\n") {
+			var l struct {
+				Msg      string `json:"msg"`
+				Resource string `json:"resource"`
+			}
+			if json.Unmarshal([]byte(strings.TrimSpace(line)), &l) == nil && l.Msg == "resource served" && l.Resource == ac27Resource {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("resource %s is not served after 70 s:\n%s", ac27Resource, logs)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("wait for served state: %v", ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 }

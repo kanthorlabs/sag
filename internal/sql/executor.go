@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/kanthorlabs/sag/internal/core"
+	"github.com/kanthorlabs/sag/internal/postexec"
 )
 
 const (
@@ -70,7 +72,7 @@ func (e *executor) Execute(ctx context.Context, capability, operation string, in
 	var result core.Result
 	err = runReadOnly(ctx, e.dialect, e.pool.Acquire, lim, func(ctx context.Context, c Conn) error {
 		var err error
-		result, err = e.run(ctx, c, tree, rendered, lim.MaxRows)
+		result, err = e.run(ctx, c, tree, rendered, lim)
 		return err
 	})
 	if err != nil && !errors.Is(err, errTruncatedRead) {
@@ -107,11 +109,11 @@ func (e *executor) validateStatic(text string) (Tree, string, error) {
 	return tree, rendered, nil
 }
 
-func (e *executor) run(ctx context.Context, c Conn, tree Tree, rendered string, maxRows int) (core.Result, error) {
+func (e *executor) run(ctx context.Context, c Conn, tree Tree, rendered string, lim core.Limits) (core.Result, error) {
 	if err := e.dialect.ValidateCatalog(ctx, c, tree); err != nil {
 		return core.Result{}, rejected(err)
 	}
-	plan, err := e.dialect.PlanRowCap(tree, rendered, maxRows)
+	plan, err := e.dialect.PlanRowCap(tree, rendered, lim.MaxRows)
 	if err != nil {
 		return core.Result{}, rejected(err)
 	}
@@ -119,7 +121,7 @@ func (e *executor) run(ctx context.Context, c Conn, tree Tree, rendered string, 
 	if err != nil {
 		return core.Result{}, err
 	}
-	return readRows(rows, maxRows, plan.Fetch == "")
+	return readRows(rows, lim, plan.Fetch == "")
 }
 
 func openRows(ctx context.Context, c Conn, plan RowCapPlan) (Rows, error) {
@@ -132,18 +134,20 @@ func openRows(ctx context.Context, c Conn, plan RowCapPlan) (Rows, error) {
 	return c.Query(ctx, plan.Fetch)
 }
 
-func readRows(rows Rows, maxRows int, cursorless bool) (core.Result, error) {
+type textLimiter interface {
+	LimitText(n int)
+}
+
+func readRows(rows Rows, lim core.Limits, cursorless bool) (core.Result, error) {
 	defer rows.Close()
+	if l, ok := rows.(textLimiter); ok && lim.MaxCellBytes > 0 {
+		l.LimitText(lim.MaxCellBytes + 1)
+	}
 	result := core.Result{Columns: rows.Columns(), Rows: [][]any{}}
+	rowsBytes := 0
 	for rows.Next() {
-		if len(result.Rows) >= maxRows {
-			result.Truncated = true
-			result.TruncatedReason = core.TruncatedMaxRows
-			if cursorless {
-				rows.Abort()
-				return result, errTruncatedRead
-			}
-			break
+		if len(result.Rows) >= lim.MaxRows {
+			return stopRead(rows, result, core.TruncatedMaxRows, cursorless)
 		}
 		values, err := rows.Values()
 		if err != nil {
@@ -151,14 +155,42 @@ func readRows(rows Rows, maxRows int, cursorless bool) (core.Result, error) {
 		}
 		row := make([]any, len(values))
 		for i, v := range values {
-			row[i] = encodeValue(v)
+			row[i] = precut(encodeValue(v), lim.MaxCellBytes)
 		}
 		result.Rows = append(result.Rows, row)
+		rowsBytes += postexec.CappedRowBytes(row, lim.MaxCellBytes)
+		if len(result.Rows) > 1 {
+			rowsBytes += len(",")
+		}
+		if lim.MaxResultBytes > 0 && rowsBytes > lim.MaxResultBytes {
+			return stopRead(rows, result, core.TruncatedMaxResultBytes, cursorless)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return core.Result{}, err
 	}
 	return result, nil
+}
+
+func stopRead(rows Rows, result core.Result, reason core.TruncatedReason, cursorless bool) (core.Result, error) {
+	result.Truncated = true
+	result.TruncatedReason = reason
+	if cursorless {
+		rows.Abort()
+		return result, errTruncatedRead
+	}
+	if err := rows.Err(); err != nil {
+		return core.Result{}, err
+	}
+	return result, nil
+}
+
+func precut(v any, limit int) any {
+	s, ok := v.(string)
+	if !ok || limit <= 0 || len(s) <= limit+1 {
+		return v
+	}
+	return strings.Clone(s[:limit+1])
 }
 
 func RunReadOnly(ctx context.Context, d Dialect, p Pool, lim core.Limits, fn func(ctx context.Context, r CatalogReader) error) error {

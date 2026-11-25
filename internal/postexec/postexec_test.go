@@ -2,6 +2,7 @@ package postexec
 
 import (
 	"encoding/json"
+	"path"
 	"strings"
 	"testing"
 
@@ -62,11 +63,14 @@ func TestCellCapSuffix(t *testing.T) {
 
 func TestRedactGlobCaseInsensitive(t *testing.T) {
 	res := core.Result{
-		Columns: columns("id", "API_Token", "MyPassword", "note"),
-		Rows:    [][]any{{int64(1), "t1", "p1", "n1"}, {int64(2), nil, "p2", "n2"}},
+		Columns: columns("id", "API_Token", "MyPassword", "note", "a/b/api_token", "password/x", "user/password"),
+		Rows:    [][]any{{int64(1), "t1", "p1", "n1", "a1", "x1", "u1"}, {int64(2), nil, "p2", "n2", "a2", "x2", "u2"}},
 	}
-	got := Apply(res, core.Limits{}, []string{"*token*", "*PASSWORD"})
-	want := [][]any{{int64(1), Redacted, Redacted, "n1"}, {int64(2), Redacted, Redacted, "n2"}}
+	got := Apply(res, core.Limits{}, []string{"*token*", "*PASSWORD", "password*"})
+	want := [][]any{
+		{int64(1), Redacted, Redacted, "n1", Redacted, Redacted, Redacted},
+		{int64(2), Redacted, Redacted, "n2", Redacted, Redacted, Redacted},
+	}
 	for i := range want {
 		for j := range want[i] {
 			if got.Rows[i][j] != want[i][j] {
@@ -162,5 +166,66 @@ func TestByteCapAfterRedaction(t *testing.T) {
 	got := Apply(res, core.Limits{MaxResultBytes: 120}, []string{"*token*"})
 	if len(got.Rows) != 1 || got.Truncated || got.Bytes != encodedLen(t, got) {
 		t.Fatalf("redacted result: rows %v truncated %v bytes %d", got.Rows, got.Truncated, got.Bytes)
+	}
+}
+
+func TestCompileGlob(t *testing.T) {
+	cases := []struct {
+		pattern string
+		name    string
+		want    bool
+	}{
+		{"*token*", "a/b/api_token", true},
+		{"password*", "password/x", true},
+		{"*password", "user/password", true},
+		{"user/password", "user/password", true},
+		{"pass?ord", "pass/ord", true},
+		{"*SECRET", "my_secret", true},
+		{"token", "api_token", false},
+		{"token", "token_x", false},
+		{"[a-c]x", "bx", true},
+		{"[a-c]x", "dx", false},
+		{"[^a-c]x", "/x", true},
+		{"[\\]]x", "]x", true},
+		{"\\*x", "*x", true},
+		{"\\*x", "ax", false},
+		{"a.b", "axb", false},
+		{"a+b", "a+b", true},
+		{"*", "line\nbreak", true},
+	}
+	for _, c := range cases {
+		g, err := CompileGlob(c.pattern)
+		if err != nil {
+			t.Fatalf("CompileGlob(%q): %v", c.pattern, err)
+		}
+		if got := g.MatchString(strings.ToLower(c.name)); got != c.want {
+			t.Fatalf("CompileGlob(%q) match %q = %v; want %v", c.pattern, c.name, got, c.want)
+		}
+	}
+	for _, bad := range []string{"[", "[]", "[a-", "a\\", "[z-]", "[^]"} {
+		if _, err := CompileGlob(bad); err == nil {
+			t.Fatalf("CompileGlob(%q) = nil error; want an error", bad)
+		}
+	}
+}
+
+func TestCompileGlobAgreesWithPathMatchWithoutSlash(t *testing.T) {
+	patterns := []string{"*", "a*", "*b", "a?c", "[ab]*", "[^ab]?", "[a-c][x-z]", "\\[a]", "[\\-]", "*_key*", "[", "[]a]", "a[", "[a-", "\\", "[!a]", "[^]", "]", "-", "[a-b-c]"}
+	names := []string{"", "a", "b", "abc", "ab", "xb", "cy", "[a]", "-", "api_key_x", "]", "!", "a-b", "c"}
+	for _, p := range patterns {
+		g, gErr := CompileGlob(p)
+		_, pErr := path.Match(p, "")
+		if (gErr == nil) != (pErr == nil) {
+			t.Fatalf("pattern %q: CompileGlob error %v; path.Match error %v", p, gErr, pErr)
+		}
+		if gErr != nil {
+			continue
+		}
+		for _, n := range names {
+			want, _ := path.Match(p, n)
+			if got := g.MatchString(n); got != want {
+				t.Fatalf("pattern %q name %q: CompileGlob %v; path.Match %v", p, n, got, want)
+			}
+		}
 	}
 }

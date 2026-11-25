@@ -170,14 +170,14 @@ func TestGateFailsOnEarlierLayer(t *testing.T) {
 
 func TestMarkdownHas35Rows(t *testing.T) {
 	run := parsed(t, finished("TestE2E/parallel/AC01_ConfigCheckRejects", "fail", 1, "    x.go:1: bad | pipe\n"))
-	r := buildReport(1, []majorRun{{Major: 14, Run: run}, {Major: 17, Run: run}}, e2e.ACTable, buildInfo{Commit: "abc123", Dirty: true, Image: "sha256:feed"})
+	r := buildReport(1, []majorRun{{Major: 14, Run: run}, {Major: 17, Run: run}}, e2e.ACTable, buildInfo{Commit: "abc123", Dirty: true, Image: "sha256:feed", ImageVersion: "sag-layer-4-1-gabc123"})
 
 	var b bytes.Buffer
 	if err := writeMarkdown(&b, r); err != nil {
 		t.Fatal(err)
 	}
 	md := b.String()
-	for _, want := range []string{"abc123", "sha256:feed", "| AC | Layer | Test | Status | PG14 | PG17 | Duration | Message |", "FAIL", `bad \| pipe`} {
+	for _, want := range []string{"abc123", "sha256:feed", "Image version: `sag-layer-4-1-gabc123`", "| AC | Layer | Test | Status | PG14 | PG17 | Duration | Message |", "FAIL", `bad \| pipe`} {
 		if !strings.Contains(md, want) {
 			t.Errorf("markdown misses %q:\n%s", want, md)
 		}
@@ -241,7 +241,7 @@ func TestRunExitCodes(t *testing.T) {
 		finished("TestE2E/parallel/AC03_JWTRejects", "pass", 1),
 		finished("TestE2E/sequential/AC04_JWTGenerateRefuses", "pass", 1),
 	)
-	info := buildInfo{GeneratedAt: "2026-11-25T12:00:00.000Z", Commit: "abc", Image: "sha256:feed"}
+	info := buildInfo{GeneratedAt: "2026-11-25T12:00:00.000Z", Commit: "abc", Image: "sha256:feed", ImageVersion: "v-abc"}
 	probe := func() buildInfo { return info }
 
 	dir := t.TempDir()
@@ -260,7 +260,7 @@ func TestRunExitCodes(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Schema != 1 || got.Layer != 1 || got.Commit != "abc" || got.Image != "sha256:feed" || !slices.Equal(got.PGMajors, []int{14, 17}) || len(got.ACs) != 35 || !got.Gate.Passed {
+	if got.Schema != 1 || got.Layer != 1 || got.Commit != "abc" || got.Image != "sha256:feed" || got.ImageVersion != "v-abc" || !slices.Equal(got.PGMajors, []int{14, 17}) || len(got.ACs) != 35 || !got.Gate.Passed {
 		t.Errorf("report = %+v", got)
 	}
 	if _, err := os.Stat(filepath.Join(out, "ac-report.md")); err != nil {

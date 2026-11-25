@@ -152,10 +152,11 @@ func writeReport(dir string, r report) error {
 
 func probe() buildInfo {
 	return buildInfo{
-		GeneratedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		Commit:      commandOutput("git", "rev-parse", "HEAD"),
-		Dirty:       commandOutput("git", "status", "--porcelain") != "",
-		Image:       commandOutput("podman", "image", "inspect", "--format", "{{.Digest}}", imageRef),
+		GeneratedAt:  time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		Commit:       commandOutput("git", "rev-parse", "HEAD"),
+		Dirty:        commandOutput("git", "status", "--porcelain") != "",
+		Image:        commandOutput("podman", "image", "inspect", "--format", "{{.Digest}}", imageRef),
+		ImageVersion: commandOutput("podman", "run", "--rm", "--network", "none", imageRef, "version"),
 	}
 }
 
