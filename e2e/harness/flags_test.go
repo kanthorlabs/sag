@@ -54,3 +54,21 @@ func TestRunArgsSecretMode(t *testing.T) {
 		t.Errorf("args lack mode 0444: %v", args)
 	}
 }
+
+func TestRunArgsReadOnlyAudit(t *testing.T) {
+	args := strings.Join(runArgs(runSpec{Name: "n", StateVolume: "n-state", AuditDir: "/tmp/run/n-audit", Image: "i"}), " ")
+	if !strings.Contains(args, "-v n-state:/var/lib/sag -v /tmp/run/n-audit:/var/lib/sag/audit:ro") {
+		t.Errorf("args lack the read-only audit mount after the state volume: %s", args)
+	}
+	if strings.Contains(strings.Join(runArgs(runSpec{Name: "n", StateVolume: "n-state", Image: "i"}), " "), "/var/lib/sag/audit") {
+		t.Error("args mount an audit directory without AuditDir")
+	}
+}
+
+func TestReadOnlyAuditProfile(t *testing.T) {
+	for name, p := range containerProfiles {
+		if p.readOnlyAudit != (name == ContainerROAudit) {
+			t.Errorf("container %s: readOnlyAudit = %v", name, p.readOnlyAudit)
+		}
+	}
+}

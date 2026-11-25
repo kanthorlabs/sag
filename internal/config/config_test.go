@@ -386,3 +386,14 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatal("Load accepted a missing file")
 	}
 }
+
+func TestHardMaximumsExported(t *testing.T) {
+	got := HardMaximums()
+	if got.MaxRows != 1000 || got.MaxResultBytes != 2<<20 || got.MaxCellBytes != 8<<10 || got.StatementTimeout != 30*time.Second || got.IdleInTransactionSessionTimeout != 35*time.Second {
+		t.Fatalf("HardMaximums() = %#v", got)
+	}
+	got.MaxRows = 1
+	if HardMaximums().MaxRows != 1000 {
+		t.Fatal("HardMaximums() returns shared state")
+	}
+}

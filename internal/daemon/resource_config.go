@@ -29,5 +29,6 @@ func resourceLimits(l config.Limits) core.Limits {
 		MaxResultBytes: l.MaxResultBytes,
 		MaxCellBytes:   l.MaxCellBytes,
 		Timeout:        l.StatementTimeout,
+		IdleTimeout:    l.IdleInTransactionSessionTimeout,
 	}
 }

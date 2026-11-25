@@ -40,6 +40,18 @@ func TestRequestBeginText(t *testing.T) {
 	}
 }
 
+func TestRequestBeginIdleTimeoutFromLimits(t *testing.T) {
+	cfg := core.ResourceConfig{LockTimeout: 2 * time.Second, IdleInTransactionSessionTimeout: 20 * time.Second}
+	got := requestBegin(core.Limits{Timeout: 30 * time.Second, IdleTimeout: 35 * time.Second}, cfg)
+	if got[3] != "SET LOCAL idle_in_transaction_session_timeout = 35000" {
+		t.Fatalf("idle line = %q; want the request limit", got[3])
+	}
+	got = requestBegin(core.Limits{Timeout: 10 * time.Second}, cfg)
+	if got[3] != "SET LOCAL idle_in_transaction_session_timeout = 20000" {
+		t.Fatalf("idle line = %q; want the resource value when the limit is zero", got[3])
+	}
+}
+
 func TestRequestBeginTextNeverDisablesTimeouts(t *testing.T) {
 	cfg := core.ResourceConfig{LockTimeout: 0, IdleInTransactionSessionTimeout: 1500 * time.Microsecond}
 	got := requestBegin(core.Limits{Timeout: -time.Second}, cfg)

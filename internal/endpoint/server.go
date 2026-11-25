@@ -34,6 +34,7 @@ type Options struct {
 	MCP            http.Handler
 	Now            func() time.Time
 	Logger         *slog.Logger
+	Audit          AuditHook
 }
 
 type Server struct {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,7 +55,7 @@ func (failingResolver) Lookup(string, string) (inventory.Entry, error) {
 	return inventory.Entry{}, errors.New("resolver broken")
 }
 
-var testLimits = core.Limits{MaxRows: 7, MaxResultBytes: 1024, MaxCellBytes: 64, Timeout: 3 * time.Second}
+var testLimits = core.Limits{MaxRows: 7, MaxResultBytes: 1024, MaxCellBytes: 64, Timeout: 3 * time.Second, IdleTimeout: 8 * time.Second}
 
 func entry(name string, status inventory.Status, res core.Resource, agents ...string) inventory.Entry {
 	return inventory.Entry{
@@ -195,7 +197,22 @@ func TestExecuteErrorPassesThrough(t *testing.T) {
 	res := &fakeResource{err: want}
 	p := New(Options{Inventory: realInventory(t, entry("main", inventory.StatusServed, res, "ac05"))})
 	_, err := p.Execute(context.Background(), request("ac05", "main"))
-	if !errors.Is(err, want) {
+	if ce := assertCode(t, err, want.Code); ce.Message != want.Message {
 		t.Fatalf("error = %v; want %v", err, want)
+	}
+}
+
+func TestUnavailableCauseLogged(t *testing.T) {
+	cause := errors.New("dial tcp 10.0.0.9:5432: connection refused")
+	res := &fakeResource{err: &core.Error{Code: core.CodeResourceUnavailable, Message: "resource unavailable", Cause: cause}}
+	var buf strings.Builder
+	p := New(Options{
+		Inventory: realInventory(t, entry("main", inventory.StatusServed, res, "ac24")),
+		Log:       slog.New(slog.NewJSONHandler(&buf, nil)),
+	})
+	_, err := p.Execute(context.Background(), request("ac24", "main"))
+	assertCode(t, err, core.CodeResourceUnavailable)
+	if !strings.Contains(buf.String(), `"request_id":"req-1"`) || !strings.Contains(buf.String(), "connection refused") {
+		t.Fatalf("log = %s; want the request id and the cause", buf.String())
 	}
 }

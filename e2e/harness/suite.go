@@ -415,6 +415,14 @@ func (s *Suite) StartSAG(ctx context.Context, spec ContainerSpec) (Container, er
 		}
 	}
 
+	var auditDir string
+	if containerProfiles[spec.Name].readOnlyAudit {
+		auditDir = filepath.Join(s.dir, spec.Name+"-audit")
+		if err := os.Mkdir(auditDir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+
 	image := Image
 	if spec.Name == ContainerConformance {
 		image = ConformanceImage
@@ -429,6 +437,7 @@ func (s *Suite) StartSAG(ctx context.Context, spec ContainerSpec) (Container, er
 		Network:     s.run.Network,
 		ConfigFile:  configFile,
 		StateVolume: c.volume,
+		AuditDir:    auditDir,
 		Secrets:     mounts,
 		SecretMode:  spec.SecretMode,
 		Image:       image,
@@ -535,7 +544,7 @@ func (s *Suite) Audit(ctx context.Context, container string) ([]json.RawMessage,
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
-	if _, err := podman(ctx, "cp", s.ContainerName(container)+":"+StateDir+"/audit", tmp); err != nil {
+	if _, err := podman(ctx, "cp", s.ContainerName(container)+":"+AuditDir, tmp); err != nil {
 		return nil, err
 	}
 	var files []string

@@ -55,6 +55,7 @@ func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, cr
 			Capabilities: capabilityNames(adapter.Capabilities()),
 			Agents:       r.Agents,
 			Limits:       resourceLimits(r.Limits),
+			Redact:       r.RedactColumns,
 			Status:       inventory.StatusPending,
 		}
 		rc := ResourceConfig(name, r, creds, approvals)

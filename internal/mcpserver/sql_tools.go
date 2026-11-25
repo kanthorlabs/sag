@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/oklog/ulid/v2"
 
+	"github.com/kanthorlabs/sag/internal/audit"
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/pipeline"
 	"github.com/kanthorlabs/sag/internal/sql"
@@ -84,19 +85,22 @@ func callOperation(calls caller, capability, operation string) mcp.ToolHandler {
 		if len(input) == 0 {
 			input = json.RawMessage(`{}`)
 		}
-		var target toolTarget
-		if err := json.Unmarshal(input, &target); err != nil {
-			return errorResult(id, core.NewError(core.CodeInvalidArgument, messageInvalidArguments))
-		}
-		start := time.Now()
-		res, err := calls.Execute(ctx, pipeline.Request{
+		preq := pipeline.Request{
 			ID:         id,
 			Sub:        subject(req),
-			Resource:   target.Resource,
+			JTI:        tokenExtra(req, audit.ExtraJTI),
+			RemoteAddr: tokenExtra(req, audit.ExtraRemoteAddr),
 			Capability: capability,
 			Operation:  operation,
 			Input:      input,
-		})
+		}
+		var target toolTarget
+		if err := json.Unmarshal(input, &target); err != nil {
+			return errorResult(id, calls.Reject(preq, core.NewError(core.CodeInvalidArgument, messageInvalidArguments)))
+		}
+		preq.Resource = target.Resource
+		start := time.Now()
+		res, err := calls.Execute(ctx, preq)
 		if err != nil {
 			return errorResult(id, err)
 		}

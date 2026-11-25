@@ -22,6 +22,7 @@ import (
 type recordingCaller struct {
 	mu       sync.Mutex
 	requests []pipeline.Request
+	rejected []pipeline.Request
 	result   core.Result
 	err      error
 	delay    time.Duration
@@ -33,6 +34,13 @@ func (r *recordingCaller) Execute(_ context.Context, req pipeline.Request) (core
 	r.mu.Unlock()
 	time.Sleep(r.delay)
 	return r.result, r.err
+}
+
+func (r *recordingCaller) Reject(req pipeline.Request, err error) error {
+	r.mu.Lock()
+	r.rejected = append(r.rejected, req)
+	r.mu.Unlock()
+	return err
 }
 
 func (r *recordingCaller) last(t *testing.T) pipeline.Request {
@@ -205,6 +213,9 @@ func TestErrorResultShape(t *testing.T) {
 	if len(calls.requests) != 0 {
 		t.Fatal("pipeline called with invalid arguments")
 	}
+	if len(calls.rejected) != 1 || calls.rejected[0].ID != errorObject(t, res)["request_id"] || calls.rejected[0].Sub != "ac05" || calls.rejected[0].Operation != "query" {
+		t.Fatalf("rejected = %#v; want one audited rejection with the response request_id", calls.rejected)
+	}
 }
 
 func TestRequestReachesPipeline(t *testing.T) {
@@ -213,7 +224,7 @@ func TestRequestReachesPipeline(t *testing.T) {
 	args := map[string]any{"resource": "main", "schema": "app", "table": "orders"}
 	callTool(t, session, "sql_describe_table", args)
 	got := calls.last(t)
-	if got.Sub != "ac05" || got.Resource != "main" || got.Capability != "sql" || got.Operation != "describe_table" {
+	if got.Sub != "ac05" || got.JTI != "jti-ac05" || got.RemoteAddr == "" || got.Resource != "main" || got.Capability != "sql" || got.Operation != "describe_table" {
 		t.Fatalf("pipeline request = %#v", got)
 	}
 	want, _ := json.Marshal(args)
@@ -297,6 +308,10 @@ type panicCaller struct{}
 
 func (panicCaller) Execute(context.Context, pipeline.Request) (core.Result, error) {
 	panic("index out of range")
+}
+
+func (panicCaller) Reject(_ pipeline.Request, err error) error {
+	return err
 }
 
 func TestToolPanicReturnsInternal(t *testing.T) {

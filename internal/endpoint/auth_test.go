@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kanthorlabs/sag/internal/audit"
 	"github.com/kanthorlabs/sag/internal/token"
 )
 
@@ -170,7 +171,9 @@ func (b bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 type whoamiOutput struct {
-	Sub string `json:"sub"`
+	Sub        string `json:"sub"`
+	JTI        string `json:"jti"`
+	RemoteAddr string `json:"remote_addr"`
 }
 
 func TestToolSeesSub(t *testing.T) {
@@ -179,7 +182,10 @@ func TestToolSeesSub(t *testing.T) {
 		if req.Extra == nil || req.Extra.TokenInfo == nil {
 			return nil, whoamiOutput{}, nil
 		}
-		return nil, whoamiOutput{Sub: req.Extra.TokenInfo.UserID}, nil
+		extra := req.Extra.TokenInfo.Extra
+		jti, _ := extra[audit.ExtraJTI].(string)
+		addr, _ := extra[audit.ExtraRemoteAddr].(string)
+		return nil, whoamiOutput{Sub: req.Extra.TokenInfo.UserID, JTI: jti, RemoteAddr: addr}, nil
 	})
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	ts := startServer(t, handler)
@@ -202,5 +208,11 @@ func TestToolSeesSub(t *testing.T) {
 	out, ok := res.StructuredContent.(map[string]any)
 	if !ok || out["sub"] != "ac03" {
 		t.Fatalf("structured content: got %#v, want sub ac03", res.StructuredContent)
+	}
+	if jti, _ := out["jti"].(string); len(jti) != 26 {
+		t.Fatalf("jti = %#v; want the token ULID", out["jti"])
+	}
+	if addr, _ := out["remote_addr"].(string); !strings.HasPrefix(addr, "127.0.0.1:") {
+		t.Fatalf("remote_addr = %#v; want the client address and port", out["remote_addr"])
 	}
 }

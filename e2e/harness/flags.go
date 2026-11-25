@@ -9,6 +9,7 @@ import (
 const (
 	ConfigPath        = "/etc/sag/sag.yaml"
 	StateDir          = "/var/lib/sag"
+	AuditDir          = StateDir + "/audit"
 	ListenPort        = 8443
 	PublishHost       = "127.0.0.1"
 	DefaultSecretMode = "0400"
@@ -31,6 +32,7 @@ type runSpec struct {
 	Network     string
 	ConfigFile  string
 	StateVolume string
+	AuditDir    string
 	Secrets     []secretMount
 	SecretMode  string
 	Image       string
@@ -56,6 +58,9 @@ func runArgs(s runSpec) []string {
 	}
 	if s.StateVolume != "" {
 		args = append(args, "-v", s.StateVolume+":"+StateDir)
+	}
+	if s.AuditDir != "" {
+		args = append(args, "-v", s.AuditDir+":"+AuditDir+":ro")
 	}
 	for _, m := range s.Secrets {
 		args = append(args, "--secret", SecretFlag(m.Source, m.Target, s.SecretMode))

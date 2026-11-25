@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"slices"
 	"time"
 
 	"github.com/kanthorlabs/sag/internal/approval"
+	"github.com/kanthorlabs/sag/internal/audit"
 	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/endpoint"
 	"github.com/kanthorlabs/sag/internal/inventory"
@@ -18,6 +20,7 @@ import (
 	"github.com/kanthorlabs/sag/internal/mcpserver"
 	"github.com/kanthorlabs/sag/internal/pipeline"
 	"github.com/kanthorlabs/sag/internal/preflight"
+	"github.com/kanthorlabs/sag/internal/scrub"
 	"github.com/kanthorlabs/sag/internal/secret"
 )
 
@@ -29,6 +32,7 @@ var (
 	errMasterKey   = errors.New("master key")
 	errJWTKey      = errors.New("derive JWT key")
 	errApprovalKey = errors.New("derive approval key")
+	errAudit       = errors.New("audit directory")
 	errCertificate = errors.New("endpoint certificate")
 	errResource    = errors.New("resource")
 	errMCP         = errors.New("mcp server")
@@ -73,6 +77,8 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return stageError(errSecrets, err)
 	}
+	scrubber := scrub.New(slices.Collect(maps.Values(creds)))
+	log = slog.New(scrubHandler(log.Handler(), scrubber))
 	master, err := secret.DecodeMasterKey(creds[secret.MasterKeyName])
 	if err != nil {
 		return stageError(errMasterKey, err)
@@ -91,6 +97,10 @@ func Run(ctx context.Context, opts Options) error {
 		return stageError(errApprovalKey, err)
 	}
 	approvals := approval.NewStore(filepath.Join(opts.StateDir, approval.DirName), approvalKey)
+	auditWriter, err := audit.NewFileWriter(filepath.Join(opts.StateDir, audit.DirName))
+	if err != nil {
+		return stageError(errAudit, err)
+	}
 
 	inv := inventory.New()
 	sched := preflight.New(preflight.Options{
@@ -111,8 +121,14 @@ func Run(ctx context.Context, opts Options) error {
 
 	mcpSrv, err := mcpserver.New(mcpserver.Options{
 		Inventory: inv,
-		Pipeline:  pipeline.New(pipeline.Options{Inventory: inv}),
-		Version:   opts.Version,
+		Pipeline: pipeline.New(pipeline.Options{
+			Inventory:             inv,
+			MaxConcurrentPerAgent: cfg.Defaults.Limits.MaxConcurrentPerAgent,
+			Scrubber:              scrubber,
+			Audit:                 auditWriter,
+			Log:                   log,
+		}),
+		Version: opts.Version,
 	})
 	if err != nil {
 		return stageError(errMCP, err)
@@ -125,6 +141,7 @@ func Run(ctx context.Context, opts Options) error {
 		MCP:            mcpserver.Handler(mcpSrv),
 		Now:            time.Now,
 		Logger:         log,
+		Audit:          authAuditHook(auditWriter, log),
 	})
 	if err != nil {
 		return stageError(errEndpoint, err)

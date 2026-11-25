@@ -12,11 +12,15 @@ func sessionGuard() []string {
 }
 
 func requestBegin(lim core.Limits, cfg core.ResourceConfig) []string {
+	idle := cfg.IdleInTransactionSessionTimeout
+	if lim.IdleTimeout > 0 {
+		idle = lim.IdleTimeout
+	}
 	return []string{
 		"BEGIN TRANSACTION READ ONLY",
 		fmt.Sprintf("SET LOCAL statement_timeout = %d", milliseconds(lim.Timeout)),
 		fmt.Sprintf("SET LOCAL lock_timeout = %d", milliseconds(cfg.LockTimeout)),
-		fmt.Sprintf("SET LOCAL idle_in_transaction_session_timeout = %d", milliseconds(cfg.IdleInTransactionSessionTimeout)),
+		fmt.Sprintf("SET LOCAL idle_in_transaction_session_timeout = %d", milliseconds(idle)),
 		"SET LOCAL standard_conforming_strings = on",
 		"SET LOCAL client_encoding = 'UTF8'",
 		"SET LOCAL datestyle = 'ISO, YMD'",

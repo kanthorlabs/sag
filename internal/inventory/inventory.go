@@ -27,6 +27,7 @@ type Entry struct {
 	Capabilities []string
 	Agents       []string
 	Limits       core.Limits
+	Redact       []string
 	Resource     core.Resource
 	Status       Status
 }
@@ -110,5 +111,6 @@ func grants(e Entry, sub string) bool {
 func cloneEntry(e Entry) Entry {
 	e.Agents = slices.Clone(e.Agents)
 	e.Capabilities = slices.Clone(e.Capabilities)
+	e.Redact = slices.Clone(e.Redact)
 	return e
 }

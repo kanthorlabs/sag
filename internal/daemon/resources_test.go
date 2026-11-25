@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -202,6 +203,9 @@ func TestOpenAddsPendingAndSchedules(t *testing.T) {
 	}
 	if e.Resource != fake.resource || e.Kind != fakeKind || len(e.Capabilities) != 1 || e.Capabilities[0] != "sql" || e.Limits.Timeout <= 0 {
 		t.Fatalf("entry = %#v", e)
+	}
+	if e.Limits.IdleTimeout != e.Limits.Timeout+5*time.Second || !slices.Contains(e.Redact, "*password*") {
+		t.Fatalf("entry limits = %#v, redact = %q; want the idle timeout and the default patterns", e.Limits, e.Redact)
 	}
 	closeResources(slog.New(slog.NewJSONHandler(io.Discard, nil)), r.set)
 	if !fake.resource.closed {

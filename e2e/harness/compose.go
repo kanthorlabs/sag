@@ -19,13 +19,14 @@ var namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 type containerProfile struct {
 	authVersion   int
 	maxConcurrent int
+	readOnlyAudit bool
 }
 
 var containerProfiles = map[string]containerProfile{
 	ContainerSAG:         {},
 	ContainerConformance: {},
 	ContainerV2:          {authVersion: 2},
-	ContainerROAudit:     {},
+	ContainerROAudit:     {readOnlyAudit: true},
 	ContainerRate:        {maxConcurrent: 4},
 }
 

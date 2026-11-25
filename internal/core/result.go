@@ -24,5 +24,6 @@ type Result struct {
 	Rows            [][]any
 	Truncated       bool
 	TruncatedReason TruncatedReason
+	Bytes           int
 	Trace           Trace
 }

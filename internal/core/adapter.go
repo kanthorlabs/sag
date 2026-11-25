@@ -37,6 +37,7 @@ type Limits struct {
 	MaxResultBytes int
 	MaxCellBytes   int
 	Timeout        time.Duration
+	IdleTimeout    time.Duration
 }
 
 type TLSMode string

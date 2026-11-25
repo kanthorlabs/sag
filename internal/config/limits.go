@@ -111,3 +111,7 @@ func resolveLimits(l rawLimits) Limits {
 	out.IdleInTransactionSessionTimeout = valueOr(l.IdleInTransactionSessionTimeout, out.StatementTimeout+idleTimeoutMargin)
 	return out
 }
+
+func HardMaximums() Limits {
+	return hardMaximums
+}

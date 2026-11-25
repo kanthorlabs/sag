@@ -31,6 +31,7 @@ type visibility interface {
 
 type caller interface {
 	Execute(ctx context.Context, req pipeline.Request) (core.Result, error)
+	Reject(req pipeline.Request, err error) error
 }
 
 func New(opts Options) (*mcp.Server, error) {
@@ -72,4 +73,12 @@ func subject(req *mcp.CallToolRequest) string {
 		return ""
 	}
 	return req.Extra.TokenInfo.UserID
+}
+
+func tokenExtra(req *mcp.CallToolRequest, key string) string {
+	if req.Extra == nil || req.Extra.TokenInfo == nil {
+		return ""
+	}
+	value, _ := req.Extra.TokenInfo.Extra[key].(string)
+	return value
 }

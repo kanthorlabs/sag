@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 
+	"github.com/kanthorlabs/sag/internal/audit"
 	"github.com/kanthorlabs/sag/internal/token"
 )
 
@@ -41,10 +42,11 @@ func bridgeTokenInfo(next http.Handler) http.Handler {
 	return auth.RequireBearerToken(verifiedClaims, nil)(next)
 }
 
-func verifiedClaims(ctx context.Context, _ string, _ *http.Request) (*auth.TokenInfo, error) {
+func verifiedClaims(ctx context.Context, _ string, r *http.Request) (*auth.TokenInfo, error) {
 	claims, ok := ctx.Value(claimsKey{}).(token.Claims)
 	if !ok {
 		return nil, auth.ErrInvalidToken
 	}
-	return &auth.TokenInfo{UserID: claims.Sub, Expiration: claims.ExpiresAt}, nil
+	extra := map[string]any{audit.ExtraJTI: claims.JTI, audit.ExtraRemoteAddr: r.RemoteAddr}
+	return &auth.TokenInfo{UserID: claims.Sub, Expiration: claims.ExpiresAt, Extra: extra}, nil
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kanthorlabs/sag/internal/audit"
 	"github.com/kanthorlabs/sag/internal/inventory"
 	"github.com/kanthorlabs/sag/internal/pipeline"
 )
@@ -44,8 +45,9 @@ func (b bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return b.base.RoundTrip(r)
 }
 
-func subAsToken(_ context.Context, raw string, _ *http.Request) (*auth.TokenInfo, error) {
-	return &auth.TokenInfo{UserID: raw, Expiration: time.Now().Add(time.Hour)}, nil
+func subAsToken(_ context.Context, raw string, r *http.Request) (*auth.TokenInfo, error) {
+	extra := map[string]any{audit.ExtraJTI: "jti-" + raw, audit.ExtraRemoteAddr: r.RemoteAddr}
+	return &auth.TokenInfo{UserID: raw, Expiration: time.Now().Add(time.Hour), Extra: extra}, nil
 }
 
 func connect(t *testing.T, handler http.Handler, sub string) *mcp.ClientSession {
