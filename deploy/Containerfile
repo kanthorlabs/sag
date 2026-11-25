@@ -1,4 +1,4 @@
-FROM docker.io/library/golang:1.27.4-bookworm AS build
+FROM docker.io/library/golang:1.27.4-bookworm@sha256:ce59b41415e2524ae99926fe1f37ce48ba8c194dcbd2a56a65436cdcefa2bd34 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 RUN mkdir -p /out/lib/sag/audit /out/lib/sag/approvals \
     && chmod 0700 /out/lib/sag /out/lib/sag/audit /out/lib/sag/approvals
 
-FROM gcr.io/distroless/base-debian12:nonroot
+FROM gcr.io/distroless/base-debian12:nonroot@sha256:7f0c72cd138b442ae0deeb69c08b1acf5525439ba251a49ad93c320a061567e5
 COPY --from=build /out/sag /usr/local/bin/sag
 COPY --from=build --chown=65532:65532 /out/lib/ /var/lib/
 USER 65532:65532
