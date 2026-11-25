@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/secret"
 )
@@ -26,12 +28,16 @@ func (Adapter) Capabilities() []core.Capability {
 }
 
 func (Adapter) Open(ctx context.Context, cfg core.ResourceConfig, cred secret.Credential) (core.Resource, error) {
-	return nil, errors.ErrUnsupported
+	cc, err := connConfig(cfg, cred)
+	if err != nil {
+		return nil, err
+	}
+	return &resource{cfg: cfg, connConfig: cc}, nil
 }
 
 type resource struct {
-	cfg  core.ResourceConfig
-	cred secret.Credential
+	cfg        core.ResourceConfig
+	connConfig *pgx.ConnConfig
 }
 
 func (r *resource) Execute(ctx context.Context, capability, operation string, input json.RawMessage, lim core.Limits) (core.Result, error) {
@@ -39,5 +45,5 @@ func (r *resource) Execute(ctx context.Context, capability, operation string, in
 }
 
 func (r *resource) Close() error {
-	return errors.ErrUnsupported
+	return nil
 }
