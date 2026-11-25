@@ -34,7 +34,8 @@ const acquireTimedOut = "timed out waiting for a connection"
 var errPoolSize = errors.New("pool_size is out of range")
 
 type pool struct {
-	p *pgxpool.Pool
+	p  *pgxpool.Pool
+	cc *pgx.ConnConfig
 }
 
 func newPool(ctx context.Context, cc *pgx.ConnConfig, cfg core.ResourceConfig) (sql.Pool, error) {
@@ -54,7 +55,7 @@ func newPool(ctx context.Context, cc *pgx.ConnConfig, cfg core.ResourceConfig) (
 	if err != nil {
 		return nil, fmt.Errorf("pool: %w", err)
 	}
-	return &pool{p: p}, nil
+	return &pool{p: p, cc: cc.Copy()}, nil
 }
 
 func runSessionGuard(ctx context.Context, c *pgx.Conn) error {
@@ -71,7 +72,21 @@ func (p *pool) Acquire(ctx context.Context) (sql.Conn, error) {
 	if err != nil {
 		return nil, acquireError(ctx, err)
 	}
-	return &conn{c: c}, nil
+	return &conn{pooled: c, pc: c.Conn()}, nil
+}
+
+func (p *pool) Dedicated(ctx context.Context) (sql.Conn, error) {
+	c, err := pgx.ConnectConfig(ctx, p.cc.Copy())
+	if err != nil {
+		return nil, acquireError(ctx, err)
+	}
+	if err := runSessionGuard(ctx, c); err != nil {
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
+		defer cancel()
+		_ = c.Close(closeCtx)
+		return nil, acquireError(ctx, err)
+	}
+	return &conn{pc: c}, nil
 }
 
 func (p *pool) Close() {
@@ -90,23 +105,24 @@ func acquireError(ctx context.Context, err error) error {
 }
 
 type conn struct {
-	c *pgxpool.Conn
+	pooled *pgxpool.Conn
+	pc     *pgx.Conn
 }
 
 func (c *conn) Query(ctx context.Context, text string, args ...any) (sql.Rows, error) {
-	r, err := c.c.Query(ctx, text, args...)
+	r, err := c.pc.Query(ctx, text, args...)
 	if err != nil {
 		return nil, engineError(ctx, err)
 	}
-	return &rows{ctx: ctx, r: r, types: c.c.Conn().TypeMap()}, nil
+	return &rows{ctx: ctx, r: r, types: c.pc.TypeMap()}, nil
 }
 
 func (c *conn) Exec(ctx context.Context, text string) error {
-	return engineError(ctx, c.c.Conn().PgConn().ExecParams(ctx, text, nil, nil, nil, nil).Read().Err)
+	return engineError(ctx, c.pc.PgConn().ExecParams(ctx, text, nil, nil, nil, nil).Read().Err)
 }
 
 func (c *conn) ExecParams(ctx context.Context, text string, args ...any) error {
-	r, err := c.c.Query(ctx, text, args...)
+	r, err := c.pc.Query(ctx, text, args...)
 	if err != nil {
 		return engineError(ctx, err)
 	}
@@ -115,19 +131,25 @@ func (c *conn) ExecParams(ctx context.Context, text string, args ...any) error {
 }
 
 func (c *conn) Release() {
-	if c.c == nil {
+	if c.pooled == nil {
+		_ = c.Close()
 		return
 	}
-	c.c.Release()
-	c.c = nil
+	c.pooled.Release()
+	c.pooled = nil
+	c.pc = nil
 }
 
 func (c *conn) Close() error {
-	if c.c == nil {
+	if c.pc == nil {
 		return nil
 	}
-	pc := c.c.Hijack()
-	c.c = nil
+	pc := c.pc
+	if c.pooled != nil {
+		pc = c.pooled.Hijack()
+	}
+	c.pooled = nil
+	c.pc = nil
 	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 	defer cancel()
 	return pc.Close(ctx)
@@ -168,6 +190,13 @@ func (r *rows) Values() ([]any, error) {
 
 func (r *rows) Err() error {
 	return engineError(r.ctx, r.r.Err())
+}
+
+func (r *rows) Abort() {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx), closeTimeout)
+	defer cancel()
+	_ = r.r.Conn().PgConn().CancelRequest(ctx)
+	r.r.Close()
 }
 
 func (r *rows) Close() {

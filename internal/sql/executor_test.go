@@ -217,6 +217,9 @@ func TestRollbackAlways(t *testing.T) {
 		if got := connEvents(f.ev); !slices.Equal(got, want) {
 			t.Fatalf("events:\n got %v\nwant %v", got, want)
 		}
+		if !f.ev.has("pool:dedicated") || f.ev.has("pool:acquire") {
+			t.Fatalf("Preflight did not use a dedicated connection: %v", f.ev.list)
+		}
 	})
 
 	t.Run("acquire fails", func(t *testing.T) {
@@ -251,6 +254,11 @@ type connPool struct {
 
 func (p *connPool) Acquire(ctx context.Context) (Conn, error) {
 	p.ev.add("pool:acquire")
+	return p.conn, nil
+}
+
+func (p *connPool) Dedicated(ctx context.Context) (Conn, error) {
+	p.ev.add("pool:dedicated")
 	return p.conn, nil
 }
 
@@ -333,6 +341,48 @@ func TestCloseOnError(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("acquire errors", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			err     *core.Error
+			code    core.Code
+			message string
+		}{
+			{"connect", &core.Error{Code: core.CodeResourceUnavailable, Message: "preflight connect failed"}, core.CodeResourceUnavailable, "resource unavailable"},
+			{"tls", &core.Error{Code: core.CodeResourceUnavailable, Message: "preflight TLS handshake failed"}, core.CodeResourceUnavailable, "resource unavailable"},
+			{"pool wait", &core.Error{Code: core.CodeTimeout, Message: "timed out waiting for a connection"}, core.CodeTimeout, "request timed out"},
+		}
+		for _, tc := range cases {
+			f := newFixture()
+			f.pool.acquireErr = tc.err
+			_, err := f.query(t, testText, defaultLimits())
+			if codeOf(t, err) != tc.code || messageOf(t, err) != tc.message {
+				t.Fatalf("%s: err = %v; want %s %q", tc.name, err, tc.code, tc.message)
+			}
+			var ce *core.Error
+			if errors.As(err, &ce); !errors.Is(ce.Cause, tc.err) {
+				t.Fatalf("%s: cause = %v; want the Acquire error", tc.name, ce.Cause)
+			}
+			if got := connEvents(f.ev); len(got) != 0 {
+				t.Fatalf("%s: connection events without a connection: %v", tc.name, got)
+			}
+		}
+	})
+
+	t.Run("fixed rejection message", func(t *testing.T) {
+		for _, sc := range failureScenarios() {
+			if sc.code != core.CodeQueryRejected {
+				continue
+			}
+			f := newFixture()
+			sc.setup(f)
+			_, err := f.query(t, testText, defaultLimits())
+			if got := messageOf(t, err); got != "statement rejected" {
+				t.Fatalf("%s: message = %q; want %q", sc.name, got, "statement rejected")
+			}
+		}
+	})
 
 	t.Run("success releases", func(t *testing.T) {
 		f := newFixture()
@@ -525,5 +575,122 @@ func TestCloseClosesPool(t *testing.T) {
 	}
 	if !f.ev.has("pool:close") {
 		t.Fatal("pool not closed")
+	}
+}
+
+func TestSQLSizeLimit(t *testing.T) {
+	chain := func(n int) string {
+		return "SELECT 1" + strings.Repeat("+1", n)
+	}
+	atLimit := chain((MaxSQLBytes - len("SELECT 1")) / 2)
+	if len(atLimit) != MaxSQLBytes {
+		t.Fatalf("chain length = %d; want %d", len(atLimit), MaxSQLBytes)
+	}
+	f := newFixture()
+	if _, err := f.query(t, atLimit, defaultLimits()); err != nil {
+		t.Fatalf("query at the limit: %v", err)
+	}
+	if !f.ev.has("dialect:parse:" + atLimit) {
+		t.Fatal("query at the limit did not reach Parse")
+	}
+	for _, text := range []string{atLimit + "1", chain(22000)} {
+		f := newFixture()
+		_, err := f.query(t, text, defaultLimits())
+		if codeOf(t, err) != core.CodeInvalidArgument || messageOf(t, err) != "sql exceeds 16384 bytes" {
+			t.Fatalf("query of %d bytes: err = %v; want invalid_argument", len(text), err)
+		}
+		if len(f.ev.list) != 0 {
+			t.Fatalf("query of %d bytes reached the dialect or the pool: %v", len(text), f.ev.list[0])
+		}
+	}
+	f = newFixture()
+	raw := []byte(`{"resource":"r","schema":"` + strings.Repeat("s", MaxSQLBytes) + `"}`)
+	_, err := f.executor().Execute(context.Background(), CapabilityName, OperationListTables, raw, defaultLimits())
+	if codeOf(t, err) != core.CodeInvalidArgument || len(f.ev.list) != 0 {
+		t.Fatalf("list_tables with a long schema: err = %v, events %v; want invalid_argument before Parse", err, f.ev.list)
+	}
+}
+
+type panicDialect struct {
+	*fakeDialect
+}
+
+func (panicDialect) ValidateCatalog(context.Context, CatalogReader, Tree) error {
+	panic("catalog walk")
+}
+
+func TestPanicClosesConnection(t *testing.T) {
+	f := newFixture()
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("no panic")
+			}
+		}()
+		raw := []byte(`{"resource":"r","sql":"SELECT 1"}`)
+		_, _ = NewExecutor(panicDialect{f.dialect}, f.pool).Execute(context.Background(), CapabilityName, OperationQuery, raw, defaultLimits())
+	}()
+	if f.ev.count("conn:close") != 1 || f.ev.has("conn:release") {
+		t.Fatalf("connection not closed after a panic: %v", f.ev.list)
+	}
+}
+
+func TestTruncatedReadWithoutCursorClosesConnection(t *testing.T) {
+	f := newFixture()
+	rows := &fakeRows{ev: f.ev, values: [][]any{{int64(1)}, {int64(2)}, {int64(3)}}}
+	f.conn.rows[testRendered] = rows
+	res, err := f.query(t, testText, core.Limits{MaxRows: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 2 || !res.Truncated || res.TruncatedReason != core.TruncatedMaxRows {
+		t.Fatalf("result = %+v; want 2 rows truncated by max_rows", res)
+	}
+	if !f.ev.has("rows:abort") || f.ev.index("rows:abort") > f.ev.index("conn:exec:"+testRollback) {
+		t.Fatalf("rows not aborted before ROLLBACK: %v", f.ev.list)
+	}
+	if f.ev.count("conn:exec:"+testRollback) != 1 || f.ev.count("conn:close") != 1 || f.ev.has("conn:release") {
+		t.Fatalf("truncated read without a cursor did not ROLLBACK and close: %v", f.ev.list)
+	}
+
+	f = newFixture()
+	f.dialect.plan = RowCapPlan{Statement: testStmt, Fetch: testFetch}
+	f.conn.rows[testFetch] = &fakeRows{ev: f.ev, values: [][]any{{int64(1)}, {int64(2)}, {int64(3)}}}
+	if _, err := f.query(t, testText, core.Limits{MaxRows: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if f.ev.has("rows:abort") || f.ev.count("conn:release") != 1 {
+		t.Fatalf("truncated cursor read did not release: %v", f.ev.list)
+	}
+
+	f = newFixture()
+	f.conn.rows[testRendered] = &fakeRows{ev: f.ev, values: [][]any{{int64(1)}, {int64(2)}, {int64(3)}}}
+	f.conn.execErr[testRollback] = &EngineError{SQLState: "08006", Class: Connect}
+	if _, err := f.query(t, testText, core.Limits{MaxRows: 2}); codeOf(t, err) != core.CodeResourceUnavailable {
+		t.Fatalf("truncated read with a failed ROLLBACK: err = %v; want resource_unavailable", err)
+	}
+}
+
+type deadlinePool struct {
+	*fakePool
+	deadline *time.Duration
+}
+
+func (p deadlinePool) Acquire(ctx context.Context) (Conn, error) {
+	if d, ok := ctx.Deadline(); ok {
+		*p.deadline = time.Until(d)
+	}
+	return p.fakePool.Acquire(ctx)
+}
+
+func TestGoDeadlineHasSlack(t *testing.T) {
+	f := newFixture()
+	var got time.Duration
+	raw := []byte(`{"resource":"r","sql":"SELECT 1"}`)
+	if _, err := NewExecutor(f.dialect, deadlinePool{f.pool, &got}).Execute(context.Background(), CapabilityName, OperationQuery, raw, core.Limits{MaxRows: 1, Timeout: time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	if got <= time.Second+timeoutSlack-time.Second/2 || got > time.Second+timeoutSlack {
+		t.Fatalf("Go deadline = %s; want the limit plus %s", got, timeoutSlack)
 	}
 }

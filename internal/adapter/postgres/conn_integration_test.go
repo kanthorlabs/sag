@@ -171,6 +171,7 @@ func TestSessionGuardReadOnly(t *testing.T) {
 
 func TestRequestBeginSettingsOnServer(t *testing.T) {
 	pg := startPostgres(t)
+	fixture(t, pg, "ALTER ROLE CURRENT_USER SET datestyle = 'SQL, DMY'", "ALTER ROLE CURRENT_USER SET bytea_output = 'escape'")
 	cfg := testResourceConfig(pg, 1)
 	p := openPool(t, pg, cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -186,11 +187,26 @@ func TestRequestBeginSettingsOnServer(t *testing.T) {
 		"statement_timeout":                   "15s",
 		"lock_timeout":                        "2s",
 		"idle_in_transaction_session_timeout": "20s",
+		"datestyle":                           "ISO, YMD",
+		"bytea_output":                        "hex",
 	}
 	for name, value := range want {
 		if got := show(t, ctx, c, name); got != value {
 			t.Errorf("PostgreSQL %d: %s = %q; want %q", pg.Major, name, got, value)
 		}
+	}
+	values, err := queryValues(ctx, c, "SELECT '2024-01-02 03:04:05+00'::timestamptz, '2024-01-02'::date, '\\x0102'::bytea")
+	if err != nil {
+		t.Fatalf("value query: %v", err)
+	}
+	if ts, ok := values[0].(time.Time); !ok || !ts.Equal(time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)) {
+		t.Errorf("PostgreSQL %d: timestamptz = %#v; want 2024-01-02T03:04:05Z", pg.Major, values[0])
+	}
+	if d, ok := values[1].(time.Time); !ok || d.Month() != time.January || d.Day() != 2 {
+		t.Errorf("PostgreSQL %d: date = %#v; want 2024-01-02", pg.Major, values[1])
+	}
+	if b, ok := values[2].([]byte); !ok || string(b) != "\x01\x02" {
+		t.Errorf("PostgreSQL %d: bytea = %#v; want 2 bytes", pg.Major, values[2])
 	}
 	rollback(t, ctx, c)
 	if got := show(t, ctx, c, "statement_timeout"); got != "0" {

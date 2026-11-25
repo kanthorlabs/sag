@@ -303,6 +303,21 @@ func TestApprovalAccepts(t *testing.T) {
 	}
 }
 
+func TestPreflightIgnoresRoleSearchPath(t *testing.T) {
+	pg := startPostgres(t)
+	preflightFixture(t, pg,
+		"CREATE EXTENSION dblink",
+		"CREATE SCHEMA rev_evil",
+		"CREATE FUNCTION rev_evil.never(name, name) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT false'",
+		"CREATE OPERATOR rev_evil.= (LEFTARG = name, RIGHTARG = name, FUNCTION = rev_evil.never)",
+		"ALTER ROLE CURRENT_USER SET search_path = rev_evil, pg_catalog, public",
+	)
+	report := mustSQLPreflight(t, pg, preflightResourceConfig(pg))
+	if report.Passed || reportCheck(t, report, checkRiskyObjects).Passed || !strings.Contains(report.Hint, "dblink") {
+		t.Fatalf("report = %+v; want dblink refused with a role search_path that shadows =", report)
+	}
+}
+
 func TestReportsCitextOperator(t *testing.T) {
 	pg := startPostgres(t)
 	preflightFixture(t, pg, "CREATE EXTENSION citext")

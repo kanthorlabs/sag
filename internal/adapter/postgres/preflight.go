@@ -28,6 +28,7 @@ const (
 )
 
 const (
+	querySearchPath         = `SELECT pg_catalog.set_config('search_path', 'pg_catalog', true)`
 	queryServer             = `SELECT pg_catalog.version(), pg_catalog.current_setting('server_version_num')`
 	queryTLS                = `SELECT s.ssl FROM pg_catalog.pg_stat_ssl s WHERE s.pid = pg_catalog.pg_backend_pid()`
 	queryReadOnly           = `SELECT pg_catalog.current_setting('transaction_read_only'), pg_catalog.current_setting('standard_conforming_strings'), pg_catalog.current_setting('client_encoding')`
@@ -59,6 +60,9 @@ func (d *dialect) Preflight(ctx context.Context, conn sql.CatalogReader) (core.P
 
 func (d *dialect) preflight(ctx context.Context, r sql.CatalogReader) (core.PreflightReport, error) {
 	var report core.PreflightReport
+	if err := pinSearchPath(ctx, r); err != nil {
+		return report, err
+	}
 	engine, version, err := checkServer(ctx, r)
 	if err != nil {
 		return report, err
@@ -97,6 +101,11 @@ func (d *dialect) preflight(ctx context.Context, r sql.CatalogReader) (core.Pref
 	}
 	report.Checks = append(report.Checks, operatorNamesCheck(names))
 	return report, nil
+}
+
+func pinSearchPath(ctx context.Context, r sql.CatalogReader) error {
+	_, err := queryOne(ctx, r, querySearchPath)
+	return err
 }
 
 func checkServer(ctx context.Context, r sql.CatalogReader) (core.PreflightCheck, core.PreflightCheck, error) {

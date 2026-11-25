@@ -29,6 +29,10 @@ func (p *fakePool) Acquire(context.Context) (sql.Conn, error) {
 	return nil, core.NewError(core.CodeResourceUnavailable, "resource unavailable")
 }
 
+func (p *fakePool) Dedicated(ctx context.Context) (sql.Conn, error) {
+	return p.Acquire(ctx)
+}
+
 func (p *fakePool) Close() { p.closed = true }
 
 type fakeResource struct{ closed bool }

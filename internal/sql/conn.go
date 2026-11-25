@@ -8,6 +8,7 @@ import (
 
 type Pool interface {
 	Acquire(ctx context.Context) (Conn, error)
+	Dedicated(ctx context.Context) (Conn, error)
 	Close()
 }
 
@@ -24,6 +25,7 @@ type Rows interface {
 	Next() bool
 	Values() ([]any, error)
 	Err() error
+	Abort()
 	Close()
 }
 

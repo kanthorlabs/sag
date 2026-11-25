@@ -54,6 +54,9 @@ func (Adapter) Inspect(ctx context.Context, cfg core.ResourceConfig, cred secret
 	defer p.Close()
 	var objects approval.Objects
 	err = sql.RunReadOnly(ctx, d, p, core.Limits{Timeout: sql.CatalogTimeout}, func(ctx context.Context, r sql.CatalogReader) error {
+		if err := pinSearchPath(ctx, r); err != nil {
+			return err
+		}
 		var err error
 		objects, err = riskyObjects(ctx, r)
 		return err

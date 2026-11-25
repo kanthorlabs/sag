@@ -29,6 +29,8 @@ func TestRequestBeginText(t *testing.T) {
 		"SET LOCAL idle_in_transaction_session_timeout = 20000",
 		"SET LOCAL standard_conforming_strings = on",
 		"SET LOCAL client_encoding = 'UTF8'",
+		"SET LOCAL datestyle = 'ISO, YMD'",
+		"SET LOCAL bytea_output = 'hex'",
 	}
 	if got := requestBegin(lim, cfg); !slices.Equal(got, want) {
 		t.Fatalf("requestBegin() = %q; want %q", got, want)
@@ -48,6 +50,8 @@ func TestRequestBeginTextNeverDisablesTimeouts(t *testing.T) {
 		"SET LOCAL idle_in_transaction_session_timeout = 2",
 		"SET LOCAL standard_conforming_strings = on",
 		"SET LOCAL client_encoding = 'UTF8'",
+		"SET LOCAL datestyle = 'ISO, YMD'",
+		"SET LOCAL bytea_output = 'hex'",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("requestBegin() = %q; want %q", got, want)

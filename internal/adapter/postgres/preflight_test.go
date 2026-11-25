@@ -27,6 +27,7 @@ func (r *catalogRows) Next() bool {
 
 func (r *catalogRows) Values() ([]any, error) { return r.values[r.index-1], nil }
 func (r *catalogRows) Err() error             { return nil }
+func (r *catalogRows) Abort()                 {}
 func (r *catalogRows) Close()                 {}
 
 type catalogFake struct {
@@ -49,6 +50,7 @@ func (f *catalogFake) Query(ctx context.Context, text string, args ...any) (sql.
 
 func healthyCatalog() *catalogFake {
 	return &catalogFake{answers: map[string][][]any{
+		querySearchPath:         {{"pg_catalog"}},
 		queryServer:             {{"PostgreSQL 17.12 on aarch64-unknown-linux-gnu", "170012"}},
 		queryTLS:                {{true}},
 		queryReadOnly:           {{"on", "on", "UTF8"}},
@@ -121,8 +123,16 @@ func TestPreflightRefusesOtherEngine(t *testing.T) {
 	if report.Passed || reportCheck(t, report, checkEngine).Passed {
 		t.Fatalf("report = %+v; want engine refused", report)
 	}
-	if len(f.queries) != 1 {
-		t.Fatalf("queries = %v; want only the server query after an engine refusal", f.queries)
+	if !slices.Equal(f.queries, []string{querySearchPath, queryServer}) {
+		t.Fatalf("queries = %v; want only the search_path and server queries after an engine refusal", f.queries)
+	}
+}
+
+func TestPreflightPinsSearchPathFirst(t *testing.T) {
+	f := healthyCatalog()
+	runPreflight(t, testDialect(core.TLSVerifyFull, nil), f)
+	if len(f.queries) == 0 || f.queries[0] != querySearchPath {
+		t.Fatalf("queries = %v; want %q first", f.queries, querySearchPath)
 	}
 }
 

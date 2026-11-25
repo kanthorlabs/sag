@@ -127,6 +127,14 @@ func (p *fakePool) Acquire(ctx context.Context) (Conn, error) {
 	return p.conn, nil
 }
 
+func (p *fakePool) Dedicated(ctx context.Context) (Conn, error) {
+	p.ev.add("pool:dedicated")
+	if p.acquireErr != nil {
+		return nil, p.acquireErr
+	}
+	return p.conn, nil
+}
+
 func (p *fakePool) Close() {
 	p.ev.add("pool:close")
 }
@@ -200,6 +208,13 @@ func (r *fakeRows) Values() ([]any, error) {
 }
 
 func (r *fakeRows) Err() error { return r.err }
+
+func (r *fakeRows) Abort() {
+	r.closed = true
+	if r.ev != nil {
+		r.ev.add("rows:abort")
+	}
+}
 
 func (r *fakeRows) Close() {
 	r.closed = true

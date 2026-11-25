@@ -19,6 +19,8 @@ func requestBegin(lim core.Limits, cfg core.ResourceConfig) []string {
 		fmt.Sprintf("SET LOCAL idle_in_transaction_session_timeout = %d", milliseconds(cfg.IdleInTransactionSessionTimeout)),
 		"SET LOCAL standard_conforming_strings = on",
 		"SET LOCAL client_encoding = 'UTF8'",
+		"SET LOCAL datestyle = 'ISO, YMD'",
+		"SET LOCAL bytea_output = 'hex'",
 	}
 }
 

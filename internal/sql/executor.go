@@ -14,6 +14,8 @@ import (
 const (
 	rollbackStatement = "ROLLBACK"
 	rollbackTimeout   = 5 * time.Second
+	timeoutSlack      = 2 * time.Second
+	MaxSQLBytes       = 16 * 1024
 )
 
 const (
@@ -21,7 +23,11 @@ const (
 	messageUnavailable = "resource unavailable"
 	messageInternal    = "internal error"
 	messageUpstream    = "upstream error, SQLSTATE "
+	messageRejected    = "statement rejected"
+	messageSQLTooLarge = "sql exceeds 16384 bytes"
 )
+
+var errTruncatedRead = errors.New("truncated read without a cursor")
 
 type executor struct {
 	dialect Dialect
@@ -34,9 +40,9 @@ func NewExecutor(d Dialect, p Pool) core.Resource {
 
 func (e *executor) Preflight(ctx context.Context) (core.PreflightReport, error) {
 	var report core.PreflightReport
-	err := RunReadOnly(ctx, e.dialect, e.pool, core.Limits{Timeout: CatalogTimeout}, func(ctx context.Context, r CatalogReader) error {
+	err := runReadOnly(ctx, e.dialect, e.pool.Dedicated, core.Limits{Timeout: CatalogTimeout}, func(ctx context.Context, c Conn) error {
 		var err error
-		report, err = e.dialect.Preflight(ctx, r)
+		report, err = e.dialect.Preflight(ctx, c)
 		return err
 	})
 	return report, err
@@ -50,6 +56,9 @@ func (e *executor) Execute(ctx context.Context, capability, operation string, in
 	if err != nil {
 		return core.Result{}, err
 	}
+	if len(text) > MaxSQLBytes {
+		return core.Result{}, core.NewError(core.CodeInvalidArgument, messageSQLTooLarge)
+	}
 	trace := core.Trace{Input: text, InputSHA256: sha256Hex(text)}
 	tree, rendered, err := e.validateStatic(text)
 	if rendered != "" {
@@ -59,12 +68,12 @@ func (e *executor) Execute(ctx context.Context, capability, operation string, in
 		return core.Result{}, withTrace(rejected(err), trace)
 	}
 	var result core.Result
-	err = runReadOnly(ctx, e.dialect, e.pool, lim, func(ctx context.Context, c Conn) error {
+	err = runReadOnly(ctx, e.dialect, e.pool.Acquire, lim, func(ctx context.Context, c Conn) error {
 		var err error
 		result, err = e.run(ctx, c, tree, rendered, lim.MaxRows)
 		return err
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, errTruncatedRead) {
 		return core.Result{}, withTrace(engineFailure(err), trace)
 	}
 	result.Trace = trace
@@ -110,7 +119,7 @@ func (e *executor) run(ctx context.Context, c Conn, tree Tree, rendered string, 
 	if err != nil {
 		return core.Result{}, err
 	}
-	return readRows(rows, maxRows)
+	return readRows(rows, maxRows, plan.Fetch == "")
 }
 
 func openRows(ctx context.Context, c Conn, plan RowCapPlan) (Rows, error) {
@@ -123,13 +132,17 @@ func openRows(ctx context.Context, c Conn, plan RowCapPlan) (Rows, error) {
 	return c.Query(ctx, plan.Fetch)
 }
 
-func readRows(rows Rows, maxRows int) (core.Result, error) {
+func readRows(rows Rows, maxRows int, cursorless bool) (core.Result, error) {
 	defer rows.Close()
 	result := core.Result{Columns: rows.Columns(), Rows: [][]any{}}
 	for rows.Next() {
 		if len(result.Rows) >= maxRows {
 			result.Truncated = true
 			result.TruncatedReason = core.TruncatedMaxRows
+			if cursorless {
+				rows.Abort()
+				return result, errTruncatedRead
+			}
 			break
 		}
 		values, err := rows.Values()
@@ -149,28 +162,35 @@ func readRows(rows Rows, maxRows int) (core.Result, error) {
 }
 
 func RunReadOnly(ctx context.Context, d Dialect, p Pool, lim core.Limits, fn func(ctx context.Context, r CatalogReader) error) error {
-	return runReadOnly(ctx, d, p, lim, func(ctx context.Context, c Conn) error {
+	return runReadOnly(ctx, d, p.Acquire, lim, func(ctx context.Context, c Conn) error {
 		return fn(ctx, c)
 	})
 }
 
-func runReadOnly(ctx context.Context, d Dialect, p Pool, lim core.Limits, fn func(ctx context.Context, c Conn) error) error {
+func runReadOnly(ctx context.Context, d Dialect, acquire func(ctx context.Context) (Conn, error), lim core.Limits, fn func(ctx context.Context, c Conn) error) error {
 	if lim.Timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, lim.Timeout)
+		ctx, cancel = context.WithTimeout(ctx, lim.Timeout+timeoutSlack)
 		defer cancel()
 	}
-	conn, err := p.Acquire(ctx)
+	conn, err := acquire(ctx)
 	if err != nil {
 		return err
 	}
+	finished := false
+	defer func() {
+		if !finished {
+			_ = conn.Close()
+		}
+	}()
 	err = requestBegin(ctx, conn, d.RequestBegin(lim))
 	if err == nil {
 		err = fn(ctx, conn)
 	}
-	if rollbackErr := rollback(ctx, conn); err == nil {
+	if rollbackErr := rollback(ctx, conn); rollbackErr != nil && (err == nil || errors.Is(err, errTruncatedRead)) {
 		err = rollbackErr
 	}
+	finished = true
 	if err != nil {
 		_ = conn.Close()
 		return err
@@ -200,13 +220,20 @@ func rejected(err error) error {
 	if errors.As(err, &ce) || errors.As(err, &ee) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	return &core.Error{Code: core.CodeQueryRejected, Message: err.Error(), Cause: err}
+	return &core.Error{Code: core.CodeQueryRejected, Message: messageRejected, Cause: err}
 }
 
 func engineFailure(err error) error {
 	var ce *core.Error
 	if errors.As(err, &ce) {
-		return err
+		switch ce.Code {
+		case core.CodeTimeout:
+			return &core.Error{Code: core.CodeTimeout, Message: messageTimeout, Cause: err}
+		case core.CodeResourceUnavailable:
+			return &core.Error{Code: core.CodeResourceUnavailable, Message: messageUnavailable, Cause: err}
+		default:
+			return err
+		}
 	}
 	var ee *EngineError
 	if errors.As(err, &ee) {
