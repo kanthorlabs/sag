@@ -7,6 +7,8 @@ import (
 	"github.com/kanthorlabs/sag/internal/sql"
 )
 
+var errNotText = errors.New("passthrough: tree is not text")
+
 type dialect struct {
 	sql.Dialect
 }
@@ -16,21 +18,25 @@ func Wrap(d sql.Dialect) sql.Dialect {
 }
 
 func (d dialect) Parse(text string) (sql.Tree, error) {
-	return nil, errors.ErrUnsupported
+	return text, nil
 }
 
 func (d dialect) ValidateStatic(t sql.Tree) error {
-	return errors.ErrUnsupported
+	return nil
 }
 
 func (d dialect) Render(t sql.Tree) (string, error) {
-	return "", errors.ErrUnsupported
+	text, ok := t.(string)
+	if !ok {
+		return "", errNotText
+	}
+	return text, nil
 }
 
 func (d dialect) ValidateCatalog(ctx context.Context, tx sql.CatalogReader, t sql.Tree) error {
-	return errors.ErrUnsupported
+	return nil
 }
 
 func (d dialect) PlanRowCap(t sql.Tree, rendered string, maxRows int) (sql.RowCapPlan, error) {
-	return sql.RowCapPlan{}, errors.ErrUnsupported
+	return sql.RowCapPlan{Statement: rendered}, nil
 }
