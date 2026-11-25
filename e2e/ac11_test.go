@@ -23,6 +23,7 @@ const (
 	ac11ServeWindow   = 70 * time.Second
 	ac11RecheckWindow = 20 * time.Second
 	ac11Hint          = "podman exec -it sag sag extension approve ext"
+	ac11InvalidRecord = "approval record is not valid for the current objects"
 )
 
 func init() {
@@ -114,6 +115,9 @@ func runAC11(t *testing.T, env harness.Env) {
 		}
 		if res.ExitCode == 0 {
 			t.Fatalf("sag resource test %s accepted a record with a changed mac; output %q", ac11Resource, res.Stdout+res.Stderr)
+		}
+		if !strings.Contains(res.Stdout, ac11InvalidRecord) {
+			t.Fatalf("sag resource test %s output %q after a changed mac; want %q", ac11Resource, res.Stdout+res.Stderr, ac11InvalidRecord)
 		}
 		if res := ac11ResourceTest(ctx, t, env); res.ExitCode != 0 {
 			t.Fatalf("sag resource test %s after restore exited %d; output %q", ac11Resource, res.ExitCode, res.Stdout+res.Stderr)

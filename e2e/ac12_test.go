@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,8 +49,15 @@ func runAC12(t *testing.T, env harness.Env) {
 		t.Fatalf("sag resource test %s exited %d; output %q", ac12Resource, res.ExitCode, res.Stdout+res.Stderr)
 	}
 	for _, line := range strings.Split(res.Stdout, "\n") {
-		names, ok := strings.CutPrefix(strings.TrimSpace(line), ac12Check)
-		if ok && slices.Contains(strings.Fields(names), ac12Operator) {
+		quoted, ok := strings.CutPrefix(strings.TrimSpace(line), ac12Check)
+		if !ok {
+			continue
+		}
+		names, err := strconv.Unquote(quoted)
+		if err != nil {
+			t.Fatalf("operator_names detail %q is not a quoted string: %v", quoted, err)
+		}
+		if slices.Contains(strings.Fields(names), ac12Operator) {
 			return
 		}
 	}

@@ -39,6 +39,7 @@ e2e: test image image-conformance
 	$(GO) run ./e2e/cmd/acreport -layer $(LAYER) -in $(REPORT)/pg$(PG)/events.json -out $(REPORT)
 
 e2e-matrix: test image image-conformance
+	for m in $(PGS); do $(MAKE) test-integration PG=$$m PKG=./... RUN= || exit 1; done
 	pids=""; \
 	for m in $(PGS); do \
 		mkdir -p $(REPORT)/pg$$m; \

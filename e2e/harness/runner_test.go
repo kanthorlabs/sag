@@ -25,7 +25,7 @@ func TestPhaseOrder(t *testing.T) {
 	if got, want := ids(InPhase(acs, PhaseParallel)), []string{"AC05", "Harness_Skeleton"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("parallel = %v, want %v", got, want)
 	}
-	if got, want := ids(InPhase(acs, PhaseSequential)), []string{"AC16", "AC08", "AC50", "AC19"}; !reflect.DeepEqual(got, want) {
+	if got, want := ids(InPhase(acs, PhaseSequential)), []string{"AC16", "AC50", "AC08", "AC19"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("sequential = %v, want %v", got, want)
 	}
 }

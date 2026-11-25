@@ -9,11 +9,11 @@ const SkipEnv = "SAG_AC_SKIP"
 
 var sequentialRank = map[string]int{
 	"AC16": 0,
-	"AC08": 1,
+	"AC08": 2,
 	"AC19": 3,
 }
 
-const otherSequentialRank = 2
+const otherSequentialRank = 1
 
 func effectivePhase(ac AC) Phase {
 	if ac.Phase == PhaseSequential {

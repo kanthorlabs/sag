@@ -21,6 +21,8 @@ const (
 	ac10Strict  = "strict"
 	ac10Skip    = "skip"
 	ac10Warning = "resource preflight warning"
+	ac10Failed  = "resource preflight failed"
+	ac10TLS     = "preflight TLS handshake failed"
 )
 
 var ac10Results = []string{"resource served", "resource preflight refused", "resource preflight failed"}
@@ -53,6 +55,7 @@ func init() {
 type ac10LogLine struct {
 	Msg      string `json:"msg"`
 	Resource string `json:"resource"`
+	Cause    string `json:"cause"`
 }
 
 func runAC10(t *testing.T, env harness.Env) {
@@ -65,6 +68,9 @@ func runAC10(t *testing.T, env harness.Env) {
 	}
 	if strict.ExitCode == 0 {
 		t.Fatalf("sag resource test %s exited 0 with verify-full and an unknown CA; output %q", ac10Strict, strict.Stdout+strict.Stderr)
+	}
+	if !strings.Contains(strict.Stdout, ac10TLS) {
+		t.Fatalf("sag resource test %s output %q; want the cause %q", ac10Strict, strict.Stdout+strict.Stderr, ac10TLS)
 	}
 
 	skip, err := env.Exec(ctx, harness.ContainerSAG, "sag", "resource", "test", ac10Skip)
@@ -100,6 +106,25 @@ func runAC10(t *testing.T, env harness.Env) {
 	if strictServed {
 		t.Fatalf("daemon log serves %s:\n%s", ac10Strict, logs)
 	}
+	if causes := ac10ResultCauses(logs, ac10Strict); len(causes) < 1 || slices.ContainsFunc(causes, func(c string) bool { return c != ac10TLS }) {
+		t.Fatalf("daemon log result causes for %s = %q; want each %q:\n%s", ac10Strict, causes, ac10TLS, logs)
+	}
+}
+
+func ac10ResultCauses(logs, resource string) []string {
+	var causes []string
+	for _, line := range strings.Split(logs, "\n") {
+		var l ac10LogLine
+		if json.Unmarshal([]byte(line), &l) != nil || l.Resource != resource || !slices.Contains(ac10Results, l.Msg) {
+			continue
+		}
+		if l.Msg != ac10Failed {
+			causes = append(causes, l.Msg)
+			continue
+		}
+		causes = append(causes, l.Cause)
+	}
+	return causes
 }
 
 func ac10PreflightRuns(logs, resource string) (int, []int, bool) {
