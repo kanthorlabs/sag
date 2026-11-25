@@ -60,6 +60,7 @@ func run(args []string, stderr io.Writer, probe func() buildInfo) int {
 	var inputs inputPaths
 	flags.Var(&inputs, "in", "go test -json events file at <dir>/pg<major>/<file>; repeat for each major")
 	out := flags.String("out", "", "output directory for "+jsonFileName+" and "+mdFileName)
+	skip := flags.String("skip", "", "AC IDs that the gate excludes, separated by comma or space")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -72,7 +73,7 @@ func run(args []string, stderr io.Writer, probe func() buildInfo) int {
 		fmt.Fprintf(stderr, "acreport: %v\n", err)
 		return 2
 	}
-	r := buildReport(*layer, runs, e2e.ACTable, probe())
+	r := buildReport(*layer, runs, e2e.ACTable, skipIDs(*skip), probe())
 	if err := writeReport(*out, r); err != nil {
 		fmt.Fprintf(stderr, "acreport: %v\n", err)
 		return 2
@@ -99,6 +100,12 @@ func checkArgs(layer int, inputs []string, out string, extra int) error {
 		return errors.New("unexpected arguments")
 	}
 	return nil
+}
+
+func skipIDs(skip string) []string {
+	return strings.FieldsFunc(skip, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t'
+	})
 }
 
 func majorFromPath(path string) (int, error) {
