@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/secret"
 	"github.com/kanthorlabs/sag/internal/sql"
@@ -358,4 +360,14 @@ func TestRowsColumnsAndValues(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func closeConn(ctx context.Context, conn *pgx.Conn) {
+	closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
+	defer cancel()
+	conn.Close(closeCtx)
+}
+
+func execText(ctx context.Context, conn *pgx.Conn, sql string) error {
+	return conn.PgConn().ExecParams(ctx, sql, nil, nil, nil, nil).Read().Err
 }

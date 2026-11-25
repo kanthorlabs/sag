@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -144,8 +146,16 @@ func TestAcquireConnectFailureIsResourceUnavailable(t *testing.T) {
 	defer cancel()
 	_, err := p.Acquire(ctx)
 	var coreErr *core.Error
-	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeResourceUnavailable || coreErr.Message != acquireConnectFailed {
-		t.Fatalf("Acquire error = %v; want core.Error %s %q", err, core.CodeResourceUnavailable, acquireConnectFailed)
+	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeResourceUnavailable || coreErr.Message != preflightConnectFailed {
+		t.Fatalf("Acquire error = %v; want core.Error %s %q", err, core.CodeResourceUnavailable, preflightConnectFailed)
+	}
+}
+
+func TestAcquireErrorKeepsTLSClass(t *testing.T) {
+	err := acquireError(context.Background(), fmt.Errorf("connect: %w", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}))
+	var coreErr *core.Error
+	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeResourceUnavailable || coreErr.Message != preflightTLSFailed {
+		t.Fatalf("acquireError = %v; want core.Error %s %q", err, core.CodeResourceUnavailable, preflightTLSFailed)
 	}
 }
 

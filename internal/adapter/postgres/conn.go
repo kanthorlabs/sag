@@ -29,11 +29,7 @@ const (
 	preflightTimedOut      = "preflight timed out"
 )
 
-const (
-	acquireConnectFailed = "connect failed"
-	acquireTLSFailed     = "TLS handshake failed"
-	acquireTimedOut      = "timed out waiting for a connection"
-)
+const acquireTimedOut = "timed out waiting for a connection"
 
 var errPoolSize = errors.New("pool_size is out of range")
 
@@ -87,9 +83,9 @@ func acquireError(ctx context.Context, err error) error {
 	case ctx.Err() != nil:
 		return &core.Error{Code: core.CodeTimeout, Message: acquireTimedOut, Cause: err}
 	case isTLSError(err):
-		return &core.Error{Code: core.CodeResourceUnavailable, Message: acquireTLSFailed, Cause: err}
+		return &core.Error{Code: core.CodeResourceUnavailable, Message: preflightTLSFailed, Cause: err}
 	default:
-		return &core.Error{Code: core.CodeResourceUnavailable, Message: acquireConnectFailed, Cause: err}
+		return &core.Error{Code: core.CodeResourceUnavailable, Message: preflightConnectFailed, Cause: err}
 	}
 }
 

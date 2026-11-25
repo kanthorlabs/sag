@@ -227,7 +227,9 @@ func TestConnectErrorOmitsPassword(t *testing.T) {
 	}
 	addr := l.Addr().String()
 	l.Close()
-	res, err := Adapter{}.Open(context.Background(), verifyFull(), cred("postgres://app:"+testPassword+"@"+addr+"/orders"))
+	cfg := verifyFull()
+	cfg.PoolSize = 1
+	res, err := Adapter{}.Open(context.Background(), cfg, cred("postgres://app:"+testPassword+"@"+addr+"/orders"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

@@ -13,9 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/kanthorlabs/sag/internal/approval"
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/secret"
@@ -79,10 +76,10 @@ func TestPreflightMinimal(t *testing.T) {
 		t.Fatalf("Logs: %v", err)
 	}
 	begin := strings.Index(logs, "BEGIN TRANSACTION READ ONLY")
-	version := strings.Index(logs, "SELECT version()")
+	version := strings.Index(logs, "pg_catalog.version()")
 	rollback := strings.Index(logs, "ROLLBACK")
 	if begin < 0 || version < begin || rollback < version {
-		t.Fatalf("server log lacks BEGIN READ ONLY, SELECT version(), ROLLBACK in order:\n%s", logs)
+		t.Fatalf("server log lacks BEGIN READ ONLY, pg_catalog.version(), ROLLBACK in order:\n%s", logs)
 	}
 	if strings.Contains(logs, "COMMIT") {
 		t.Fatalf("server log has COMMIT:\n%s", logs)
@@ -95,7 +92,7 @@ func TestPreflightRefusesUnknownCA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := core.ResourceConfig{Name: "main", Kind: Kind, TLS: core.TLSVerifyFull, TLSCA: other.CertPEM, ConnectTimeout: 10 * time.Second}
+	cfg := core.ResourceConfig{Name: "main", Kind: Kind, TLS: core.TLSVerifyFull, TLSCA: other.CertPEM, PoolSize: 1, ConnectTimeout: 10 * time.Second}
 	res := openResource(t, cfg, pg.HostDSN())
 	_, err = res.Preflight(context.Background())
 	if err == nil {
@@ -114,18 +111,22 @@ func assertPreflightCause(t *testing.T, err error, want string) {
 
 func TestExtendedProtocolRejectsMultiStatement(t *testing.T) {
 	pg := startPostgres(t)
-	cfg := core.ResourceConfig{Name: "main", Kind: Kind, TLS: core.TLSVerifyFull, TLSCA: pg.CAPEM, ConnectTimeout: 10 * time.Second}
-	res := openResource(t, cfg, pg.HostDSN())
+	cfg := core.ResourceConfig{Name: "main", Kind: Kind, TLS: core.TLSVerifyFull, TLSCA: pg.CAPEM, PoolSize: 1, ConnectTimeout: 10 * time.Second}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	conn, err := pgx.ConnectConfig(ctx, res.(*resource).connConfig.Copy())
+	_, p, err := openSQL(ctx, cfg, secret.NewCredential("sag-main", []byte(pg.HostDSN())))
 	if err != nil {
-		t.Fatalf("connect: %v", err)
+		t.Fatalf("openSQL: %v", err)
 	}
-	defer closeConn(ctx, conn)
-	err = execText(ctx, conn, "CREATE TEMP TABLE s2_probe (id int); INSERT INTO s2_probe VALUES (1); SELECT 1")
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "42601" {
+	defer p.Close()
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer conn.Close()
+	err = conn.Exec(ctx, "CREATE TEMP TABLE s2_probe (id int); INSERT INTO s2_probe VALUES (1); SELECT 1")
+	var engineErr *sql.EngineError
+	if !errors.As(err, &engineErr) || engineErr.SQLState != "42601" {
 		t.Fatalf("multi-statement error = %v; want SQLSTATE 42601", err)
 	}
 }
@@ -138,7 +139,7 @@ func TestPreflightWrongPasswordOmitsPassword(t *testing.T) {
 	}
 	const wrong = "wrong-Pw_7731"
 	u.User = url.UserPassword(u.User.Username(), wrong)
-	cfg := core.ResourceConfig{Name: "main", Kind: Kind, TLS: core.TLSVerifyFull, TLSCA: pg.CAPEM, ConnectTimeout: 10 * time.Second}
+	cfg := core.ResourceConfig{Name: "main", Kind: Kind, TLS: core.TLSVerifyFull, TLSCA: pg.CAPEM, PoolSize: 1, ConnectTimeout: 10 * time.Second}
 	res := openResource(t, cfg, u.String())
 	_, err = res.Preflight(context.Background())
 	if err == nil {

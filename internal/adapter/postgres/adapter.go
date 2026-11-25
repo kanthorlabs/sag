@@ -31,11 +31,11 @@ func (Adapter) Capabilities() []core.Capability {
 }
 
 func (Adapter) Open(ctx context.Context, cfg core.ResourceConfig, cred secret.Credential) (core.Resource, error) {
-	cc, err := connConfig(cfg, cred)
+	d, p, err := openSQL(ctx, cfg, cred)
 	if err != nil {
 		return nil, err
 	}
-	return &resource{cfg: cfg, connConfig: cc}, nil
+	return sql.NewExecutor(d, p), nil
 }
 
 func (Adapter) OpenSQL(ctx context.Context, cfg core.ResourceConfig, cred secret.Credential) (sql.Dialect, sql.Pool, error) {
