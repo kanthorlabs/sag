@@ -453,6 +453,14 @@ func (s *Suite) StartSAG(ctx context.Context, spec ContainerSpec) (Container, er
 		}
 	}
 
+	var busybox string
+	if spec.Name == ContainerSAG {
+		var err error
+		if busybox, err = BusyboxMount(ctx, s.dir); err != nil {
+			return nil, err
+		}
+	}
+
 	image := Image
 	if spec.Name == ContainerConformance {
 		image = ConformanceImage
@@ -468,6 +476,7 @@ func (s *Suite) StartSAG(ctx context.Context, spec ContainerSpec) (Container, er
 		ConfigFile:  configFile,
 		StateVolume: c.volume,
 		AuditDir:    auditDir,
+		Busybox:     busybox,
 		Secrets:     mounts,
 		SecretMode:  spec.SecretMode,
 		Image:       image,
