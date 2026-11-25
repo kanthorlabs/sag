@@ -354,7 +354,7 @@ SAG runs preflight at `sag resource test <name>` and at daemon start for each re
 | Version | `server_version_num` is from `140000` to `199999`. | Refuse |
 | TLS | `pg_stat_ssl.ssl` is true for the session, unless the resource has the TLS opt-out or a loopback IP literal as host (section 12.2). | Refuse |
 | Read-only mode | After `RequestBegin`, `transaction_read_only` is `on`, `standard_conforming_strings` is `on`, and `client_encoding` is `UTF8`. | Refuse |
-| Risky objects | None of these exist, or a valid approval matches the current fingerprint: extensions `dblink`, `pg_background`, `adminpack`, `file_fdw`; procedural languages with `lanpltrusted = false` other than `c` and `internal`. | Refuse, with the approval hint |
+| Risky objects | None of these exist, or a valid approval matches the current fingerprint: extensions `dblink`, `pg_background`, `adminpack`, `file_fdw`, `pg_cron`, `http`, `pg_net`; procedural languages with `lanpltrusted = false` other than `c` and `internal`. | Refuse, with the approval hint |
 | Operator names | Report each operator name that has a match outside `pg_catalog`. Queries that use these names fail with `query_rejected`. | Report only |
 
 Preflight runs on its own connection outside the request pool. Its first statement in the transaction is `SELECT pg_catalog.set_config('search_path', 'pg_catalog', true)`.

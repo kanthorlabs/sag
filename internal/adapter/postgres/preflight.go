@@ -32,7 +32,7 @@ const (
 	queryServer             = `SELECT pg_catalog.version(), pg_catalog.current_setting('server_version_num')`
 	queryTLS                = `SELECT s.ssl FROM pg_catalog.pg_stat_ssl s WHERE s.pid = pg_catalog.pg_backend_pid()`
 	queryReadOnly           = `SELECT pg_catalog.current_setting('transaction_read_only'), pg_catalog.current_setting('standard_conforming_strings'), pg_catalog.current_setting('client_encoding')`
-	queryRiskyExtensions    = `SELECT e.extname, e.extversion, n.nspname FROM pg_catalog.pg_extension e JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace WHERE e.extname IN ('dblink', 'pg_background', 'adminpack', 'file_fdw')`
+	queryRiskyExtensions    = `SELECT e.extname, e.extversion, n.nspname FROM pg_catalog.pg_extension e JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace WHERE e.extname IN ('dblink', 'pg_background', 'adminpack', 'file_fdw', 'pg_cron', 'http', 'pg_net')`
 	queryUntrustedLanguages = `SELECT l.lanname FROM pg_catalog.pg_language l WHERE NOT l.lanpltrusted AND l.lanname NOT IN ('c', 'internal')`
 )
 

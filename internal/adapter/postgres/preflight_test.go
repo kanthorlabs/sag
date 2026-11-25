@@ -209,6 +209,33 @@ func TestPreflightRiskyWithoutApprovalsRefuses(t *testing.T) {
 	}
 }
 
+func TestRiskyExtensionList(t *testing.T) {
+	for _, name := range []string{"dblink", "pg_background", "adminpack", "file_fdw", "pg_cron", "http", "pg_net"} {
+		if !strings.Contains(queryRiskyExtensions, "'"+name+"'") {
+			t.Errorf("queryRiskyExtensions lacks %s", name)
+		}
+	}
+}
+
+func TestPreflightRefusesNetworkExtensions(t *testing.T) {
+	for _, name := range []string{"pg_cron", "http", "pg_net"} {
+		f := healthyCatalog()
+		f.answers[queryRiskyExtensions] = [][]any{{name, "1.0", "public"}}
+		report := runPreflight(t, testDialect(core.TLSVerifyFull, nil), f)
+		if report.Passed || reportCheck(t, report, checkRiskyObjects).Passed {
+			t.Errorf("%s: report = %+v; want risky_objects refused", name, report)
+		}
+		want := "resource main has risky objects " + name + "; to approve, run on the host: podman exec -it sag sag extension approve main"
+		if report.Hint != want {
+			t.Errorf("%s: hint = %q; want %q", name, report.Hint, want)
+		}
+		report = runPreflight(t, testDialect(core.TLSVerifyFull, &approvalsFake{}), f)
+		if !report.Passed {
+			t.Errorf("%s: report = %+v; want passed with an approval", name, report)
+		}
+	}
+}
+
 func TestPreflightRiskyVerifyErrorsRefuse(t *testing.T) {
 	errs := []error{approval.ErrNotApproved, approval.ErrInvalidMAC, approval.ErrFingerprintMismatch, errors.New("record mode is 0644")}
 	for _, verifyErr := range errs {
