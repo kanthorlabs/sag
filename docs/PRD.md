@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 14 |
-| Date | 2026-11-25 |
+| Status | Revision 15 |
+| Date | 2026-11-26 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
 ## 1. Problem
@@ -568,7 +568,7 @@ Issue command: `podman exec -it sag sag jwt generate <sub> [--name <display>]`.
 - `sag.yaml` references a secret with `secret:<name>`. It never contains a secret value.
 - The secret value for a PostgreSQL resource is a DSN URL with user, password, host, port, and database only, for example `postgres://app:<password>@db.example.net:5432/app`. Host, port, database, and user are inside the protected value.
 - The operator creates the secret on the host. The operator reads the DSN without echo: `read -rs DSN && printf '%s' "$DSN" | podman secret create sag-orders -`.
-- The operator adds `--secret sag-orders,type=mount,uid=65532,mode=0400` to the Quadlet file and restarts the container.
+- The operator adds `Secret=sag-orders,type=mount,target=sag-orders,uid=65532,mode=0400` to the Quadlet file, runs `systemctl --user daemon-reload`, and restarts the service with `systemctl --user restart sag`.
 
 ### 12.2 Database TLS
 
@@ -695,6 +695,19 @@ resources:
 ### 13.5 Quadlet file
 
 `deploy/sag.container` contains the container constraints in section 6, the port publish, the mounts, and one `Secret=` line for each Podman secret.
+
+**Decision: the operator installs SAG as a Quadlet unit of the systemd user manager of the rootless Podman user.**
+
+Install steps on a Linux host. Run each step as the Podman user of the service, except where a step names `sudo`.
+
+1. Build the image with `make image IMAGE=localhost/sag:latest`. The Quadlet file uses `Image=localhost/sag:latest`. Without `IMAGE`, `make image` builds `localhost/sag:e2e`.
+2. Create each secret: `sag-master-key` (section 11.1), `sag-tls-cert` and `sag-tls-key` (section 6.1), and each secret that `sag.yaml` references, for example `sag-orders` (section 12.1).
+3. Edit the `Secret=` lines of a copy of `deploy/sag.container` to the secrets of the `sag.yaml`. The committed file follows `deploy/dev/sag.yaml` and needs `sag-dev-pg-ca`, which only the development setup has. For an absent secret, Podman prints `no secret with name or id` and the unit fails. On a Tailscale host, also edit `PublishPort=` (section 6).
+4. Put `sag.yaml` in `/etc/sag` with mode 0644: `sudo install -D -m 0644 sag.yaml /etc/sag/sag.yaml`. Container UID 65532 maps to a subordinate UID of the host, so the file needs read permission for other users. Do not move the file from a home directory: a file with the SELinux label `user_home_t` gives `Permission denied` in the container.
+5. Copy the unit: `mkdir -p ~/.config/containers/systemd && cp sag.container ~/.config/containers/systemd/`.
+6. Run `sudo loginctl enable-linger "$USER"`. Without linger, the user unit with `WantedBy=default.target` does not start at host start.
+7. Start the service: `systemctl --user daemon-reload && systemctl --user start sag`.
+8. Check the listen address with `ss -ltn`. Port 8443 listens only on `127.0.0.1` or on the Tailscale address of the host.
 
 ## 14. Resource adapter interface
 
@@ -878,10 +891,10 @@ Do not start a step before every acceptance criterion of the previous step passe
 
 | ID | Criterion | Check |
 |---|---|---|
-| AC32 | `podman inspect sag` shows a read-only root filesystem, user 65532, no capabilities, `no-new-privileges`, and a port binding with host IP `127.0.0.1` or an address in `100.64.0.0/10`. | Shell script with `podman inspect` and `jq`. |
-| AC33 | Inside the container, `stat` shows owner 65532 and mode 0400 for each regular file in `/run/secrets`. The count of regular files equals the count of Podman secrets of the container. | Shell script with `podman exec`. Only the e2e harness mounts a static busybox, read-only, for `stat`. The product image and the Quadlet file contain no busybox. |
-| AC34 | `podman exec sag sag jwt generate a` without `-t` exits non-zero. | Shell script. |
-| AC35 | The full suite passes against the container on Linux amd64 for each PostgreSQL major version from 14 to 19. `go build ./...` passes on macOS arm64. | CI job with a version matrix, and a macOS build job. Needs a git remote and a push by Ulrich. |
+| AC32 | `podman inspect sag` shows a read-only root filesystem, user 65532, no capabilities, `no-new-privileges`, and a port binding with host IP `127.0.0.1` or an address in `100.64.0.0/10`. | Go e2e subtest `AC32_ContainerInspect`. It decodes the `podman inspect` JSON. |
+| AC33 | Inside the container, `stat` shows owner 65532 and mode 0400 for each regular file in `/run/secrets`. The count of regular files equals the count of Podman secrets of the container. | Go e2e subtest `AC33_SecretMounts` with `podman exec`. Only the e2e harness mounts a static busybox, read-only, for `stat`. The product image and the Quadlet file contain no busybox. |
+| AC34 | `podman exec sag sag jwt generate a` without `-t` exits non-zero. | Go e2e subtest `AC34_JWTGenerateNoTTY`. |
+| AC35 | The full suite passes against the container on Linux amd64 for each PostgreSQL major version from 14 to 19. `go build ./...` passes on macOS arm64. | CI job `e2e` with a version matrix: each matrix job runs the integration tier and the e2e suite. CI job `build-macos`. CI job `ac35` runs `acreport merge`. Needs a git remote and a push by Ulrich. |
 
 ### 15.3 Release v1.1: MySQL adapter
 

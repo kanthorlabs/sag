@@ -44,7 +44,7 @@ A task is done only when its verify command passes and the task is merged (READM
 - Reads: `e2e/harness/flags.go`.
 - Depends on: `T6.0`.
 - Tests first: `quadlet_test.go`: `TestQuadletMatchesHarnessFlags`, `TestPublishPortLoopbackOrTailnet`, `TestOneSecretLinePerSecret`.
-- e2e: `AC32_ContainerInspect`: `podman inspect` with `jq` shows `ReadonlyRootfs` true, user `65532`, all capabilities dropped, `no-new-privileges`, and host IP `127.0.0.1` or an address in `100.64.0.0/10`. `AC34_JWTGenerateNoTTY`: `podman exec sag sag jwt generate a` exits non-zero.
+- e2e: `AC32_ContainerInspect`: the Go e2e subtest decodes the `podman inspect` JSON and checks `ReadonlyRootfs` true, user `65532`, all capabilities dropped, `no-new-privileges`, and host IP `127.0.0.1` or an address in `100.64.0.0/10`. `AC34_JWTGenerateNoTTY`: `podman exec sag sag jwt generate a` exits non-zero.
 - ACs: AC32, AC34.
 - Verify: `go test -count=1 ./e2e/harness/... -run 'TestQuadlet|TestPublishPort|TestOneSecretLine'`. Expected: `ok`.
 - Done when: the Quadlet keys and the harness flags are equal.
@@ -70,7 +70,7 @@ A task is done only when its verify command passes and the task is merged (READM
 - Depends on: `T6.0`.
 - Tests first: `merge_test.go`: `TestAC35NeedsAllMajors`, `TestAC35NeedsMacOSBuild`, `TestAC31ExcludedInCI`.
 - ACs: AC35.
-- Verify: `go test -count=1 ./e2e/cmd/acreport/... && podman run --rm -v "$PWD:/repo:ro" -w /repo docker.io/rhysd/actionlint:1.7.7`. Expected: `ok`, then exit 0 with no output.
+- Verify: `go test -count=1 ./e2e/cmd/acreport/... && podman run --rm -v "$PWD:/repo:ro" -w /repo docker.io/rhysd/actionlint:1.7.9`. Expected: `ok`, then exit 0 with no output. actionlint 1.7.7 does not know the runner label `macos-26`.
 - Done when: the workflow lints clean and the merge rule passes its tests.
 
 ## T6.4 Integration, gate, and CI run

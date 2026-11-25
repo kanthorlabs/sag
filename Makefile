@@ -12,7 +12,7 @@ PG ?= 17
 PGS ?= 14 17 19
 PKG ?= ./...
 RUN ?=
-AC_SKIP ?=
+AC_SKIP =
 REPORT := e2e/report
 LDFLAGS := -X github.com/kanthorlabs/sag/internal/cli.Version=$(VERSION)
 E2E_TEST := $(GO) test -tags e2e -json -count=1 -timeout 30m

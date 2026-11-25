@@ -18,6 +18,15 @@ func writeMarkdown(w io.Writer, r report) error {
 	if !r.Gate.Passed {
 		gateResult = statusFail + ": " + strings.Join(r.Gate.Failing, ", ")
 	}
+	var excludedIDs []string
+	for _, ac := range r.ACs {
+		if ac.Status == statusExcluded {
+			excludedIDs = append(excludedIDs, ac.ID)
+		}
+	}
+	if len(excludedIDs) > 0 {
+		gateResult += " (excluded: " + strings.Join(excludedIDs, ", ") + ")"
+	}
 	fmt.Fprintf(&b, "# AC report\n\n")
 	fmt.Fprintf(&b, "- Commit: `%s`\n", commit)
 	fmt.Fprintf(&b, "- Image: `%s`\n", r.Image)

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -73,7 +74,11 @@ func run(args []string, stderr io.Writer, probe func() buildInfo) int {
 		fmt.Fprintf(stderr, "acreport: %v\n", err)
 		return 2
 	}
-	r := buildReport(*layer, runs, e2e.ACTable, skipIDs(*skip), probe())
+	skipped := skipIDs(*skip)
+	for _, id := range unknownIDs(skipped, e2e.ACTable) {
+		fmt.Fprintf(stderr, "acreport: warning: -skip %s is not an AC ID\n", id)
+	}
+	r := buildReport(*layer, runs, e2e.ACTable, skipped, probe())
 	if err := writeReport(*out, r); err != nil {
 		fmt.Fprintf(stderr, "acreport: %v\n", err)
 		return 2
@@ -106,6 +111,16 @@ func skipIDs(skip string) []string {
 	return strings.FieldsFunc(skip, func(r rune) bool {
 		return r == ',' || r == ' ' || r == '\t'
 	})
+}
+
+func unknownIDs(ids []string, table []e2e.ACRow) []string {
+	var unknown []string
+	for _, id := range ids {
+		if !slices.ContainsFunc(table, func(row e2e.ACRow) bool { return row.ID == id }) {
+			unknown = append(unknown, id)
+		}
+	}
+	return unknown
 }
 
 func majorFromPath(path string) (int, error) {
