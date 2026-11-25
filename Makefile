@@ -4,6 +4,7 @@ export GOTOOLCHAIN
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 IMAGE ?= localhost/sag:e2e
+CONFORMANCE_IMAGE ?= localhost/sag-conformance:e2e
 LAYER ?= 1
 PG ?= 17
 PGS ?= 14 17 19
@@ -14,13 +15,16 @@ REPORT := e2e/report
 LDFLAGS := -X github.com/kanthorlabs/sag/internal/cli.Version=$(VERSION)
 E2E_TEST := $(GO) test -tags e2e -json -count=1 -timeout 30m
 
-.PHONY: build image test test-integration e2e e2e-matrix contract-check dev-up dev-down
+.PHONY: build image image-conformance test test-integration e2e e2e-matrix contract-check dev-up dev-down
 
 build:
 	CGO_ENABLED=1 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sag ./cmd/sag
 
 image:
 	podman build --build-arg VERSION=$(VERSION) -t $(IMAGE) -f deploy/Containerfile .
+
+image-conformance:
+	podman build --build-arg VERSION=$(VERSION) -t $(CONFORMANCE_IMAGE) -f e2e/conformance/Containerfile .
 
 test:
 	$(GO) vet ./...
@@ -29,12 +33,12 @@ test:
 test-integration:
 	SAG_TEST_PG_MAJOR=$(PG) $(GO) test -tags integration -count=1 $(if $(RUN),-run '$(RUN)') $(PKG)
 
-e2e: test image
+e2e: test image image-conformance
 	mkdir -p $(REPORT)/pg$(PG)
 	SAG_TEST_PG_MAJOR=$(PG) SAG_AC_SKIP='$(AC_SKIP)' $(E2E_TEST) $(if $(RUN),-run 'TestE2E/.*/$(RUN)') ./e2e/... > $(REPORT)/pg$(PG)/events.json; \
 	$(GO) run ./e2e/cmd/acreport -layer $(LAYER) -in $(REPORT)/pg$(PG)/events.json -out $(REPORT)
 
-e2e-matrix: test image
+e2e-matrix: test image image-conformance
 	pids=""; \
 	for m in $(PGS); do \
 		mkdir -p $(REPORT)/pg$$m; \

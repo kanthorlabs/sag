@@ -31,9 +31,10 @@ func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, cr
 			Description:  r.Description,
 			Capabilities: capabilityNames(adapter.Capabilities()),
 			Agents:       r.Agents,
+			Limits:       resourceLimits(r.Limits),
 			Status:       inventory.StatusPending,
 		}
-		res, err := adapter.Open(ctx, resourceConfig(name, r, creds), creds[string(r.Connection)])
+		res, err := adapter.Open(ctx, ResourceConfig(name, r, creds, nil), creds[string(r.Connection)])
 		if err != nil {
 			log.Error("resource open failed", "resource", name, "error", err.Error())
 			entry.Status = inventory.StatusUnavailable
@@ -52,20 +53,6 @@ func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, cr
 		}
 	}
 	return opened, nil
-}
-
-func resourceConfig(name string, r config.Resource, creds map[string]secret.Credential) core.ResourceConfig {
-	rc := core.ResourceConfig{
-		Name:           name,
-		Kind:           r.Kind,
-		TLS:            r.TLS,
-		PoolSize:       r.Limits.PoolSize,
-		ConnectTimeout: r.Limits.ConnectTimeout,
-	}
-	if r.TLSCA != "" {
-		rc.TLSCA = creds[string(r.TLSCA)].Reveal()
-	}
-	return rc
 }
 
 func preflight(ctx context.Context, log *slog.Logger, name string, res core.Resource, timeout time.Duration) inventory.Status {

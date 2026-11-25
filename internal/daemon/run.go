@@ -14,6 +14,7 @@ import (
 	"github.com/kanthorlabs/sag/internal/inventory"
 	"github.com/kanthorlabs/sag/internal/keys"
 	"github.com/kanthorlabs/sag/internal/mcpserver"
+	"github.com/kanthorlabs/sag/internal/pipeline"
 	"github.com/kanthorlabs/sag/internal/secret"
 )
 
@@ -83,7 +84,11 @@ func Run(ctx context.Context, opts Options) error {
 		return stageError(errResource, err)
 	}
 
-	mcpSrv, err := mcpserver.New(mcpserver.Options{Inventory: inv, Version: opts.Version})
+	mcpSrv, err := mcpserver.New(mcpserver.Options{
+		Inventory: inv,
+		Pipeline:  pipeline.New(pipeline.Options{Inventory: inv}),
+		Version:   opts.Version,
+	})
 	if err != nil {
 		return stageError(errMCP, err)
 	}

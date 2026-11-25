@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kanthorlabs/sag/internal/inventory"
+	"github.com/kanthorlabs/sag/internal/pipeline"
 )
 
 type laxInventory struct {
@@ -114,7 +115,7 @@ func TestListsOnlyVisible(t *testing.T) {
 		{Name: "pending", Kind: "postgres", Capabilities: []string{"sql"}, Agents: []string{"ac03"}, Status: inventory.StatusPending},
 		{Name: "bare", Kind: "postgres", Agents: []string{"ac03"}, Status: inventory.StatusServed},
 	}}
-	handler := auth.RequireBearerToken(subAsToken, nil)(Handler(newServer(inv, "test")))
+	handler := auth.RequireBearerToken(subAsToken, nil)(Handler(newServer(inv, nil, "test")))
 
 	got := callListResources(t, connect(t, handler, "ac03"))
 	want := ListResourcesOutput{Resources: []ResourceInfo{
@@ -137,7 +138,7 @@ func TestListResourcesWithoutIdentity(t *testing.T) {
 	inv := &laxInventory{entries: []inventory.Entry{
 		{Name: "main", Kind: "postgres", Capabilities: []string{"sql"}, Agents: []string{""}, Status: inventory.StatusServed},
 	}}
-	got := callListResources(t, connect(t, Handler(newServer(inv, "test")), ""))
+	got := callListResources(t, connect(t, Handler(newServer(inv, nil, "test")), ""))
 	if len(got.Resources) != 0 {
 		t.Fatalf("no identity: got %#v, want no resources", got.Resources)
 	}
@@ -145,7 +146,7 @@ func TestListResourcesWithoutIdentity(t *testing.T) {
 
 func TestListResourcesAnnotations(t *testing.T) {
 	inv := &laxInventory{}
-	session := connect(t, Handler(newServer(inv, "test")), "")
+	session := connect(t, Handler(newServer(inv, nil, "test")), "")
 	tools, err := session.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +171,11 @@ func TestNewRequiresInventory(t *testing.T) {
 	if _, err := New(Options{Version: "test"}); err == nil {
 		t.Fatal("New without inventory: want error")
 	}
-	if srv, err := New(Options{Inventory: inventory.New(), Version: "test"}); err != nil || srv == nil {
-		t.Fatalf("New with inventory: got %v, %v", srv, err)
+	if _, err := New(Options{Inventory: inventory.New(), Version: "test"}); err == nil {
+		t.Fatal("New without pipeline: want error")
+	}
+	inv := inventory.New()
+	if srv, err := New(Options{Inventory: inv, Pipeline: pipeline.New(pipeline.Options{Inventory: inv}), Version: "test"}); err != nil || srv == nil {
+		t.Fatalf("New with inventory and pipeline: got %v, %v", srv, err)
 	}
 }

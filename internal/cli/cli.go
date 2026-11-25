@@ -9,6 +9,7 @@ import (
 	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/daemon"
 	"github.com/kanthorlabs/sag/internal/secret"
+	"github.com/kanthorlabs/sag/internal/sql"
 )
 
 var Version = "dev"
@@ -59,7 +60,7 @@ type command struct {
 }
 
 var commands = []command{
-	{path: []string{"serve"}, run: serve},
+	{path: []string{"serve"}, run: serveProduct},
 	{path: []string{"config", "check"}, run: configCheck},
 	{path: []string{"resource", "test"}, run: resourceTest},
 	{path: []string{"jwt", "generate"}, run: jwtGenerate},
@@ -69,8 +70,15 @@ var commands = []command{
 }
 
 func Run(args []string, std IO) int {
+	return RunWith(args, std, nil)
+}
+
+func RunWith(args []string, std IO, wrap func(sql.Dialect) sql.Dialect) int {
 	if err := daemon.ApplyProcessRules(); err != nil {
 		return fail(std, err)
+	}
+	if wrap != nil && len(args) > 0 && args[0] == "serve" {
+		return serve(args[1:], std, wrap)
 	}
 	for _, c := range commands {
 		if len(args) >= len(c.path) && slices.Equal(args[:len(c.path)], c.path) {

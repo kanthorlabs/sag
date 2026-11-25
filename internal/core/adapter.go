@@ -47,13 +47,20 @@ const (
 	TLSDisable            TLSMode = "disable"
 )
 
+type ApprovalVerifier interface {
+	Verify(resource, fingerprint string) error
+}
+
 type ResourceConfig struct {
-	Name           string
-	Kind           string
-	TLS            TLSMode
-	TLSCA          []byte
-	PoolSize       int
-	ConnectTimeout time.Duration
+	Name                            string
+	Kind                            string
+	TLS                             TLSMode
+	TLSCA                           []byte
+	PoolSize                        int
+	ConnectTimeout                  time.Duration
+	LockTimeout                     time.Duration
+	IdleInTransactionSessionTimeout time.Duration
+	Approvals                       ApprovalVerifier
 }
 
 type PreflightCheck struct {

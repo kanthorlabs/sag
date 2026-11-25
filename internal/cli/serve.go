@@ -7,11 +7,16 @@ import (
 	"syscall"
 
 	"github.com/kanthorlabs/sag/internal/daemon"
+	"github.com/kanthorlabs/sag/internal/sql"
 )
 
 const serveUsage = "usage: sag serve"
 
-func serve(args []string, std IO) int {
+func serveProduct(args []string, std IO) int {
+	return serve(args, std, nil)
+}
+
+func serve(args []string, std IO, wrap func(sql.Dialect) sql.Dialect) int {
 	if len(args) != 0 {
 		fmt.Fprintln(std.Err, serveUsage)
 		return ExitUsage
@@ -19,12 +24,13 @@ func serve(args []string, std IO) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	err := daemon.Run(ctx, daemon.Options{
-		ConfigPath: paths.Config,
-		SecretsDir: paths.Secrets,
-		SecretUID:  paths.SecretUID,
-		StateDir:   paths.State,
-		Version:    Version,
-		Log:        std.Err,
+		ConfigPath:  paths.Config,
+		SecretsDir:  paths.Secrets,
+		SecretUID:   paths.SecretUID,
+		StateDir:    paths.State,
+		Version:     Version,
+		Log:         std.Err,
+		WrapDialect: wrap,
 	})
 	if err != nil {
 		return fail(std, err)

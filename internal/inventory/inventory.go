@@ -26,6 +26,7 @@ type Entry struct {
 	Description  string
 	Capabilities []string
 	Agents       []string
+	Limits       core.Limits
 	Resource     core.Resource
 	Status       Status
 }

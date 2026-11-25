@@ -1,12 +1,23 @@
 package harness
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"net/http"
+	pathpkg "path"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kanthorlabs/sag/internal/core"
@@ -103,4 +114,71 @@ func Register(ac AC) {
 
 func Registered() []AC {
 	return slices.Clone(registered)
+}
+
+const ContainerUID = 65532
+
+func ConnectDB(ctx context.Context, pg *testenv.Postgres, database string) (*pgx.Conn, error) {
+	cfg, err := pgx.ParseConfig(pg.HostDSN())
+	if err != nil {
+		return nil, errors.New("harness: PostgreSQL host DSN does not parse")
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(pg.CAPEM) {
+		return nil, errors.New("harness: PostgreSQL CA PEM has no certificate")
+	}
+	cfg.TLSConfig = &tls.Config{RootCAs: roots, ServerName: cfg.Host, MinVersion: tls.VersionTLS12}
+	cfg.Fallbacks = nil
+	cfg.Database = database
+	return pgx.ConnectConfig(ctx, cfg)
+}
+
+func ReadContainerFile(ctx context.Context, podmanName, file string) ([]byte, error) {
+	res, err := testenv.Podman(ctx, nil, "cp", podmanName+":"+file, "-")
+	if err != nil {
+		return nil, err
+	}
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("harness: podman cp out of %s: exit %d: %s", podmanName, res.ExitCode, res.Stderr)
+	}
+	tr := tar.NewReader(strings.NewReader(res.Stdout))
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			return nil, fmt.Errorf("harness: %s:%s: %w", podmanName, file, err)
+		}
+		if h.Typeflag == tar.TypeReg {
+			return io.ReadAll(tr)
+		}
+	}
+}
+
+func WriteContainerFile(ctx context.Context, podmanName, file string, data []byte, mode fs.FileMode) error {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	h := &tar.Header{
+		Typeflag: tar.TypeReg,
+		Name:     pathpkg.Base(file),
+		Mode:     int64(mode.Perm()),
+		Uid:      ContainerUID,
+		Gid:      ContainerUID,
+		Size:     int64(len(data)),
+	}
+	if err := tw.WriteHeader(h); err != nil {
+		return err
+	}
+	if _, err := tw.Write(data); err != nil {
+		return err
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	res, err := testenv.Podman(ctx, &buf, "cp", "-", podmanName+":"+pathpkg.Dir(file))
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("harness: podman cp into %s: exit %d: %s", podmanName, res.ExitCode, res.Stderr)
+	}
+	return nil
 }
