@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -54,6 +55,13 @@ func runAC31(t *testing.T, env harness.Env) {
 	if err != nil {
 		t.Fatalf("token: %v", err)
 	}
+	session, err := env.Client(ctx, harness.ContainerSAG, ac31Sub)
+	if err != nil {
+		t.Fatalf("client %s: %v", ac31Sub, err)
+	}
+	ac29Listed(ctx, t, session, ac31Resource)
+	session.Close()
+
 	start := time.Now()
 	res, err := harness.RunClaude(ctx, harness.ClaudeRequest{
 		MCPURL:       env.URL(harness.ContainerSAG) + "/mcp",
@@ -73,5 +81,40 @@ func runAC31(t *testing.T, env harness.Env) {
 	}
 	if !strings.Contains(res.Stdout, ac31Marker) {
 		t.Fatalf("claude output has no marker value\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	ac31AssertAudit(ctx, t, env)
+}
+
+func ac31AssertAudit(ctx context.Context, t *testing.T, env harness.Env) {
+	t.Helper()
+	records, err := env.Audit(ctx, harness.ContainerSAG)
+	if err != nil {
+		t.Fatalf("audit copy: %v", err)
+	}
+	queries := 0
+	for _, raw := range records {
+		var rec struct {
+			Sub       *string `json:"sub"`
+			Operation string  `json:"operation"`
+			Decision  string  `json:"decision"`
+		}
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			t.Fatalf("audit record: %v", err)
+		}
+		if rec.Sub == nil || *rec.Sub != ac31Sub {
+			continue
+		}
+		switch rec.Operation {
+		case "list_resources":
+		case "query":
+			if rec.Decision == "allow" {
+				queries++
+			}
+		default:
+			t.Fatalf("audit record for %s has operation %q; want only list_resources and query", ac31Sub, rec.Operation)
+		}
+	}
+	if queries != 1 {
+		t.Fatalf("allow records with operation query for %s = %d; want 1", ac31Sub, queries)
 	}
 }

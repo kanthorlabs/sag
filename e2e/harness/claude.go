@@ -20,6 +20,7 @@ const (
 	claudeModel      = "haiku"
 	claudeTimeout    = 3 * time.Minute
 	claudeAuthWait   = 30 * time.Second
+	claudeWaitDelay  = 5 * time.Second
 )
 
 type claudeMCPServer struct {
@@ -73,11 +74,13 @@ func RunClaude(ctx context.Context, req ClaudeRequest) (testenv.Result, error) {
 		"--model", claudeModel,
 		"--mcp-config", configFile,
 		"--strict-mcp-config",
+		"--setting-sources", "",
 		"--tools", "",
 		"--allowedTools", strings.Join(req.AllowedTools, ","),
 		"--no-session-persistence",
 	)
 	cmd.Dir = dir
+	cmd.WaitDelay = claudeWaitDelay
 	cmd.Env = append(os.Environ(), "NODE_EXTRA_CA_CERTS="+caFile)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

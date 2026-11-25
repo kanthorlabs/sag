@@ -435,6 +435,13 @@ func TestAllowedOriginsRejected(t *testing.T) {
 		"default https":     "https://agent.example:443",
 		"default http":      "http://agent.example:80",
 		"space":             "https://agent.example ",
+		"wildcard host":     "https://*.example",
+		"unicode host":      "https://münchen.example",
+		"short ipv4":        "https://127.1",
+		"long ipv6":         "https://[0:0:0:0:0:0:0:1]",
+		"trailing dot":      "https://agent.example.",
+		"zero width space":  "https://agent\u200b.example",
+		"no-break space":    "https://agent\u00a0.example",
 	}
 	for name, origin := range cases {
 		t.Run(name, func(t *testing.T) {

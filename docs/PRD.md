@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 12 |
+| Status | Revision 13 |
 | Date | 2026-11-25 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
@@ -457,7 +457,7 @@ Value encoding: `NULL` is `null`. Integers inside ±(2^53 − 1) are JSON number
 - A rejected statement returns `statement rejected: <rule>`, `statement rejected: <rule>:<detail>`, or `statement rejected: <Node.Field>`. A detail comes from a closed set and never from agent text: the node type for `statement` and `node` (`statement:InsertStmt`), the limit for `depth` (`depth:500`), and the count for `statement_count` (`statement_count:2`). Names that the agent writes stay out of the message: relations, functions, operators, schemas, EXPLAIN options, and field names. The full reason with the name goes to the audit `reason` only.
 - Before SAG logs a line or appends an audit record, SAG removes every exact occurrence of each loaded secret value and of its password part. The scrub applies to log text, error causes, and the audit fields `sql` and `reason`. The scrub does not apply to the agent message.
 - SAG never puts a DSN string into an error or a log line.
-- Accepted limit: a `tools/call` request with `params` that do not decode (for example, a tool name that is not a string, or `_meta` that is not an object) gets the MCP SDK error `-32602`. This error repeats the `params` text that the agent sent. The request writes no audit record (section 10.5 exception). The message holds only the agent's own text and no resource data, so it is no oracle.
+- Accepted limit: an MCP SDK protocol error before dispatch can repeat text of the same request. Examples: `tools/call` `params` that do not decode (`-32602` with the `params` text); `prompts/get` (`unknown prompt "<name>"`); `resources/read` (`data.uri`); an unknown method (the method name, HTTP `400` or `-32601`); an `Mcp-Name` or `Mcp-Method` header that differs from the body (`-32020` with both values); an unsupported protocol version (`-32022` with `data.requested`). Such a request writes no audit record (section 10.5 exception). The scrubber does not run on the message. The message holds only text of the same request and no resource data, so it is no oracle.
 - For a connect error, the agent receives the code `resource_unavailable`, a fixed message, and the `request_id`. The scrubbed driver error goes to the daemon log only.
 - The `Credential` type returns `[REDACTED]` from `String`, `GoString`, `MarshalJSON`, and `LogValue`.
 
@@ -496,7 +496,8 @@ Rules:
 - The audit log never contains result values, credentials, or JWTs.
 - SAG writes the record before it returns the result. If the append fails, SAG returns `internal` and no data, and logs `audit append failed` with the `request_id`.
 - A failed write leaves no partial line in the file.
-- Exception: a `tools/call` request that the JSON-RPC layer rejects before dispatch writes no record. Examples: `params` that is `null`, not an object, or has a tool name that is not a string; no `params`; no `id`; a batch. No tool runs for such a request, and no data returns.
+- Exception: a `tools/call` request that the JSON-RPC layer rejects before dispatch writes no record. Examples: `params` that is `null`, not an object, or has a tool name that is not a string; no `params`; no `id`; a batch with `Mcp-Protocol-Version` `2025-06-18` or later. No tool runs for such a request, and no data returns.
+- A batch without `Mcp-Protocol-Version`, or with a version before `2025-06-18`, runs each call. Each `tools/call` of the batch writes one record.
 
 ## 11. Agent authentication and authorization
 
@@ -552,9 +553,10 @@ Issue command: `podman exec -it sag sag jwt generate <sub> [--name <display>]`.
 
 - TLS 1.3 minimum. The certificate and key are the Podman secrets `sag-tls-cert` and `sag-tls-key` (section 6.1).
 - SAG rejects a request with an `Origin` header that is not in `server.allowed_origins`. The default list is empty.
-- Each `server.allowed_origins` entry is a serialized origin: `<scheme>://<host>[:<port>]`. The scheme is `http` or `https`. The host is lowercase. The entry has no default port, no path, no query, and no trailing `/`. An entry in another form fails `sag config check` with a fixed message that names the key path and not the value.
+- Each `server.allowed_origins` entry is a serialized origin: `<scheme>://<host>[:<port>]`. The scheme is `http` or `https`. The host is labels of `[a-z0-9-]` joined by `.`, without a trailing `.`, or an IP literal in its canonical text (`[::1]` for IPv6). The entry has no default port, no path, no query, and no trailing `/`. An entry in another form fails `sag config check` with a fixed message that names the key path and not the value.
 - A request without an `Origin` header passes the Origin check. SAG compares one `Origin` value byte by byte with each list entry. More than one `Origin` value gets `403`.
 - A client disconnect cancels the tool handler only for MCP protocol `2026-07-28` and later. For an older protocol, the handler keeps its concurrency slot until the statement ends, at most `statement_timeout` plus 2 s (section 10.1). Claude Code 2.1.332 uses protocol `2026-07-28`.
+- SAG sends no CORS headers. A browser client is outside v1. `server.allowed_origins` applies only to a client that is not a browser and sends `Origin`.
 - Maximum request body is 64 KiB. Header read timeout is 5 s.
 
 ## 12. Credential storage and database TLS
@@ -633,7 +635,7 @@ Rules:
 | `version` | integer | yes | Must be `1`. |
 | `server.listen` | string | no | Default `0.0.0.0:8443`. Address inside the container network namespace. Section 6 restricts the host publish address. |
 | `server.tls_cert`, `server.tls_key` | secret reference | yes | `secret:<name>`. |
-| `server.allowed_origins` | list of string | no | Default empty. |
+| `server.allowed_origins` | list of string | no | Default empty. Format: section 11.4. |
 | `auth.version` | integer | no | Positive. Default 1. |
 | `auth.token_lifetime` | duration | no | Default `8760h` (31536000 s, one year). |
 | `preflight.recheck_interval` | duration | no | From `10s` to `10m`. Default `10m`. No value turns off the re-check. |

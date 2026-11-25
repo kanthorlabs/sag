@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -98,6 +99,7 @@ var (
 	namePattern          = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	secretNamePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$`)
 	yamlLinePattern      = regexp.MustCompile(`^(?:yaml: )?line (\d+): `)
+	originLabelPattern   = regexp.MustCompile(`^[a-z0-9-]+$`)
 	tlsModes             = []core.TLSMode{core.TLSVerifyFull, core.TLSInsecureSkipVerify, core.TLSDisable}
 )
 
@@ -238,7 +240,7 @@ func validOrigin(origin string) bool {
 	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Hostname() == "" {
 		return false
 	}
-	if u.Scheme+"://"+u.Host != origin || u.Host != strings.ToLower(u.Host) || strings.HasSuffix(u.Host, ":") {
+	if u.Scheme+"://"+u.Host != origin || strings.HasSuffix(u.Host, ":") || !validOriginHost(u) {
 		return false
 	}
 	port := u.Port()
@@ -248,6 +250,28 @@ func validOrigin(origin string) bool {
 	n, err := strconv.Atoi(port)
 	defaultPort := u.Scheme == "http" && n == 80 || u.Scheme == "https" && n == 443
 	return err == nil && strconv.Itoa(n) == port && n >= 1 && n <= 65535 && !defaultPort
+}
+
+func validOriginHost(u *url.URL) bool {
+	host := u.Hostname()
+	if strings.HasPrefix(u.Host, "[") {
+		addr, err := netip.ParseAddr(host)
+		return err == nil && addr.Is6() && addr.Zone() == "" && addr.String() == host
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return addr.Is4() && addr.String() == host
+	}
+	labels := strings.Split(host, ".")
+	last := labels[len(labels)-1]
+	if strings.Trim(last, "0123456789") == "" || strings.HasPrefix(last, "0x") {
+		return false
+	}
+	for _, label := range labels {
+		if !originLabelPattern.MatchString(label) {
+			return false
+		}
+	}
+	return true
 }
 
 func validListen(addr string) bool {

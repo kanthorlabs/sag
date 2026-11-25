@@ -58,7 +58,9 @@ func Handler(srv *mcp.Server) http.Handler {
 }
 
 func newServer(inv visibility, calls caller, version string) *mcp.Server {
-	srv := mcp.NewServer(&mcp.Implementation{Name: "sag", Version: version}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "sag", Version: version}, &mcp.ServerOptions{
+		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}},
+	})
 	tools := map[string]bool{listResourcesName: true}
 	addListResources(srv, inv, calls)
 	addSQLTools(srv, calls, tools)

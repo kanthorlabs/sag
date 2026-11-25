@@ -6,8 +6,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const fakeClaudeScript = `#!/bin/sh
@@ -15,6 +17,10 @@ if [ "$1" = "auth" ]; then
 	echo '{"loggedIn": LOGGED_IN}'
 	exit 0
 fi
+for arg in "$@"; do
+	printf 'arg:[%s]\n' "$arg"
+done
+env | sed 's/^/env:/'
 while [ $# -gt 0 ]; do
 	if [ "$1" = "--mcp-config" ]; then
 		config="$2"
@@ -26,6 +32,9 @@ echo "ca=$NODE_EXTRA_CA_CERTS"
 echo "config_mode=$(ls -l "$config" | cut -c1-10)"
 echo "ca_mode=$(ls -l "$NODE_EXTRA_CA_CERTS" | cut -c1-10)"
 echo "config_json=$(tr -d '\n' < "$config")"
+if [ -n "$FAKE_CLAUDE_SLEEP" ]; then
+	sleep "$FAKE_CLAUDE_SLEEP"
+fi
 `
 
 func installFakeClaude(t *testing.T, loggedIn bool) {
@@ -124,4 +133,63 @@ func TestClaudePrerequisiteMissing(t *testing.T) {
 			t.Fatalf("err = %v; want ErrClaudePrerequisite", err)
 		}
 	})
+}
+
+func TestClaudeArgumentsAndEnvironment(t *testing.T) {
+	installFakeClaude(t, true)
+	req := fakeClaudeRequest()
+	res, err := RunClaude(context.Background(), req)
+	if err != nil {
+		t.Fatalf("RunClaude: %v", err)
+	}
+	var args []string
+	envs := 0
+	for _, line := range strings.Split(res.Stdout, "\n") {
+		if strings.HasPrefix(line, "arg:") || strings.HasPrefix(line, "env:") {
+			if strings.Contains(line, req.Token) || strings.Contains(line, "eyJ") {
+				t.Fatalf("argument or environment holds the JWT: %q", line)
+			}
+		}
+		if arg, ok := strings.CutPrefix(line, "arg:"); ok {
+			args = append(args, arg)
+		}
+		if strings.HasPrefix(line, "env:") {
+			envs++
+		}
+	}
+	if envs == 0 {
+		t.Fatalf("fake claude printed no environment\n%s", res.Stdout)
+	}
+	if !slices.Contains(args, "[--strict-mcp-config]") {
+		t.Fatalf("arguments %q have no --strict-mcp-config", args)
+	}
+	for _, flag := range []string{"--tools", "--setting-sources"} {
+		i := slices.Index(args, "["+flag+"]")
+		if i < 0 || i+1 >= len(args) || args[i+1] != "[]" {
+			t.Fatalf("arguments %q have no %s with an empty value", args, flag)
+		}
+	}
+}
+
+func TestClaudeTimeoutReturnsNearDeadline(t *testing.T) {
+	installFakeClaude(t, true)
+	t.Setenv("FAKE_CLAUDE_SLEEP", "15")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	res, err := RunClaude(ctx, fakeClaudeRequest())
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v; want context.DeadlineExceeded", err)
+	}
+	if elapsed > time.Second+claudeWaitDelay+2*time.Second {
+		t.Fatalf("RunClaude returned after %s; want at most the deadline plus the wait delay", elapsed)
+	}
+	config := fakeClaudeFields(t, res.Stdout)["config"]
+	if config == "" {
+		t.Fatalf("config path is empty\n%s", res.Stdout)
+	}
+	if _, err := os.Stat(filepath.Dir(config)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("directory %s exists after return: %v", filepath.Dir(config), err)
+	}
 }
