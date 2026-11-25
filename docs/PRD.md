@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 15 |
+| Status | Revision 16 |
 | Date | 2026-11-26 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
@@ -702,7 +702,7 @@ Install steps on a Linux host. Run each step as the Podman user of the service, 
 
 1. Build the image with `make image IMAGE=localhost/sag:latest`. The Quadlet file uses `Image=localhost/sag:latest`. Without `IMAGE`, `make image` builds `localhost/sag:e2e`.
 2. Create each secret: `sag-master-key` (section 11.1), `sag-tls-cert` and `sag-tls-key` (section 6.1), and each secret that `sag.yaml` references, for example `sag-orders` (section 12.1).
-3. Edit the `Secret=` lines of a copy of `deploy/sag.container` to the secrets of the `sag.yaml`. The committed file follows `deploy/dev/sag.yaml` and needs `sag-dev-pg-ca`, which only the development setup has. For an absent secret, Podman prints `no secret with name or id` and the unit fails. On a Tailscale host, also edit `PublishPort=` (section 6).
+3. Edit the `Secret=` lines of a copy of `deploy/sag.container` to the secrets of the `sag.yaml`. The committed file follows `deploy/dev/sag.yaml` and needs `sag-dev-pg-ca`, which only the development setup has. For an absent secret, Podman prints `no secret with name or id`. The unit does not start, and systemd tries again every 10 s. On a Tailscale host, also edit `PublishPort=` (section 6).
 4. Put `sag.yaml` in `/etc/sag` with mode 0644: `sudo install -D -m 0644 sag.yaml /etc/sag/sag.yaml`. Container UID 65532 maps to a subordinate UID of the host, so the file needs read permission for other users. Do not move the file from a home directory: a file with the SELinux label `user_home_t` gives `Permission denied` in the container.
 5. Copy the unit: `mkdir -p ~/.config/containers/systemd && cp sag.container ~/.config/containers/systemd/`.
 6. Run `sudo loginctl enable-linger "$USER"`. Without linger, the user unit with `WantedBy=default.target` does not start at host start.
