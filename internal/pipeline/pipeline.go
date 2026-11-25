@@ -93,6 +93,12 @@ func (p *Pipeline) Reject(req Request, err error) error {
 	return err
 }
 
+func (p *Pipeline) Listed(req Request, count int) error {
+	rec := p.record(req, p.opts.Now(), core.Result{}, nil)
+	rec.Rows = count
+	return p.append(rec)
+}
+
 func (p *Pipeline) execute(ctx context.Context, req Request) (core.Result, error) {
 	entry, err := p.authorize(req)
 	if err != nil {
@@ -120,13 +126,20 @@ func (p *Pipeline) finish(req Request, start time.Time, res core.Result, err err
 		err = p.stages.scrub(err)
 		p.logCause(req.ID, err)
 	}
-	if appendErr := p.stages.audit(rec); appendErr != nil {
-		return core.Result{}, &core.Error{Code: core.CodeInternal, Message: messageInternal, Cause: appendErr}
+	if appendErr := p.append(rec); appendErr != nil {
+		return core.Result{}, appendErr
 	}
 	if err != nil {
 		return core.Result{}, err
 	}
 	return res, nil
+}
+
+func (p *Pipeline) append(rec audit.Record) error {
+	if err := p.stages.audit(rec); err != nil {
+		return &core.Error{Code: core.CodeInternal, Message: messageInternal, Cause: err}
+	}
+	return nil
 }
 
 func (p *Pipeline) record(req Request, start time.Time, res core.Result, err error) audit.Record {

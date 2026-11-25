@@ -6,7 +6,9 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -214,5 +216,136 @@ func TestToolSeesSub(t *testing.T) {
 	}
 	if addr, _ := out["remote_addr"].(string); !strings.HasPrefix(addr, "127.0.0.1:") {
 		t.Fatalf("remote_addr = %#v; want the client address and port", out["remote_addr"])
+	}
+}
+
+type auditCall struct {
+	remoteAddr string
+	cause      string
+}
+
+type auditLog struct {
+	mu    sync.Mutex
+	calls []auditCall
+}
+
+func (l *auditLog) hook(_ context.Context, remoteAddr, cause string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = append(l.calls, auditCall{remoteAddr: remoteAddr, cause: cause})
+}
+
+func (l *auditLog) take() []auditCall {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := l.calls
+	l.calls = nil
+	return out
+}
+
+func auditedHandler(t *testing.T, mcp http.Handler, log *auditLog) http.Handler {
+	t.Helper()
+	cert, _ := testCertificate(t)
+	s, err := New(Options{Certificate: cert, JWTKey: testKey, MCP: mcp, Audit: log.hook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s.Handler()
+}
+
+func serve(h http.Handler, method, path string, headers ...string) int {
+	req := httptest.NewRequest(method, path, strings.NewReader(`{}`))
+	req.RemoteAddr = "192.0.2.7:4100"
+	for _, v := range headers {
+		req.Header.Add("Authorization", v)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr.Code
+}
+
+func TestAuthFailureAudited(t *testing.T) {
+	log := &auditLog{}
+	h := auditedHandler(t, &recorder{}, log)
+	expired, err := token.Issue(testKey, "ac26", "Test Agent", time.Now().Add(-2*time.Hour), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	future, err := token.Issue(testKey, "ac26", "Test Agent", time.Now().Add(time.Hour), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := validToken(t, "ac26")
+
+	cases := []struct {
+		name    string
+		path    string
+		headers []string
+		cause   string
+	}{
+		{"no header", "/mcp", nil, "missing_bearer"},
+		{"basic scheme", "/mcp", []string{"Basic " + valid}, "missing_bearer"},
+		{"two headers", "/mcp", []string{"Bearer " + valid, "Bearer " + valid}, "missing_bearer"},
+		{"garbage", "/mcp", []string{"Bearer not.a.jwt"}, string(token.CauseUnauthenticated)},
+		{"expired", "/mcp", []string{"Bearer " + expired}, string(token.CauseExpired)},
+		{"not yet issued", "/mcp", []string{"Bearer " + future}, string(token.CauseNotYetIssued)},
+		{"other path", "/other", nil, "missing_bearer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if code := serve(h, http.MethodPost, tc.path, tc.headers...); code != http.StatusUnauthorized {
+				t.Fatalf("status = %d; want 401", code)
+			}
+			got := log.take()
+			if len(got) != 1 || got[0].cause != tc.cause || got[0].remoteAddr != "192.0.2.7:4100" {
+				t.Fatalf("audit calls = %+v; want one with cause %q", got, tc.cause)
+			}
+			for _, h := range tc.headers {
+				if strings.Contains(got[0].cause+got[0].remoteAddr, strings.TrimPrefix(h, "Bearer ")) {
+					t.Fatal("audit call holds the token")
+				}
+			}
+		})
+	}
+
+	if code := serve(h, http.MethodGet, "/healthz"); code != http.StatusOK {
+		t.Fatalf("healthz status = %d", code)
+	}
+	if got := log.take(); len(got) != 0 {
+		t.Fatalf("healthz audit calls = %+v; want none", got)
+	}
+
+	cert, _ := testCertificate(t)
+	s, err := New(Options{Certificate: cert, JWTKey: testKey, MCP: &recorder{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := serve(s.Handler(), http.MethodPost, "/mcp"); code != http.StatusUnauthorized {
+		t.Fatalf("status without audit hook = %d; want 401", code)
+	}
+}
+
+func TestInitializeNotAudited(t *testing.T) {
+	log := &auditLog{}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	h := auditedHandler(t, handler, log)
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+
+	httpClient := &http.Client{Transport: bearerTransport{header: "Bearer " + validToken(t, "ac26"), base: http.DefaultTransport}}
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: ts.URL + "/mcp", HTTPClient: httpClient, DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if _, err := session.ListTools(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := log.take(); len(got) != 0 {
+		t.Fatalf("audit calls = %+v; want none for initialize and tools/list", got)
 	}
 }

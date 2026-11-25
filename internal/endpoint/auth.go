@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"regexp"
 
@@ -11,7 +12,10 @@ import (
 	"github.com/kanthorlabs/sag/internal/token"
 )
 
-const bearerPrefixLength = len("Bearer ")
+const (
+	bearerPrefixLength = len("Bearer ")
+	causeMissingBearer = "missing_bearer"
+)
 
 var bearerHeader = regexp.MustCompile(`^(?i)Bearer [^\s,]+$`)
 
@@ -21,16 +25,31 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		values := r.Header.Values("Authorization")
 		if len(values) != 1 || !bearerHeader.MatchString(values[0]) {
-			unauthorized(w)
+			s.refuse(w, r, causeMissingBearer)
 			return
 		}
 		claims, err := token.Verify(s.opts.JWTKey, values[0][bearerPrefixLength:], s.opts.Now())
 		if err != nil {
-			unauthorized(w)
+			s.refuse(w, r, verifyCause(err))
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsKey{}, claims)))
 	})
+}
+
+func (s *Server) refuse(w http.ResponseWriter, r *http.Request, cause string) {
+	if s.opts.Audit != nil {
+		s.opts.Audit(r.Context(), r.RemoteAddr, cause)
+	}
+	unauthorized(w)
+}
+
+func verifyCause(err error) string {
+	var tokenErr *token.Error
+	if errors.As(err, &tokenErr) {
+		return string(tokenErr.Cause)
+	}
+	return string(token.CauseUnauthenticated)
 }
 
 func unauthorized(w http.ResponseWriter) {

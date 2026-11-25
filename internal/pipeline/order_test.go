@@ -221,3 +221,36 @@ func TestRejectAuditsDeny(t *testing.T) {
 func ptr(s string) *string {
 	return &s
 }
+
+func TestListedAuditsAllow(t *testing.T) {
+	p, log, records := orderedPipeline(t, &orderedResource{}, nil)
+	req := Request{ID: "01LIST", Sub: "ac26", JTI: "01JTI", RemoteAddr: "10.0.0.1:5000", Operation: "list_resources"}
+	if err := p.Listed(req, 3); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(log.names, []string{"audit"}) {
+		t.Fatalf("stages = %v", log.names)
+	}
+	want := audit.Record{
+		RequestID:  "01LIST",
+		RemoteAddr: "10.0.0.1:5000",
+		Sub:        ptr("ac26"),
+		JTI:        ptr("01JTI"),
+		Operation:  "list_resources",
+		Decision:   audit.DecisionAllow,
+		Rows:       3,
+	}
+	got := (*records)[0]
+	got.TS, got.DurationMS = audit.Timestamp{}, 0
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("record = %+v; want %+v", got, want)
+	}
+}
+
+func TestListedAuditFailureReturnsInternal(t *testing.T) {
+	p, _, _ := orderedPipeline(t, &orderedResource{}, errors.New("read-only file system"))
+	err := p.Listed(Request{ID: "01LIST", Sub: "ac27", Operation: "list_resources"}, 1)
+	if ce := assertCode(t, err, core.CodeInternal); ce.Message != "internal error" {
+		t.Fatalf("message = %q", ce.Message)
+	}
+}
