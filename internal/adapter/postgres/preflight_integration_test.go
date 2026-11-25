@@ -4,10 +4,14 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/secret"
@@ -88,8 +92,36 @@ func TestPreflightRefusesUnknownCA(t *testing.T) {
 	}
 	cfg := core.ResourceConfig{Name: "main", Kind: Kind, TLS: core.TLSVerifyFull, TLSCA: other.CertPEM, ConnectTimeout: 10 * time.Second}
 	res := openResource(t, cfg, pg.HostDSN())
-	if _, err := res.Preflight(context.Background()); err == nil {
+	_, err = res.Preflight(context.Background())
+	if err == nil {
 		t.Fatal("Preflight passed with a CA that did not sign the server certificate")
+	}
+	assertPreflightCause(t, err, preflightTLSFailed)
+}
+
+func assertPreflightCause(t *testing.T, err error, want string) {
+	t.Helper()
+	var coreErr *core.Error
+	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeResourceUnavailable || coreErr.Message != want {
+		t.Fatalf("Preflight error = %v; want core.Error %s with message %q", err, core.CodeResourceUnavailable, want)
+	}
+}
+
+func TestExtendedProtocolRejectsMultiStatement(t *testing.T) {
+	pg := startPostgres(t)
+	cfg := core.ResourceConfig{Name: "main", Kind: Kind, TLS: core.TLSVerifyFull, TLSCA: pg.CAPEM, ConnectTimeout: 10 * time.Second}
+	res := openResource(t, cfg, pg.HostDSN())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(ctx, res.(*resource).connConfig.Copy())
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer closeConn(ctx, conn)
+	err = execText(ctx, conn, "CREATE TEMP TABLE s2_probe (id int); INSERT INTO s2_probe VALUES (1); SELECT 1")
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "42601" {
+		t.Fatalf("multi-statement error = %v; want SQLSTATE 42601", err)
 	}
 }
 
@@ -110,4 +142,5 @@ func TestPreflightWrongPasswordOmitsPassword(t *testing.T) {
 	if strings.Contains(err.Error(), wrong) {
 		t.Fatalf("error text leaks the password: %q", err.Error())
 	}
+	assertPreflightCause(t, err, preflightConnectFailed)
 }

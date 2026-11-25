@@ -2,16 +2,20 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/inventory"
 	"github.com/kanthorlabs/sag/internal/secret"
 )
+
+var preflightSlack = 10 * time.Second
 
 func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, creds map[string]secret.Credential, inv *inventory.Inventory) ([]core.Resource, error) {
 	var opened []core.Resource
@@ -31,7 +35,7 @@ func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, cr
 		}
 		res, err := adapter.Open(ctx, resourceConfig(name, r, creds), creds[string(r.Connection)])
 		if err != nil {
-			log.Error("resource open failed", "resource", name)
+			log.Error("resource open failed", "resource", name, "error", err.Error())
 			entry.Status = inventory.StatusUnavailable
 			if err := inv.Add(entry); err != nil {
 				return opened, fmt.Errorf("%s: %w", name, err)
@@ -43,7 +47,7 @@ func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, cr
 		if err := inv.Add(entry); err != nil {
 			return opened, fmt.Errorf("%s: %w", name, err)
 		}
-		if err := inv.SetStatus(name, preflight(ctx, log, name, res)); err != nil {
+		if err := inv.SetStatus(name, preflight(ctx, log, name, res, r.Limits.ConnectTimeout+preflightSlack)); err != nil {
 			return opened, fmt.Errorf("%s: %w", name, err)
 		}
 	}
@@ -64,10 +68,12 @@ func resourceConfig(name string, r config.Resource, creds map[string]secret.Cred
 	return rc
 }
 
-func preflight(ctx context.Context, log *slog.Logger, name string, res core.Resource) inventory.Status {
+func preflight(ctx context.Context, log *slog.Logger, name string, res core.Resource, timeout time.Duration) inventory.Status {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	report, err := res.Preflight(ctx)
 	if err != nil {
-		log.Error("resource preflight failed", "resource", name)
+		log.Error("resource preflight failed", "resource", name, "cause", preflightCause(err))
 		return inventory.StatusUnavailable
 	}
 	for _, w := range report.Warnings {
@@ -79,6 +85,14 @@ func preflight(ctx context.Context, log *slog.Logger, name string, res core.Reso
 	}
 	log.Info("resource served", "resource", name)
 	return inventory.StatusServed
+}
+
+func preflightCause(err error) string {
+	var coreErr *core.Error
+	if errors.As(err, &coreErr) {
+		return coreErr.Message
+	}
+	return "unclassified"
 }
 
 func failedChecks(report core.PreflightReport) []string {

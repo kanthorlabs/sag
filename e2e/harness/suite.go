@@ -294,7 +294,7 @@ func (s *Suite) exec(ctx context.Context, pg *testenv.Postgres, db, sql string) 
 		return err
 	}
 	defer conn.Close(context.WithoutCancel(ctx))
-	_, err = conn.Exec(ctx, sql)
+	_, err = conn.PgConn().Exec(ctx, sql).ReadAll()
 	return err
 }
 

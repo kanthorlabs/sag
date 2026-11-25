@@ -91,7 +91,7 @@ func TestLogStatementAll(t *testing.T) {
 	}
 	defer conn.Close(ctx)
 	marker := "testenv_marker_" + markerHex(t)
-	if _, err := conn.Exec(ctx, "SELECT '"+marker+"'"); err != nil {
+	if err := conn.PgConn().ExecParams(ctx, "SELECT '"+marker+"'", nil, nil, nil, nil).Read().Err; err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(10 * time.Second)
