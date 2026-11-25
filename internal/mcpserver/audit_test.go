@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
@@ -101,15 +102,22 @@ func TestListResourcesPanicAudited(t *testing.T) {
 func TestUnknownToolAudited(t *testing.T) {
 	calls := &recordingCaller{}
 	session := auditSession(t, &laxInventory{}, calls, "ac26")
-	_, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "drop_everything", Arguments: map[string]any{"resource": "main"}})
-	if err == nil {
-		t.Fatal("unknown tool: want an error")
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "drop_everything", Arguments: map[string]any{"resource": "main"}})
+	if err != nil {
+		t.Fatalf("unknown tool: want an error result, got %v", err)
+	}
+	obj := errorObject(t, res)
+	if obj["code"] != string(core.CodeInvalidArgument) || obj["message"] != "unknown tool" {
+		t.Fatalf("unknown tool error = %v; want invalid_argument, unknown tool", obj)
+	}
+	if strings.Contains(textContent(t, res), "drop_everything") {
+		t.Fatalf("error text echoes the tool name: %s", textContent(t, res))
 	}
 	if n := calls.audited(); n != 1 || len(calls.rejected) != 1 {
 		t.Fatalf("records = %d; want one reject", n)
 	}
 	got := calls.rejected[0]
-	if got.Sub != "ac26" || got.JTI != "jti-ac26" || got.Operation != "drop_everything" || got.ID == "" {
+	if got.Sub != "ac26" || got.JTI != "jti-ac26" || got.Operation != "drop_everything" || got.ID != obj["request_id"] {
 		t.Fatalf("rejected request = %+v", got)
 	}
 	assertCode(t, calls.rejects[0], core.CodeInvalidArgument)

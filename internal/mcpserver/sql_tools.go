@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,7 +15,6 @@ import (
 
 const (
 	messageInvalidArguments = "arguments must be a JSON object with a string resource"
-	messageInternal         = "internal error"
 )
 
 var registeredCapabilities = func() []core.Capability {
@@ -83,7 +81,7 @@ func callOperation(calls caller, capability, operation string) mcp.ToolHandler {
 		if err != nil {
 			return errorResult(preq.ID, err)
 		}
-		return successResult(preq.ID, res, time.Since(start))
+		return successResult(preq.ID, operationOutput(operation, preq.ID, res, time.Since(start)))
 	}
 }
 
@@ -95,44 +93,24 @@ func panicResult(calls caller, preq pipeline.Request, audited bool) (*mcp.CallTo
 	return errorResult(preq.ID, err)
 }
 
-func successResult(id string, res core.Result, elapsed time.Duration) (*mcp.CallToolResult, error) {
-	out := SQLQueryOutput{
-		Columns:         res.Columns,
-		Rows:            res.Rows,
-		RowCount:        len(res.Rows),
+func operationOutput(operation, id string, res core.Result, elapsed time.Duration) any {
+	columns, rows := res.Columns, res.Rows
+	if columns == nil {
+		columns = []core.Column{}
+	}
+	if rows == nil {
+		rows = [][]any{}
+	}
+	if operation != sql.OperationQuery {
+		return SQLCatalogOutput{Columns: columns, Rows: rows, RowCount: len(rows), Truncated: res.Truncated, RequestID: id}
+	}
+	return SQLQueryOutput{
+		Columns:         columns,
+		Rows:            rows,
+		RowCount:        len(rows),
 		Truncated:       res.Truncated,
 		TruncatedReason: res.TruncatedReason,
 		DurationMS:      elapsed.Milliseconds(),
 		RequestID:       id,
 	}
-	if out.Columns == nil {
-		out.Columns = []core.Column{}
-	}
-	if out.Rows == nil {
-		out.Rows = [][]any{}
-	}
-	text, err := json.Marshal(out)
-	if err != nil {
-		return errorResult(id, err)
-	}
-	return &mcp.CallToolResult{
-		Content:           []mcp.Content{&mcp.TextContent{Text: string(text)}},
-		StructuredContent: json.RawMessage(text),
-	}, nil
-}
-
-func errorResult(id string, err error) (*mcp.CallToolResult, error) {
-	out := ErrorResult{Code: core.CodeInternal, Message: messageInternal, RequestID: id}
-	var ce *core.Error
-	if errors.As(err, &ce) && ce.Code != "" && ce.Message != "" {
-		out.Code, out.Message = ce.Code, ce.Message
-	}
-	text, mErr := json.Marshal(out)
-	if mErr != nil {
-		return nil, mErr
-	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: string(text)}},
-		IsError: true,
-	}, nil
 }

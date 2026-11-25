@@ -318,7 +318,7 @@ func TestSuccessResultShape(t *testing.T) {
 	calls.delay = 0
 	res = callTool(t, sqlSession(t, calls, "ac05"), "sql_list_tables", map[string]any{"resource": "main"})
 	text := textContent(t, res)
-	if !strings.Contains(text, `"columns":[]`) || !strings.Contains(text, `"rows":[]`) || !strings.Contains(text, `"row_count":0`) || !strings.Contains(text, `"truncated":false`) || strings.Contains(text, "truncated_reason") {
+	if !strings.Contains(text, `"columns":[]`) || !strings.Contains(text, `"rows":[]`) || !strings.Contains(text, `"row_count":0`) || !strings.Contains(text, `"truncated":false`) || strings.Contains(text, "truncated_reason") || strings.Contains(text, "duration_ms") {
 		t.Fatalf("empty result text = %s", text)
 	}
 }

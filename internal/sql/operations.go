@@ -40,11 +40,16 @@ type DescribeTableInput struct {
 	Table  string `json:"table"`
 }
 
+const (
+	noNULPattern    = `^[^\x00]*$`
+	resourcePattern = `^[a-z][a-z0-9-]{0,62}$`
+)
+
 var listTablesInputSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "resource": {"type": "string", "description": "Name of the resource."},
-    "schema": {"type": "string", "maxLength": 63, "description": "Schema name. Omit it to list the tables of all schemas except the system schemas."}
+    "resource": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$", "description": "Name of the resource."},
+    "schema": {"type": "string", "maxLength": 63, "pattern": "^[^\\x00]*$", "description": "Schema name, at most 63 bytes. Omit it to list the tables of all schemas except the system schemas."}
   },
   "required": ["resource"],
   "additionalProperties": false
@@ -53,9 +58,9 @@ var listTablesInputSchema = json.RawMessage(`{
 var describeTableInputSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "resource": {"type": "string", "description": "Name of the resource."},
-    "schema": {"type": "string", "maxLength": 63, "description": "Schema name. The default is public."},
-    "table": {"type": "string", "minLength": 1, "maxLength": 63, "description": "Table name."}
+    "resource": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$", "description": "Name of the resource."},
+    "schema": {"type": "string", "maxLength": 63, "pattern": "^[^\\x00]*$", "description": "Schema name, at most 63 bytes. The default is public."},
+    "table": {"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[^\\x00]*$", "description": "Table name, at most 63 bytes."}
   },
   "required": ["resource", "table"],
   "additionalProperties": false
@@ -64,17 +69,17 @@ var describeTableInputSchema = json.RawMessage(`{
 var queryInputSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
-    "resource": {"type": "string", "description": "Name of the resource."},
-    "sql": {"type": "string", "minLength": 1, "description": "One read-only SQL statement. Bind parameters are not accepted."},
-    "max_rows": {"type": "integer", "minimum": 1, "description": "Maximum number of rows in the result."},
-    "max_result_bytes": {"type": "integer", "minimum": 1, "description": "Maximum size of the JSON result in bytes."},
-    "timeout_seconds": {"type": "integer", "minimum": 1, "description": "Statement timeout in seconds."}
+    "resource": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$", "description": "Name of the resource."},
+    "sql": {"type": "string", "minLength": 1, "pattern": "^[^\\x00]*$", "description": "One read-only SQL statement. Bind parameters are not accepted."},
+    "max_rows": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "Maximum number of rows in the result."},
+    "max_result_bytes": {"type": "integer", "minimum": 1, "maximum": 2097152, "description": "Maximum size of the JSON result in bytes."},
+    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30, "description": "Statement timeout in seconds."}
   },
   "required": ["resource", "sql"],
   "additionalProperties": false
 }`)
 
-var resultOutputSchema = json.RawMessage(`{
+var catalogOutputSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
     "columns": {
@@ -82,17 +87,40 @@ var resultOutputSchema = json.RawMessage(`{
       "items": {
         "type": "object",
         "properties": {"name": {"type": "string"}, "type": {"type": "string"}},
-        "required": ["name", "type"]
+        "required": ["name", "type"],
+        "additionalProperties": false
       }
     },
     "rows": {"type": "array", "items": {"type": "array"}},
-    "row_count": {"type": "integer"},
+    "row_count": {"type": "integer", "minimum": 0},
+    "truncated": {"type": "boolean"},
+    "request_id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"}
+  },
+  "required": ["columns", "rows", "row_count", "truncated", "request_id"],
+  "additionalProperties": false
+}`)
+
+var queryOutputSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "columns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "type": {"type": "string"}},
+        "required": ["name", "type"],
+        "additionalProperties": false
+      }
+    },
+    "rows": {"type": "array", "items": {"type": "array"}},
+    "row_count": {"type": "integer", "minimum": 0},
     "truncated": {"type": "boolean"},
     "truncated_reason": {"type": "string", "enum": ["max_rows", "max_result_bytes"]},
-    "duration_ms": {"type": "integer"},
-    "request_id": {"type": "string"}
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "request_id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"}
   },
-  "required": ["columns", "rows", "row_count", "truncated", "request_id"]
+  "required": ["columns", "rows", "row_count", "truncated", "duration_ms", "request_id"],
+  "additionalProperties": false
 }`)
 
 func Capability() core.Capability {
@@ -103,19 +131,19 @@ func Capability() core.Capability {
 				Name:         OperationListTables,
 				Description:  "List the tables and views of a resource with columns schema, name, and type. " + untrustedResults,
 				InputSchema:  listTablesInputSchema,
-				OutputSchema: resultOutputSchema,
+				OutputSchema: catalogOutputSchema,
 			},
 			{
 				Name:         OperationDescribeTable,
 				Description:  "Describe the columns of one table with columns name, type, and nullable. " + untrustedResults,
 				InputSchema:  describeTableInputSchema,
-				OutputSchema: resultOutputSchema,
+				OutputSchema: catalogOutputSchema,
 			},
 			{
 				Name:         OperationQuery,
 				Description:  "Run one read-only SQL statement on a resource. SAG validates the statement and runs it in a read-only transaction that always ends with ROLLBACK. " + untrustedResults,
 				InputSchema:  queryInputSchema,
-				OutputSchema: resultOutputSchema,
+				OutputSchema: queryOutputSchema,
 			},
 		},
 	}

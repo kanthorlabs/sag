@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/core"
 )
 
@@ -137,6 +139,97 @@ func TestCapabilityOperations(t *testing.T) {
 		}
 		if _, ok := in.Properties["resource"]; !ok || in.Required[0] != "resource" {
 			t.Fatalf("%s: input schema misses resource: %s", op.Name, op.InputSchema)
+		}
+	}
+}
+
+func schemaObjects(t *testing.T, path string, node any, visit func(path string, obj map[string]any)) {
+	t.Helper()
+	switch v := node.(type) {
+	case map[string]any:
+		if v["type"] == "object" {
+			visit(path, v)
+		}
+		for k, item := range v {
+			schemaObjects(t, path+"/"+k, item, visit)
+		}
+	case []any:
+		for _, item := range v {
+			schemaObjects(t, path, item, visit)
+		}
+	}
+}
+
+func decodeSchema(t *testing.T, raw json.RawMessage) map[string]any {
+	t.Helper()
+	var v map[string]any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("schema %s: %v", raw, err)
+	}
+	return v
+}
+
+func TestSchemasStrict(t *testing.T) {
+	for _, op := range Capability().Operations {
+		for label, raw := range map[string]json.RawMessage{"input": op.InputSchema, "output": op.OutputSchema} {
+			schemaObjects(t, op.Name+"."+label, decodeSchema(t, raw), func(path string, obj map[string]any) {
+				if obj["additionalProperties"] != false {
+					t.Fatalf("%s: object without additionalProperties false", path)
+				}
+				props, _ := obj["properties"].(map[string]any)
+				for name, prop := range props {
+					if _, ok := prop.(map[string]any)["type"]; !ok {
+						t.Fatalf("%s/%s: property without type", path, name)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestInputSchemaBounds(t *testing.T) {
+	hard := config.HardMaximums()
+	wantMax := map[string]float64{
+		"max_rows":         float64(hard.MaxRows),
+		"max_result_bytes": float64(hard.MaxResultBytes),
+		"timeout_seconds":  float64(hard.StatementTimeout / time.Second),
+	}
+	for _, op := range Capability().Operations {
+		props := decodeSchema(t, op.InputSchema)["properties"].(map[string]any)
+		for name, raw := range props {
+			prop := raw.(map[string]any)
+			switch name {
+			case "max_rows", "max_result_bytes", "timeout_seconds":
+				if prop["type"] != "integer" || prop["minimum"] != 1.0 || prop["maximum"] != wantMax[name] {
+					t.Fatalf("%s.%s = %v; want integer from 1 to %v", op.Name, name, prop, wantMax[name])
+				}
+			case "schema", "table":
+				if prop["type"] != "string" || prop["maxLength"] != float64(maxIdentifierBytes) || prop["pattern"] != noNULPattern {
+					t.Fatalf("%s.%s = %v; want string, maxLength 63, no NUL", op.Name, name, prop)
+				}
+			case "sql":
+				if prop["type"] != "string" || prop["minLength"] != 1.0 || prop["pattern"] != noNULPattern {
+					t.Fatalf("%s.%s = %v; want non-empty string without NUL", op.Name, name, prop)
+				}
+			case "resource":
+				if prop["type"] != "string" || prop["pattern"] != resourcePattern {
+					t.Fatalf("%s.%s = %v; want the resource name pattern", op.Name, name, prop)
+				}
+			default:
+				t.Fatalf("%s: unexpected property %s", op.Name, name)
+			}
+		}
+	}
+}
+
+func TestCatalogOutputSchema(t *testing.T) {
+	for _, op := range Capability().Operations {
+		props := decodeSchema(t, op.OutputSchema)["properties"].(map[string]any)
+		_, duration := props["duration_ms"]
+		_, reason := props["truncated_reason"]
+		catalog := op.Name != OperationQuery
+		if catalog == duration || catalog == reason {
+			t.Fatalf("%s output properties = %v; duration_ms and truncated_reason for sql_query only", op.Name, props)
 		}
 	}
 }

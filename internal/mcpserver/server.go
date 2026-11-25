@@ -72,7 +72,7 @@ func auditUnknownTools(calls caller, tools map[string]bool) mcp.Middleware {
 			if call, ok := req.(*mcp.CallToolRequest); ok && call.Params != nil && !tools[call.Params.Name] {
 				preq := toolRequest(call, ulid.Make().String())
 				preq.Operation = call.Params.Name
-				calls.Reject(preq, core.NewError(core.CodeInvalidArgument, messageUnknownTool))
+				return errorResult(preq.ID, calls.Reject(preq, core.NewError(core.CodeInvalidArgument, messageUnknownTool)))
 			}
 			return next(ctx, method, req)
 		}

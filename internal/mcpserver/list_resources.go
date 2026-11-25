@@ -17,30 +17,6 @@ const (
 	messageListResourcesNoArgs = "arguments must be an empty JSON object"
 )
 
-var listResourcesInputSchema = json.RawMessage(`{"type":"object","additionalProperties":false}`)
-
-var listResourcesOutputSchema = json.RawMessage(`{
-  "type": "object",
-  "properties": {
-    "resources": {
-      "type": ["null", "array"],
-      "items": {
-        "type": "object",
-        "properties": {
-          "name": {"type": "string"},
-          "kind": {"type": "string"},
-          "description": {"type": "string"},
-          "capabilities": {"type": ["null", "array"], "items": {"type": "string"}}
-        },
-        "required": ["name", "kind", "description", "capabilities"],
-        "additionalProperties": false
-      }
-    }
-  },
-  "required": ["resources"],
-  "additionalProperties": false
-}`)
-
 func addListResources(srv *mcp.Server, inv visibility, calls caller) {
 	srv.AddTool(&mcp.Tool{
 		Name:         listResourcesName,
@@ -70,14 +46,7 @@ func listResources(inv visibility, calls caller) mcp.ToolHandler {
 		if err := calls.Listed(preq, len(out.Resources)); err != nil {
 			return errorResult(preq.ID, err)
 		}
-		text, err := json.Marshal(out)
-		if err != nil {
-			return errorResult(preq.ID, err)
-		}
-		return &mcp.CallToolResult{
-			Content:           []mcp.Content{&mcp.TextContent{Text: string(text)}},
-			StructuredContent: json.RawMessage(text),
-		}, nil
+		return successResult(preq.ID, out)
 	}
 }
 

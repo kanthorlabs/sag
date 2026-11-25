@@ -90,9 +90,11 @@ func runAC26(t *testing.T, env harness.Env) {
 	allowID := ac26RequestID(t, ac26Call(ctx, t, session, ac26Resource, ac26AllowSQL), false)
 	denyID := ac26RequestID(t, ac26Call(ctx, t, session, ac26Resource, ac26DenySQL), true)
 	missingID := ac26RequestID(t, ac26Call(ctx, t, session, ac26Missing, ac26AllowSQL), true)
-	if _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: ac26UnknownTool, Arguments: map[string]any{"resource": ac26Resource}}); err == nil {
-		t.Fatalf("%s: want an error", ac26UnknownTool)
+	unknownRes, err := session.CallTool(ctx, &mcp.CallToolParams{Name: ac26UnknownTool, Arguments: map[string]any{"resource": ac26Resource}})
+	if err != nil {
+		t.Fatalf("%s: want an error result, got %v", ac26UnknownTool, err)
 	}
+	unknownID := ac26RequestID(t, unknownRes, true)
 
 	ac26Unauthorized(ctx, t, env, "")
 	ac26Unauthorized(ctx, t, env, "Bearer "+ac26Garbage)
@@ -161,7 +163,7 @@ func runAC26(t *testing.T, env harness.Env) {
 	if len(list) != 1 || list[0].str("decision") != "allow" || list[0]["rows"] != 1.0 {
 		t.Fatalf("list_resources records = %v", list)
 	}
-	if len(unknown) != 1 || unknown[0].str("decision") != "deny" || unknown[0].str("reason") != "invalid_argument" {
+	if len(unknown) != 1 || unknown[0].str("decision") != "deny" || unknown[0].str("reason") != "invalid_argument" || unknown[0].str("request_id") != unknownID {
 		t.Fatalf("unknown tool records = %v", unknown)
 	}
 
