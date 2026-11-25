@@ -117,7 +117,7 @@ func TestListsOnlyVisible(t *testing.T) {
 		{Name: "pending", Kind: "postgres", Capabilities: []string{"sql"}, Agents: []string{"ac03"}, Status: inventory.StatusPending},
 		{Name: "bare", Kind: "postgres", Agents: []string{"ac03"}, Status: inventory.StatusServed},
 	}}
-	handler := auth.RequireBearerToken(subAsToken, nil)(Handler(newServer(inv, nil, "test")))
+	handler := auth.RequireBearerToken(subAsToken, nil)(Handler(newServer(inv, &recordingCaller{}, "test")))
 
 	got := callListResources(t, connect(t, handler, "ac03"))
 	want := ListResourcesOutput{Resources: []ResourceInfo{
@@ -140,7 +140,7 @@ func TestListResourcesWithoutIdentity(t *testing.T) {
 	inv := &laxInventory{entries: []inventory.Entry{
 		{Name: "main", Kind: "postgres", Capabilities: []string{"sql"}, Agents: []string{""}, Status: inventory.StatusServed},
 	}}
-	got := callListResources(t, connect(t, Handler(newServer(inv, nil, "test")), ""))
+	got := callListResources(t, connect(t, Handler(newServer(inv, &recordingCaller{}, "test")), ""))
 	if len(got.Resources) != 0 {
 		t.Fatalf("no identity: got %#v, want no resources", got.Resources)
 	}
@@ -148,7 +148,7 @@ func TestListResourcesWithoutIdentity(t *testing.T) {
 
 func TestListResourcesAnnotations(t *testing.T) {
 	inv := &laxInventory{}
-	session := connect(t, Handler(newServer(inv, nil, "test")), "")
+	session := connect(t, Handler(newServer(inv, &recordingCaller{}, "test")), "")
 	tools, err := session.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)

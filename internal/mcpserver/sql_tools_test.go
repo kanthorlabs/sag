@@ -23,6 +23,10 @@ type recordingCaller struct {
 	mu       sync.Mutex
 	requests []pipeline.Request
 	rejected []pipeline.Request
+	rejects  []error
+	listed   []pipeline.Request
+	counts   []int
+	listErr  error
 	result   core.Result
 	err      error
 	delay    time.Duration
@@ -39,8 +43,23 @@ func (r *recordingCaller) Execute(_ context.Context, req pipeline.Request) (core
 func (r *recordingCaller) Reject(req pipeline.Request, err error) error {
 	r.mu.Lock()
 	r.rejected = append(r.rejected, req)
+	r.rejects = append(r.rejects, err)
 	r.mu.Unlock()
 	return err
+}
+
+func (r *recordingCaller) Listed(req pipeline.Request, count int) error {
+	r.mu.Lock()
+	r.listed = append(r.listed, req)
+	r.counts = append(r.counts, count)
+	r.mu.Unlock()
+	return r.listErr
+}
+
+func (r *recordingCaller) audited() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.requests) + len(r.rejected) + len(r.listed)
 }
 
 func (r *recordingCaller) last(t *testing.T) pipeline.Request {
@@ -304,18 +323,17 @@ func TestSuccessResultShape(t *testing.T) {
 	}
 }
 
-type panicCaller struct{}
+type panicCaller struct {
+	recordingCaller
+}
 
-func (panicCaller) Execute(context.Context, pipeline.Request) (core.Result, error) {
+func (p *panicCaller) Execute(context.Context, pipeline.Request) (core.Result, error) {
 	panic("index out of range")
 }
 
-func (panicCaller) Reject(_ pipeline.Request, err error) error {
-	return err
-}
-
 func TestToolPanicReturnsInternal(t *testing.T) {
-	session := sqlSession(t, panicCaller{}, "")
+	calls := &panicCaller{}
+	session := sqlSession(t, calls, "")
 	obj := errorObject(t, callTool(t, session, "sql_query", map[string]any{"resource": "main", "sql": "SELECT 1"}))
 	if obj["code"] != string(core.CodeInternal) || obj["message"] != "internal error" {
 		t.Fatalf("error = %v; want internal", obj)
@@ -324,4 +342,10 @@ func TestToolPanicReturnsInternal(t *testing.T) {
 	if obj["code"] != string(core.CodeInternal) {
 		t.Fatalf("second call error = %v; want internal from a live server", obj)
 	}
+	calls.mu.Lock()
+	defer calls.mu.Unlock()
+	if len(calls.rejected) != 2 || calls.rejected[0].Operation != "query" || calls.rejected[0].Resource != "main" {
+		t.Fatalf("rejected = %+v; want one record for each panic", calls.rejected)
+	}
+	assertCode(t, calls.rejects[0], core.CodeInternal)
 }
