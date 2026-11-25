@@ -65,6 +65,18 @@ func (i *Inventory) SetStatus(name string, s Status) error {
 	return nil
 }
 
+func (i *Inventory) SetResource(name string, res core.Resource) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	e, ok := i.entries[name]
+	if !ok {
+		return fmt.Errorf("inventory: resource %q is unknown", name)
+	}
+	e.Resource = res
+	i.entries[name] = e
+	return nil
+}
+
 func (i *Inventory) Visible(sub string) []Entry {
 	i.mu.RLock()
 	defer i.mu.RUnlock()

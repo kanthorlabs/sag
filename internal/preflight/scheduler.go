@@ -36,6 +36,7 @@ type Scheduler struct {
 type scheduled struct {
 	name    string
 	res     core.Resource
+	open    func(ctx context.Context) (core.Resource, error)
 	timeout time.Duration
 }
 
@@ -52,16 +53,43 @@ func (s *Scheduler) Add(name string, res core.Resource, timeout time.Duration) {
 	s.resources = append(s.resources, scheduled{name: name, res: res, timeout: timeout})
 }
 
+func (s *Scheduler) AddUnopened(name string, open func(ctx context.Context) (core.Resource, error), timeout time.Duration) {
+	s.resources = append(s.resources, scheduled{name: name, open: open, timeout: timeout})
+}
+
 func (s *Scheduler) Start(ctx context.Context) {
 	served := make([]bool, len(s.resources))
 	var first sync.WaitGroup
 	for i, r := range s.resources {
+		if r.res == nil {
+			continue
+		}
 		first.Go(func() { served[i] = s.run(ctx, r) })
 	}
 	first.Wait()
 	for i, r := range s.resources {
+		if r.res == nil {
+			s.loops.Go(func() { s.openLoop(ctx, r) })
+			continue
+		}
 		s.loops.Go(func() { s.loop(ctx, r, served[i]) })
 	}
+}
+
+func (s *Scheduler) openLoop(ctx context.Context, r scheduled) {
+	for r.res == nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.opts.Clock.After(RetryInterval):
+		}
+		res, err := r.open(ctx)
+		if err != nil {
+			continue
+		}
+		r.res = res
+	}
+	s.loop(ctx, r, s.run(ctx, r))
 }
 
 func (s *Scheduler) Wait() {

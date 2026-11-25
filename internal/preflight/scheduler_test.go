@@ -599,3 +599,46 @@ func TestCauseKeepsEachSharedCause(t *testing.T) {
 		}
 	}
 }
+
+func TestUnopenedResourceRetriesOpen(t *testing.T) {
+	f := newFixture(t)
+	if err := f.inv.Add(inventory.Entry{Name: "late", Kind: "postgres", Agents: []string{"alice"}, Status: inventory.StatusUnavailable}); err != nil {
+		t.Fatal(err)
+	}
+	res := newFake(passing())
+	var mu sync.Mutex
+	opens := 0
+	f.sched.AddUnopened("late", func(context.Context) (core.Resource, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		opens++
+		if opens == 1 {
+			return nil, errors.New("open failed")
+		}
+		if err := f.inv.SetResource("late", res); err != nil {
+			return nil, err
+		}
+		return res, nil
+	}, time.Second)
+	f.start(t)
+	if res.count() != 0 || f.status(t, "late") != inventory.StatusUnavailable {
+		t.Fatal("unopened resource ran preflight or is served before a retry")
+	}
+	if got := f.clock.awaitWaiters(t, 1); !slices.Equal(got, []time.Duration{RetryInterval}) {
+		t.Fatalf("waiters = %v; want one open retry at %s", got, RetryInterval)
+	}
+	f.clock.Advance(RetryInterval)
+	if got := f.clock.awaitWaiters(t, 1); !slices.Equal(got, []time.Duration{RetryInterval}) {
+		t.Fatalf("waiters after a failed open = %v; want %s", got, RetryInterval)
+	}
+	if res.count() != 0 {
+		t.Fatal("preflight ran after a failed open")
+	}
+	f.clock.Advance(RetryInterval)
+	if got := f.clock.awaitWaiters(t, 1); !slices.Equal(got, []time.Duration{testRecheck}) {
+		t.Fatalf("waiters after a successful open = %v; want the recheck %s", got, testRecheck)
+	}
+	if res.count() != 1 || f.status(t, "late") != inventory.StatusServed {
+		t.Fatalf("preflight runs %d, status %s; want one run and served", res.count(), f.status(t, "late"))
+	}
+}

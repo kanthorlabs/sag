@@ -116,10 +116,23 @@ type scheduled struct {
 	timeout time.Duration
 }
 
-type fakeScheduler struct{ added []scheduled }
+type unopened struct {
+	name    string
+	open    func(ctx context.Context) (core.Resource, error)
+	timeout time.Duration
+}
+
+type fakeScheduler struct {
+	added    []scheduled
+	unopened []unopened
+}
 
 func (s *fakeScheduler) Add(name string, res core.Resource, timeout time.Duration) {
 	s.added = append(s.added, scheduled{name: name, res: res, timeout: timeout})
+}
+
+func (s *fakeScheduler) AddUnopened(name string, open func(ctx context.Context) (core.Resource, error), timeout time.Duration) {
+	s.unopened = append(s.unopened, unopened{name: name, open: open, timeout: timeout})
 }
 
 type fakeApprovals struct{}
@@ -128,9 +141,10 @@ func (fakeApprovals) Verify(string, string) error { return nil }
 
 type openResult struct {
 	inv    *inventory.Inventory
+	set    *resourceSet
 	opened []core.Resource
 	sched  *fakeScheduler
-	log    string
+	log    *strings.Builder
 }
 
 func openWith(t *testing.T, kind, dsn string, approvals core.ApprovalVerifier, wrap func(sql.Dialect) sql.Dialect) openResult {
@@ -141,14 +155,13 @@ func openWith(t *testing.T, kind, dsn string, approvals core.ApprovalVerifier, w
 		t.Fatal(err)
 	}
 	creds := map[string]secret.Credential{"sag-main": secret.NewCredential("sag-main", []byte(dsn))}
-	var out strings.Builder
-	r := openResult{inv: inventory.New(), sched: &fakeScheduler{}}
-	r.opened, err = openResources(context.Background(), slog.New(slog.NewJSONHandler(&out, nil)), cfg, creds, r.inv, approvals, wrap, r.sched)
-	t.Cleanup(func() { closeResources(slog.New(slog.NewJSONHandler(io.Discard, nil)), r.opened) })
+	r := openResult{inv: inventory.New(), sched: &fakeScheduler{}, log: &strings.Builder{}}
+	r.set, err = openResources(context.Background(), slog.New(slog.NewJSONHandler(r.log, nil)), cfg, creds, r.inv, approvals, wrap, r.sched)
+	t.Cleanup(func() { closeResources(slog.New(slog.NewJSONHandler(io.Discard, nil)), r.set) })
 	if err != nil {
 		t.Fatalf("openResources: %v", err)
 	}
-	r.log = out.String()
+	r.opened = r.set.all()
 	return r
 }
 
@@ -190,7 +203,7 @@ func TestOpenAddsPendingAndSchedules(t *testing.T) {
 	if e.Resource != fake.resource || e.Kind != fakeKind || len(e.Capabilities) != 1 || e.Capabilities[0] != "sql" || e.Limits.Timeout <= 0 {
 		t.Fatalf("entry = %#v", e)
 	}
-	closeResources(slog.New(slog.NewJSONHandler(io.Discard, nil)), r.opened)
+	closeResources(slog.New(slog.NewJSONHandler(io.Discard, nil)), r.set)
 	if !fake.resource.closed {
 		t.Fatal("closeResources did not close the resource")
 	}
@@ -220,10 +233,10 @@ func TestOpenWrapsSQLOpener(t *testing.T) {
 
 func TestOpenFailureLogsCause(t *testing.T) {
 	r := openWith(t, "postgres", testDSN+"\n", fakeApprovals{}, nil)
-	if !strings.Contains(r.log, `"msg":"resource open failed"`) || !strings.Contains(r.log, "connection secret is not a postgres URL") {
-		t.Fatalf("log lacks the open cause:\n%s", r.log)
+	if !strings.Contains(r.log.String(), `"msg":"resource open failed"`) || !strings.Contains(r.log.String(), "connection secret is not a postgres URL") {
+		t.Fatalf("log lacks the open cause:\n%s", r.log.String())
 	}
-	if strings.Contains(r.log, testDSNPassword) || strings.Contains(r.log, "db.example.net") {
+	if strings.Contains(r.log.String(), testDSNPassword) || strings.Contains(r.log.String(), "db.example.net") {
 		t.Fatal("log holds the DSN")
 	}
 	if len(r.opened) != 0 || len(r.sched.added) != 0 {
@@ -247,7 +260,42 @@ func TestOpenFailureOfSQLOpener(t *testing.T) {
 	if called || len(r.opened) != 0 || len(r.sched.added) != 0 {
 		t.Fatalf("wrap called %v, opened %#v, scheduled %#v; want none", called, r.opened, r.sched.added)
 	}
-	if !strings.Contains(r.log, `"msg":"resource open failed"`) {
-		t.Fatalf("log lacks the open failure:\n%s", r.log)
+	if !strings.Contains(r.log.String(), `"msg":"resource open failed"`) {
+		t.Fatalf("log lacks the open failure:\n%s", r.log.String())
+	}
+}
+
+func TestOpenFailureRetriesOpen(t *testing.T) {
+	fake := resetFake(t)
+	fake.openErr = errors.New("connection secret is not a postgres URL")
+	r := openWith(t, fakeKind, testDSN, fakeApprovals{}, nil)
+	if len(r.opened) != 0 || len(r.sched.added) != 0 || len(r.sched.unopened) != 1 {
+		t.Fatalf("opened %d, scheduled %d, unopened %d; want 0, 0, 1", len(r.opened), len(r.sched.added), len(r.sched.unopened))
+	}
+	retry := r.sched.unopened[0]
+	if retry.name != "main" || retry.timeout != time.Second+preflightSlack {
+		t.Fatalf("unopened = %+v; want main with %s", retry, time.Second+preflightSlack)
+	}
+	if _, err := retry.open(context.Background()); err == nil {
+		t.Fatal("retry open succeeded while Open fails")
+	}
+	if n := strings.Count(r.log.String(), `"msg":"resource open failed"`); n != 2 {
+		t.Fatalf("log has %d open failures; want 2 with the same line:\n%s", n, r.log.String())
+	}
+	fake.mu.Lock()
+	fake.openErr = nil
+	fake.mu.Unlock()
+	res, err := retry.open(context.Background())
+	if err != nil || res != fake.resource {
+		t.Fatalf("retry open = %#v, %v; want the opened resource", res, err)
+	}
+	if all := r.set.all(); len(all) != 1 || all[0] != res {
+		t.Fatalf("opened set = %#v; want the reopened resource for shutdown", all)
+	}
+	if err := r.inv.SetStatus("main", inventory.StatusServed); err != nil {
+		t.Fatal(err)
+	}
+	if e, err := r.inv.Lookup("skeleton", "main"); err != nil || e.Resource != res {
+		t.Fatalf("Lookup = %#v, %v; want the reopened resource", e, err)
 	}
 }

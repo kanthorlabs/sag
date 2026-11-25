@@ -157,3 +157,18 @@ func TestLookupStatus(t *testing.T) {
 		t.Fatalf("Lookup(bob, down) error = %v; want not_found", err)
 	}
 }
+
+func TestSetResource(t *testing.T) {
+	inv := New()
+	if err := inv.SetResource("ghost", nil); err == nil {
+		t.Fatal("SetResource accepted an unknown name")
+	}
+	mustAdd(t, inv, served("main", "alice"))
+	if err := inv.SetResource("main", nil); err != nil {
+		t.Fatal(err)
+	}
+	e, err := inv.Lookup("alice", "main")
+	if err != nil || e.Resource != nil {
+		t.Fatalf("Lookup = %+v, %v; want the new resource", e, err)
+	}
+}

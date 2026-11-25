@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/kanthorlabs/sag/internal/config"
@@ -19,10 +20,28 @@ var preflightSlack = 10 * time.Second
 
 type resourceScheduler interface {
 	Add(name string, res core.Resource, timeout time.Duration)
+	AddUnopened(name string, open func(ctx context.Context) (core.Resource, error), timeout time.Duration)
 }
 
-func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, creds map[string]secret.Credential, inv *inventory.Inventory, approvals core.ApprovalVerifier, wrap func(sql.Dialect) sql.Dialect, sched resourceScheduler) ([]core.Resource, error) {
-	var opened []core.Resource
+type resourceSet struct {
+	mu   sync.Mutex
+	list []core.Resource
+}
+
+func (s *resourceSet) add(res core.Resource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.list = append(s.list, res)
+}
+
+func (s *resourceSet) all() []core.Resource {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.list)
+}
+
+func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, creds map[string]secret.Credential, inv *inventory.Inventory, approvals core.ApprovalVerifier, wrap func(sql.Dialect) sql.Dialect, sched resourceScheduler) (*resourceSet, error) {
+	opened := &resourceSet{}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Resources)) {
 		r := cfg.Resources[name]
 		adapter, ok := core.Lookup(r.Kind)
@@ -38,23 +57,43 @@ func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, cr
 			Limits:       resourceLimits(r.Limits),
 			Status:       inventory.StatusPending,
 		}
-		res, err := openResource(ctx, adapter, ResourceConfig(name, r, creds, approvals), creds[string(r.Connection)], wrap)
+		rc := ResourceConfig(name, r, creds, approvals)
+		cred := creds[string(r.Connection)]
+		timeout := r.Limits.ConnectTimeout + preflightSlack
+		res, err := openResource(ctx, adapter, rc, cred, wrap)
 		if err != nil {
 			log.Error("resource open failed", "resource", name, "error", err.Error())
 			entry.Status = inventory.StatusUnavailable
 			if err := inv.Add(entry); err != nil {
 				return opened, fmt.Errorf("%s: %w", name, err)
 			}
+			sched.AddUnopened(name, func(ctx context.Context) (core.Resource, error) {
+				return reopen(ctx, log, inv, opened, name, adapter, rc, cred, wrap)
+			}, timeout)
 			continue
 		}
-		opened = append(opened, res)
+		opened.add(res)
 		entry.Resource = res
 		if err := inv.Add(entry); err != nil {
 			return opened, fmt.Errorf("%s: %w", name, err)
 		}
-		sched.Add(name, res, r.Limits.ConnectTimeout+preflightSlack)
+		sched.Add(name, res, timeout)
 	}
 	return opened, nil
+}
+
+func reopen(ctx context.Context, log *slog.Logger, inv *inventory.Inventory, opened *resourceSet, name string, adapter core.Adapter, rc core.ResourceConfig, cred secret.Credential, wrap func(sql.Dialect) sql.Dialect) (core.Resource, error) {
+	res, err := openResource(ctx, adapter, rc, cred, wrap)
+	if err != nil {
+		log.Error("resource open failed", "resource", name, "error", err.Error())
+		return nil, err
+	}
+	if err := inv.SetResource(name, res); err != nil {
+		_ = res.Close()
+		return nil, err
+	}
+	opened.add(res)
+	return res, nil
 }
 
 func openResource(ctx context.Context, adapter core.Adapter, rc core.ResourceConfig, cred secret.Credential, wrap func(sql.Dialect) sql.Dialect) (core.Resource, error) {
@@ -76,8 +115,8 @@ func capabilityNames(caps []core.Capability) []string {
 	return names
 }
 
-func closeResources(log *slog.Logger, opened []core.Resource) {
-	for _, res := range opened {
+func closeResources(log *slog.Logger, opened *resourceSet) {
+	for _, res := range opened.all() {
 		if err := res.Close(); err != nil {
 			log.Error("resource close failed")
 		}
