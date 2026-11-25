@@ -80,3 +80,54 @@ Yes. The layer 2 gate can close after B1, B2, and each `action:YES` suggestion h
 - B1 is a product defect: one request of one agent stops the daemon. B2 is a test defect: the gate cannot see a pass-through validator in the product path.
 - S1 to S5 change product behavior or close a gap to a PRD rule of layer 2. S6, S10, and S11 change gate evidence. S7 to S9 and S14 to S16 are small defense changes. S12 and S13 are text changes for layer 3.
 - S17 to S23 need no change in layer 2.
+
+## Final AC report
+
+- Gate run: `make e2e-matrix LAYER=2 PGS="14 17 19"` on commit `fb53e39`. The run included `make test-integration` for PostgreSQL 14, 17, and 19. `acreport` exited 0. Wall time 214 s.
+- The tag commit adds only this section to `fb53e39`.
+
+| AC | Layer | Test | Status | PG14 | PG17 | PG19 | Duration | Message |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| AC01 | 1 | `TestE2E/parallel/AC01_ConfigCheckRejects` | PASS | PASS | PASS | PASS | 6010 ms |  |
+| AC02 | 1 | `TestE2E/parallel/AC02_StartRefusesBadSecrets` | PASS | PASS | PASS | PASS | 4210 ms |  |
+| AC03 | 1 | `TestE2E/parallel/AC03_JWTRejects` | PASS | PASS | PASS | PASS | 3720 ms |  |
+| AC04 | 1 | `TestE2E/parallel/AC04_JWTGenerateRefuses` | PASS | PASS | PASS | PASS | 5100 ms |  |
+| AC05 | 2 | `TestE2E/parallel/AC05_C2BlocksWrites` | PASS | PASS | PASS | PASS | 1890 ms |  |
+| AC06 | 2 | `TestE2E/parallel/AC06_SingleStatement` | PASS | PASS | PASS | PASS | 2150 ms |  |
+| AC07 | 2 | `TestE2E/parallel/AC07_NoPassThrough` | PASS | PASS | PASS | PASS | 5740 ms |  |
+| AC08 | 2 | `TestE2E/sequential/AC08_RollbackOnly` | PASS | PASS | PASS | PASS | 290 ms |  |
+| AC09 | 2 | `TestE2E/parallel/AC09_RefusesPG13` | PASS | PASS | PASS | PASS | 3360 ms |  |
+| AC10 | 2 | `TestE2E/parallel/AC10_TLSVerifyFull` | PASS | PASS | PASS | PASS | 3770 ms |  |
+| AC11 | 2 | `TestE2E/parallel/AC11_ExtensionApproval` | PASS | PASS | PASS | PASS | 69970 ms |  |
+| AC12 | 2 | `TestE2E/parallel/AC12_OperatorCollision` | PASS | PASS | PASS | PASS | 3100 ms |  |
+| AC13 | 3 | `AC13_StaticRejects` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC14 | 3 | `AC14_FieldAllowlist` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC15 | 3 | `AC15_C1OnlyEffects` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC16 | 3 | `AC16_LexerSettings` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC17 | 3 | `AC17_RenderedTextOnly` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC18 | 3 | `AC18_ViewWriteBlocked` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC19 | 3 | `AC19_Integrity` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC20 | 4 | `AC20_MaxRows` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC21 | 4 | `AC21_MaxResultBytes` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC22 | 4 | `AC22_LockTimeout` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC23 | 4 | `AC23_RateLimit` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC24 | 4 | `AC24_ConnectErrorScrub` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC25 | 4 | `AC25_ColumnRedaction` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC26 | 4 | `AC26_AuditRecord` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC27 | 4 | `AC27_AuditFailure` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC28 | 5 | `AC28_EndpointAuthOrigin` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC29 | 5 | `AC29_Authorization` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC30 | 5 | `AC30_ToolShapes` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC31 | 5 | `AC31_ClaudeCode` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC32 | 6 | `AC32_ContainerInspect` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC33 | 6 | `AC33_SecretMounts` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC34 | 6 | `AC34_JWTGenerateNoTTY` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+| AC35 | 6 | `AC35_CI` | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED | NOT_IMPLEMENTED |  |  |
+
+## Other subtests
+
+| Test | Status | PG14 | PG17 | PG19 |
+| --- | --- | --- | --- | --- |
+| `TestE2E/parallel/Harness_Skeleton` | PASS | PASS | PASS | PASS |
+| `TestE2E/parallel/Product_RejectsAllUntilC1` | PASS | PASS | PASS | PASS |
+| `TestE2E/parallel/Product_SQLSizeLimit` | PASS | PASS | PASS | PASS |
