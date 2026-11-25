@@ -121,8 +121,13 @@ func TestNotImplementedWhenAbsent(t *testing.T) {
 	}
 }
 
+func skeletonPass() []event {
+	return finished("TestE2E/parallel/Harness_Skeleton", "pass", 1)
+}
+
 func TestGateFailsOnEarlierLayer(t *testing.T) {
 	layer1Pass := slices.Concat(
+		skeletonPass(),
 		finished("TestE2E/parallel/AC01_ConfigCheckRejects", "pass", 1),
 		finished("TestE2E/parallel/AC02_StartRefusesBadSecrets", "pass", 1),
 		finished("TestE2E/parallel/AC03_JWTRejects", "pass", 1),
@@ -143,14 +148,15 @@ func TestGateFailsOnEarlierLayer(t *testing.T) {
 			[]event{{Action: "fail", Test: "TestE2E/sequential"}, {Action: "fail", Test: "TestE2E"}, {Action: "fail"}},
 		), true, nil},
 		{"earlier layer AC fails", 2, layer1Pass, false, []string{"AC05_C2BlocksWrites", "AC06_SingleStatement", "AC07_NoPassThrough", "AC08_RollbackOnly", "AC09_RefusesPG13", "AC10_TLSVerifyFull", "AC11_ExtensionApproval", "AC12_OperatorCollision"}},
-		{"same layer AC fails", 1, slices.Concat(layer1Pass[:6], finished("TestE2E/parallel/AC04_JWTGenerateRefuses", "fail", 1)), false, []string{"TestE2E/parallel/AC04_JWTGenerateRefuses"}},
+		{"same layer AC fails", 1, slices.Concat(layer1Pass[:8], finished("TestE2E/parallel/AC04_JWTGenerateRefuses", "fail", 1)), false, []string{"TestE2E/parallel/AC04_JWTGenerateRefuses"}},
 		{"other subtest fails", 1, slices.Concat(layer1Pass,
 			[]event{{Action: "run", Test: "TestE2E"}, {Action: "run", Test: "TestE2E/parallel"}},
 			finished("TestE2E/parallel/Harness_Skeleton", "fail", 1),
 			[]event{{Action: "fail", Test: "TestE2E/parallel"}, {Action: "fail", Test: "TestE2E"}, {Action: "fail"}},
 		), false, []string{"TestE2E/parallel/Harness_Skeleton"}},
-		{"suite setup fails", 1, slices.Concat(finished("TestE2E", "fail", 1), []event{{Action: "fail"}}), false, []string{"AC01_ConfigCheckRejects", "AC02_StartRefusesBadSecrets", "AC03_JWTRejects", "AC04_JWTGenerateRefuses", "TestE2E"}},
-		{"build fails", 1, []event{{Action: "fail"}}, false, []string{"AC01_ConfigCheckRejects", "AC02_StartRefusesBadSecrets", "AC03_JWTRejects", "AC04_JWTGenerateRefuses", "package " + pkg}},
+		{"suite setup fails", 1, slices.Concat(finished("TestE2E", "fail", 1), []event{{Action: "fail"}}), false, []string{"AC01_ConfigCheckRejects", "AC02_StartRefusesBadSecrets", "AC03_JWTRejects", "AC04_JWTGenerateRefuses", "Harness_Skeleton", "TestE2E"}},
+		{"build fails", 1, []event{{Action: "fail"}}, false, []string{"AC01_ConfigCheckRejects", "AC02_StartRefusesBadSecrets", "AC03_JWTRejects", "AC04_JWTGenerateRefuses", "Harness_Skeleton", "package " + pkg}},
+		{"skeleton not run", 1, layer1Pass[2:], false, []string{"Harness_Skeleton"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -229,6 +235,7 @@ func writeEvents(t *testing.T, dir string, major int, events []event) string {
 
 func TestRunExitCodes(t *testing.T) {
 	layer1 := slices.Concat(
+		skeletonPass(),
 		finished("TestE2E/parallel/AC01_ConfigCheckRejects", "pass", 1),
 		finished("TestE2E/parallel/AC02_StartRefusesBadSecrets", "pass", 1),
 		finished("TestE2E/parallel/AC03_JWTRejects", "pass", 1),
@@ -261,7 +268,7 @@ func TestRunExitCodes(t *testing.T) {
 	}
 
 	stderr.Reset()
-	in19 := writeEvents(t, dir, 19, slices.Concat(layer1[:6], finished("TestE2E/sequential/AC04_JWTGenerateRefuses", "fail", 1)))
+	in19 := writeEvents(t, dir, 19, slices.Concat(layer1[:8], finished("TestE2E/sequential/AC04_JWTGenerateRefuses", "fail", 1)))
 	if code := run([]string{"-layer", "1", "-in", in14, "-in", in19, "-out", out}, &stderr, probe); code != 1 {
 		t.Errorf("exit = %d, want 1", code)
 	}
@@ -282,6 +289,41 @@ func TestRunExitCodes(t *testing.T) {
 	} {
 		if code := run(args, &stderr, probe); code != 2 {
 			t.Errorf("run(%v) = %d, want 2", args, code)
+		}
+	}
+}
+
+func TestDurationIncludesParallelSubtests(t *testing.T) {
+	run := parsed(t,
+		finished("TestE2E/parallel/AC02_StartRefusesBadSecrets/mode0444", "pass", 1.28),
+		finished("TestE2E/parallel/AC02_StartRefusesBadSecrets/shortMasterKey", "pass", 1.34),
+		finished("TestE2E/parallel/AC02_StartRefusesBadSecrets", "pass", 0),
+	)
+	r := buildReport(1, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, buildInfo{})
+	if got := find(t, r, "AC02"); got.Status != statusPass || got.DurationMS != 1340 {
+		t.Errorf("AC02 = %+v, want PASS duration 1340", got)
+	}
+}
+
+func TestOtherSubtestsListed(t *testing.T) {
+	r := buildReport(1, []majorRun{
+		{Major: 14, Run: parsed(t, skeletonPass(), finished("TestE2E/parallel/Extra_Check", "fail", 1))},
+		{Major: 17, Run: parsed(t, skeletonPass())},
+	}, e2e.ACTable, buildInfo{})
+	want := []otherResult{
+		{Test: "TestE2E/parallel/Extra_Check", Status: statusFail, ByMajor: map[string]string{"14": statusFail, "17": statusNotRun}},
+		{Test: "TestE2E/parallel/Harness_Skeleton", Status: statusPass, ByMajor: map[string]string{"14": statusPass, "17": statusPass}},
+	}
+	if fmt.Sprint(r.Others) != fmt.Sprint(want) {
+		t.Fatalf("others = %+v, want %+v", r.Others, want)
+	}
+	var b bytes.Buffer
+	if err := writeMarkdown(&b, r); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"## Other subtests", "| `TestE2E/parallel/Harness_Skeleton` | PASS | PASS | PASS |", "| `TestE2E/parallel/Extra_Check` | FAIL | FAIL | NOT_RUN |"} {
+		if !strings.Contains(b.String(), line) {
+			t.Errorf("markdown misses %q:\n%s", line, b.String())
 		}
 	}
 }

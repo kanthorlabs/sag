@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -45,6 +46,21 @@ func writeMarkdown(w io.Writer, r report) error {
 			duration = fmt.Sprintf("%d ms", ac.DurationMS)
 		}
 		row = append(row, duration, cell(ac.Message))
+		writeRow(&b, row)
+	}
+
+	b.WriteString("\n## Other subtests\n\n")
+	otherHeader := []string{"Test", "Status"}
+	for _, major := range r.PGMajors {
+		otherHeader = append(otherHeader, "PG"+strconv.Itoa(major))
+	}
+	writeRow(&b, otherHeader)
+	writeRow(&b, slices.Repeat([]string{"---"}, len(otherHeader)))
+	for _, o := range r.Others {
+		row := []string{"`" + o.Test + "`", o.Status}
+		for _, major := range r.PGMajors {
+			row = append(row, o.ByMajor[strconv.Itoa(major)])
+		}
 		writeRow(&b, row)
 	}
 	_, err := io.WriteString(w, b.String())

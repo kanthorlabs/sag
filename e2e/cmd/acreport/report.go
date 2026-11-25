@@ -15,6 +15,8 @@ const (
 	statusPass           = "PASS"
 	statusFail           = "FAIL"
 	statusNotImplemented = "NOT_IMPLEMENTED"
+	statusNotRun         = "NOT_RUN"
+	requiredSubtest      = "Harness_Skeleton"
 
 	topLevelTest   = "TestE2E"
 	maxMessageLen  = 500
@@ -46,6 +48,12 @@ type acResult struct {
 	Message    string            `json:"message"`
 }
 
+type otherResult struct {
+	Test    string            `json:"test"`
+	Status  string            `json:"status"`
+	ByMajor map[string]string `json:"by_major"`
+}
+
 type gate struct {
 	Layer   int      `json:"layer"`
 	Passed  bool     `json:"passed"`
@@ -53,15 +61,16 @@ type gate struct {
 }
 
 type report struct {
-	Schema      int        `json:"schema"`
-	GeneratedAt string     `json:"generated_at"`
-	Commit      string     `json:"commit"`
-	Dirty       bool       `json:"dirty"`
-	Layer       int        `json:"layer"`
-	Image       string     `json:"image"`
-	PGMajors    []int      `json:"pg_majors"`
-	ACs         []acResult `json:"acs"`
-	Gate        gate       `json:"gate"`
+	Schema      int           `json:"schema"`
+	GeneratedAt string        `json:"generated_at"`
+	Commit      string        `json:"commit"`
+	Dirty       bool          `json:"dirty"`
+	Layer       int           `json:"layer"`
+	Image       string        `json:"image"`
+	PGMajors    []int         `json:"pg_majors"`
+	ACs         []acResult    `json:"acs"`
+	Others      []otherResult `json:"others"`
+	Gate        gate          `json:"gate"`
 }
 
 func buildReport(layer int, runs []majorRun, table []e2e.ACRow, info buildInfo) report {
@@ -75,6 +84,7 @@ func buildReport(layer int, runs []majorRun, table []e2e.ACRow, info buildInfo) 
 		Image:       info.Image,
 		PGMajors:    []int{},
 		ACs:         []acResult{},
+		Others:      []otherResult{},
 		Gate:        gate{Layer: layer, Failing: []string{}},
 	}
 	for _, mr := range runs {
@@ -91,10 +101,14 @@ func buildReport(layer int, runs []majorRun, table []e2e.ACRow, info buildInfo) 
 	for _, row := range table {
 		acNames[row.Test] = true
 	}
+	r.Others = otherSubtests(runs, acNames)
 	others := map[string]bool{}
 	for _, mr := range runs {
 		for _, name := range otherFailures(mr.Run, acNames) {
 			others[name] = true
+		}
+		if _, _, ok := findAC(mr.Run, requiredSubtest); !ok {
+			others[requiredSubtest] = true
 		}
 	}
 	r.Gate.Failing = append(r.Gate.Failing, slices.Sorted(maps.Keys(others))...)
@@ -118,7 +132,7 @@ func mergeMajors(row e2e.ACRow, runs []majorRun) acResult {
 		if ac.Test == row.Test {
 			ac.Test = key.Test
 		}
-		ac.DurationMS = max(ac.DurationMS, int64(math.Round(res.Elapsed*1000)))
+		ac.DurationMS = max(ac.DurationMS, int64(math.Round(maxElapsed(mr.Run, key)*1000)))
 		if res.Action == "pass" {
 			ac.ByMajor[major] = statusPass
 			passed++
@@ -137,6 +151,53 @@ func mergeMajors(row e2e.ACRow, runs []majorRun) acResult {
 		ac.Message = truncate(strings.Join(messages, "; "))
 	}
 	return ac
+}
+
+func maxElapsed(run testRun, parent testKey) float64 {
+	elapsed := run.Tests[parent].Elapsed
+	for key, res := range run.Tests {
+		if key.Package == parent.Package && strings.HasPrefix(key.Test, parent.Test+"/") {
+			elapsed = max(elapsed, res.Elapsed)
+		}
+	}
+	return elapsed
+}
+
+func otherSubtests(runs []majorRun, acNames map[string]bool) []otherResult {
+	results := map[string]*otherResult{}
+	for _, mr := range runs {
+		for key, res := range mr.Run.Tests {
+			parts := strings.Split(key.Test, "/")
+			if len(parts) != 3 || parts[0] != topLevelTest || !slices.Contains(phaseGroups, parts[1]) || acNames[parts[2]] {
+				continue
+			}
+			o := results[key.Test]
+			if o == nil {
+				o = &otherResult{Test: key.Test, ByMajor: map[string]string{}}
+				results[key.Test] = o
+			}
+			o.ByMajor[strconv.Itoa(mr.Major)] = statusFail
+			if res.Action == "pass" {
+				o.ByMajor[strconv.Itoa(mr.Major)] = statusPass
+			}
+		}
+	}
+	others := []otherResult{}
+	for _, name := range slices.Sorted(maps.Keys(results)) {
+		o := results[name]
+		o.Status = statusPass
+		for _, mr := range runs {
+			major := strconv.Itoa(mr.Major)
+			if _, ok := o.ByMajor[major]; !ok {
+				o.ByMajor[major] = statusNotRun
+			}
+			if o.ByMajor[major] != statusPass {
+				o.Status = statusFail
+			}
+		}
+		others = append(others, *o)
+	}
+	return others
 }
 
 func findAC(run testRun, name string) (testKey, *testResult, bool) {
