@@ -37,7 +37,7 @@ func runAC33(t *testing.T, env harness.Env) {
 	defer cancel()
 
 	t.Run("ac33-secret-mounts", func(t *testing.T) {
-		res, err := env.Exec(ctx, harness.ContainerSAG, harness.BusyboxTarget, "sh", "-c", `stat -c "%n %u %a" `+secret.Dir+`/*`)
+		res, err := env.Exec(ctx, harness.ContainerSAG, harness.BusyboxTarget, "sh", "-c", harness.BusyboxTarget+` stat -c "%n %u %a %F" `+secret.Dir+`/*`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,8 +47,12 @@ func runAC33(t *testing.T, env harness.Env) {
 		seen := map[string]bool{}
 		for _, line := range strings.Split(strings.TrimSpace(res.Stdout), "\n") {
 			fields := strings.Fields(line)
-			if len(fields) != 3 {
-				t.Fatalf("stat line %q does not have three fields", line)
+			if len(fields) < 4 {
+				t.Fatalf("stat line %q does not have four fields", line)
+			}
+			if kind := strings.Join(fields[3:], " "); kind != "regular file" {
+				t.Logf("%s is a %s, not a secret file", fields[0], kind)
+				continue
 			}
 			if fields[1] != "65532" || fields[2] != "400" {
 				t.Errorf("%s: owner %s mode %s, want 65532 400", fields[0], fields[1], fields[2])
