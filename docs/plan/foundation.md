@@ -87,7 +87,7 @@ One responsibility per package.
 - The pgx config starts from `pgx.ParseConfig("")` after the daemon removes each `PG*` variable. SAG then sets host, port, database, user, password, TLS, `ConnectTimeout`, `DefaultQueryExecMode = QueryExecModeExec`, and `Fallbacks = nil`.
 - `max_concurrent_per_agent` (default 20) lives only in `defaults.limits`. The semaphore is non-blocking: an excess request gets `rate_limited`.
 - `pool_size` is per resource. The executor acquires a connection under the request context deadline (`statement_timeout`). An exhausted pool returns `timeout` at the deadline.
-- `pgxpool` `AfterConnect` runs `SessionGuard`. A connection that returns an error, a timeout, or a failed `ROLLBACK` is closed and leaves the pool.
+- `pgxpool` `AfterConnect` runs `SessionGuard`. A connection that returns an error, a timeout, a failed `ROLLBACK`, or a truncated read is closed and leaves the pool. A truncated read without a cursor cancels the statement, reads no more rows, sends `ROLLBACK`, and closes the connection.
 - Every SAG statement on a connection, also preflight and `sag extension approve`, runs inside `RequestBegin` and ends with `ROLLBACK`. Only `SessionGuard` runs outside a transaction.
 - Tool errors return `isError: true`. The text content is the JSON object `{"code","message","request_id"}`.
 - `sql_list_tables` and `sql_describe_table` build a fixed `information_schema` text. Input values enter as string literals with each `'` doubled. A value longer than 63 bytes or with a NUL byte returns `invalid_argument`. The text then runs through the full `sql_query` path, so C1, C2, and C3 apply.

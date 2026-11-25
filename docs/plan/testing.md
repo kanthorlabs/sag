@@ -57,7 +57,7 @@ Structure of the e2e test binary:
 
 - One top-level test `TestE2E` in `e2e/e2e_test.go`.
 - Phase 1 runs `t.Run("parallel", ...)` with each phase-1 AC subtest marked `t.Parallel()`.
-- Phase 2 runs sequentially after phase 1, in this order: `AC16_LexerSettings`, `AC08_RollbackOnly`, `AC19_Integrity`.
+- Phase 2 runs sequentially after phase 1, in this order: `AC16_LexerSettings`, the other sequential ACs, `AC08_RollbackOnly`, `AC19_Integrity`. `AC08_RollbackOnly` reads the server log after each other sequential AC except `AC19_Integrity`.
 - Subtest name form: `TestE2E/<phase>/AC<NN>_<Name>`.
 - Run timeout: 30 minutes.
 

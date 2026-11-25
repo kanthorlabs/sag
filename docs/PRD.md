@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 7 |
+| Status | Revision 8 |
 | Date | 2026-11-25 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
@@ -280,7 +280,7 @@ Validation runs in two phases:
 |---|---|
 | `EngineGuard` | `transaction` |
 | `SessionGuard` | `SET default_transaction_read_only = on` |
-| `RequestBegin` | `BEGIN TRANSACTION READ ONLY`, then `SET LOCAL` for `statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`, `standard_conforming_strings = on`, `client_encoding = 'UTF8'` |
+| `RequestBegin` | `BEGIN TRANSACTION READ ONLY`, then `SET LOCAL` for `statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`, `standard_conforming_strings = on`, `client_encoding = 'UTF8'`, `datestyle = 'ISO, YMD'`, `bytea_output = 'hex'` |
 | `ViolationCodes` | SQLSTATE `25006` (`read_only_sql_transaction`) |
 
 Driver rules:
@@ -318,6 +318,10 @@ C2 and C3 do not block these effects. The conformance suite asserts that C1 reje
 | Server file read | `SELECT pg_read_file('postgresql.conf')` |
 | Signal to another backend | `SELECT pg_terminate_backend(1)` |
 | Server configuration reload | `SELECT pg_reload_conf()` |
+| Command on the database host, server file write | `COPY (SELECT 1) TO PROGRAM 'touch /tmp/x'`, `COPY (SELECT 1) TO '/tmp/x'` |
+| Prepared transaction that stays after `ROLLBACK` | `PREPARE TRANSACTION 'x'` |
+| Checkpoint | `CHECKPOINT` |
+| Prepared statement that stays in the pooled session | `PREPARE p AS SELECT 1` |
 
 ### 8.6 Credential catalogs
 
@@ -353,6 +357,8 @@ SAG runs preflight at `sag resource test <name>` and at daemon start for each re
 | Risky objects | None of these exist, or a valid approval matches the current fingerprint: extensions `dblink`, `pg_background`, `adminpack`, `file_fdw`; procedural languages with `lanpltrusted = false` other than `c` and `internal`. | Refuse, with the approval hint |
 | Operator names | Report each operator name that has a match outside `pg_catalog`. Queries that use these names fail with `query_rejected`. | Report only |
 
+Preflight runs on its own connection outside the request pool. Its first statement in the transaction is `SELECT pg_catalog.set_config('search_path', 'pg_catalog', true)`.
+
 Refusal hint text: `resource <name> has risky objects <list>; to approve, run on the host: podman exec -it sag sag extension approve <name>`.
 
 ### 9.2 Extension approval
@@ -377,7 +383,7 @@ Rules:
 
 - Preflight accepts an approval only with a valid `mac` and a fingerprint equal to the current one.
 - A new risky object, a version change, or a change of the target fields makes the approval invalid. Preflight then refuses the resource.
-- `sag extension revoke <resource>` deletes the approval record.
+- `sag extension revoke <resource>` deletes the approval record. The daemon reads the record only at a preflight run. A served resource stays served until the next re-check or a daemon restart. The command prints this fact.
 - No HTTP path and no MCP tool reads or writes approvals.
 
 ### 9.3 Catalog objects that SAG reads
@@ -393,6 +399,8 @@ SAG reads only these catalog objects and settings. The conformance suite runs ea
 | `pg_language.lanname`, `lanpltrusted` | Untrusted language check | Present in the PostgreSQL 19 documentation. |
 | `pg_stat_ssl.pid`, `ssl` | TLS check | Present in the PostgreSQL 19 documentation. |
 | `default_transaction_read_only`, `transaction_read_only`, `statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`, `client_encoding` | `SessionGuard`, `RequestBegin`, read-only mode check | Present in the PostgreSQL 19 documentation. |
+| `datestyle`, `bytea_output` | `RequestBegin`, value encoding | Present in the PostgreSQL 19 documentation. |
+| `set_config('search_path', 'pg_catalog', true)` | Preflight | Present in the PostgreSQL 19 documentation. |
 | `standard_conforming_strings` | `RequestBegin`, read-only mode check | Always `on` in PostgreSQL 19 and cannot be set to `off`. `SET LOCAL standard_conforming_strings = on` is not tested on PostgreSQL 19. |
 | Credential catalogs in section 8.6 | C1 relation rule | Present in the PostgreSQL 19 documentation. |
 | `version()`, `server_version_num` | Engine and version check | Not checked. |
@@ -406,12 +414,12 @@ SAG reads only these catalog objects and settings. The conformance suite runs ea
 | `max_rows` | 100 | 1000 | `RowCapPlan.Fetch` reads `max_rows + 1` rows. Result has `truncated: true` and `truncated_reason: max_rows`. |
 | `max_result_bytes` | 32 KiB | 2 MiB | Core stops at the cap after JSON encoding. `truncated_reason: max_result_bytes`. |
 | `max_cell_bytes` | 4 KiB | 8 KiB | Core cuts longer text and adds the suffix `…[truncated]`. |
-| `statement_timeout` | 15 s | 30 s | `SET LOCAL statement_timeout` and Go context deadline. On deadline, pgx sends a cancel request. |
+| `statement_timeout` | 15 s | 30 s | `SET LOCAL statement_timeout`, and a Go context deadline 2 s later. The server ends the statement, and the executor sends `ROLLBACK`. If the Go deadline ends first, pgx sends a cancel request. |
 | `lock_timeout` | 2 s | 2 s | `SET LOCAL lock_timeout`. |
 | `idle_in_transaction_session_timeout` | `statement_timeout` + 5 s | 35 s | `SET LOCAL idle_in_transaction_session_timeout`. |
 | `connect_timeout` | 5 s | 5 s | Driver setting. |
 | `max_concurrent_per_agent` | 20 | None. Operator config, not a request value. | One core semaphore for each JWT `sub`, shared across all resources. It runs before `Resource.Execute`. Excess requests get `rate_limited`. |
-| `pool_size` | 5 | 20 | Driver pool setting for each resource. This is the database load limit. When the pool is exhausted, a request waits for a connection up to its `statement_timeout`, then returns `timeout`. |
+| `pool_size` | 5 | 20 | Driver pool setting for each resource. This is the database load limit. When the pool is exhausted, a request waits for a connection up to its `statement_timeout` plus 2 s, then returns `timeout`. |
 
 Rules:
 
@@ -420,6 +428,7 @@ Rules:
 - `sag.yaml` can change a default and a hard maximum for each resource. A value above the hard maximum in this table fails `sag config check`.
 - A request can set `max_rows`, `max_result_bytes`, and `timeout_seconds` up to the resource hard maximum. A higher value returns `invalid_argument`.
 - An adapter that needs another limit puts it in its operation input schema.
+- The executor rejects an operation text above 16 KiB (16384 bytes) with `invalid_argument` before `Parse`. No config key and no request value changes this limit.
 
 Value encoding: `NULL` is `null`. Integers inside ±(2^53 − 1) are JSON numbers. Other integers, decimals, and numerics are strings. Time values are RFC 3339 strings. Binary values are the string `<binary N bytes>`.
 
