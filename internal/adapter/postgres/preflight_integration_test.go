@@ -98,7 +98,7 @@ func TestPreflightRefusesUnknownCA(t *testing.T) {
 	if err == nil {
 		t.Fatal("Preflight passed with a CA that did not sign the server certificate")
 	}
-	assertPreflightCause(t, err, preflightTLSFailed)
+	assertPreflightCause(t, err, core.PreflightTLSFailed)
 }
 
 func assertPreflightCause(t *testing.T, err error, want string) {
@@ -148,7 +148,7 @@ func TestPreflightWrongPasswordOmitsPassword(t *testing.T) {
 	if strings.Contains(err.Error(), wrong) {
 		t.Fatalf("error text leaks the password: %q", err.Error())
 	}
-	assertPreflightCause(t, err, preflightConnectFailed)
+	assertPreflightCause(t, err, core.PreflightConnectFailed)
 }
 
 const preflightTestTimeout = time.Minute

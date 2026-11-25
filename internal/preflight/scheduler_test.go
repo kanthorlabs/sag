@@ -591,3 +591,11 @@ func TestPreflightStalledServerTimesOut(t *testing.T) {
 		t.Fatal("log holds the DSN password")
 	}
 }
+
+func TestCauseKeepsEachSharedCause(t *testing.T) {
+	for _, c := range core.PreflightCauses() {
+		if got := cause(&core.Error{Code: core.CodeResourceUnavailable, Message: c}); got != c {
+			t.Errorf("cause(%q) = %q; want the same shared cause", c, got)
+		}
+	}
+}

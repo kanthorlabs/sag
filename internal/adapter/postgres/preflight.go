@@ -52,7 +52,7 @@ var errCatalogValue = errors.New("unexpected catalog value")
 func (d *dialect) Preflight(ctx context.Context, conn sql.CatalogReader) (core.PreflightReport, error) {
 	report, err := d.preflight(ctx, conn)
 	if err != nil {
-		return core.PreflightReport{}, preflightError(ctx, preflightQueryFailed, err)
+		return core.PreflightReport{}, preflightError(ctx, core.PreflightQueryFailed, err)
 	}
 	report.Passed = !slices.ContainsFunc(report.Checks, func(c core.PreflightCheck) bool { return !c.Passed })
 	return report, nil

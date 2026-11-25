@@ -16,15 +16,6 @@ const RetryInterval = 60 * time.Second
 
 var closeGrace = 5 * time.Second
 
-const (
-	causeConnect = "preflight connect failed"
-	causeTLS     = "preflight TLS handshake failed"
-	causeQuery   = "preflight query failed"
-	causeTimeout = "preflight timed out"
-)
-
-var fixedCauses = []string{causeConnect, causeTLS, causeQuery, causeTimeout}
-
 type StatusSetter interface {
 	SetStatus(name string, s inventory.Status) error
 }
@@ -157,20 +148,20 @@ func (s *Scheduler) judge(name string, o outcome) inventory.Status {
 
 func cause(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return causeTimeout
+		return core.PreflightTimedOut
 	}
 	var ce *core.Error
 	if errors.As(err, &ce) {
 		switch {
-		case slices.Contains(fixedCauses, ce.Message):
+		case slices.Contains(core.PreflightCauses(), ce.Message):
 			return ce.Message
 		case ce.Code == core.CodeTimeout:
-			return causeTimeout
+			return core.PreflightTimedOut
 		case ce.Code == core.CodeResourceUnavailable:
-			return causeConnect
+			return core.PreflightConnectFailed
 		}
 	}
-	return causeQuery
+	return core.PreflightQueryFailed
 }
 
 func failedChecks(report core.PreflightReport) []string {

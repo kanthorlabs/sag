@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -146,16 +147,16 @@ func TestAcquireConnectFailureIsResourceUnavailable(t *testing.T) {
 	defer cancel()
 	_, err := p.Acquire(ctx)
 	var coreErr *core.Error
-	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeResourceUnavailable || coreErr.Message != preflightConnectFailed {
-		t.Fatalf("Acquire error = %v; want core.Error %s %q", err, core.CodeResourceUnavailable, preflightConnectFailed)
+	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeResourceUnavailable || coreErr.Message != core.PreflightConnectFailed {
+		t.Fatalf("Acquire error = %v; want core.Error %s %q", err, core.CodeResourceUnavailable, core.PreflightConnectFailed)
 	}
 }
 
 func TestAcquireErrorKeepsTLSClass(t *testing.T) {
 	err := acquireError(context.Background(), fmt.Errorf("connect: %w", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}))
 	var coreErr *core.Error
-	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeResourceUnavailable || coreErr.Message != preflightTLSFailed {
-		t.Fatalf("acquireError = %v; want core.Error %s %q", err, core.CodeResourceUnavailable, preflightTLSFailed)
+	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeResourceUnavailable || coreErr.Message != core.PreflightTLSFailed {
+		t.Fatalf("acquireError = %v; want core.Error %s %q", err, core.CodeResourceUnavailable, core.PreflightTLSFailed)
 	}
 }
 
@@ -167,5 +168,28 @@ func TestAcquireEndedContextIsTimeout(t *testing.T) {
 	var coreErr *core.Error
 	if !errors.As(err, &coreErr) || coreErr.Code != core.CodeTimeout {
 		t.Fatalf("Acquire error = %v; want core.Error %s", err, core.CodeTimeout)
+	}
+}
+
+func TestAdapterCausesKnownToScheduler(t *testing.T) {
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	live := context.Background()
+	tlsErr := fmt.Errorf("connect: %w", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}})
+	plain := errors.New("driver text")
+	errs := map[string]error{
+		"preflight timed out":    preflightError(expired, core.PreflightQueryFailed, plain),
+		"preflight tls":          preflightError(live, core.PreflightQueryFailed, tlsErr),
+		"preflight query":        preflightError(live, core.PreflightQueryFailed, plain),
+		"preflight connect":      preflightError(live, core.PreflightConnectFailed, plain),
+		"acquire connect":        acquireError(live, plain),
+		"acquire tls":            acquireError(live, tlsErr),
+		"dedicated session rule": acquireError(live, fmt.Errorf("session guard: %w", plain)),
+	}
+	for name, err := range errs {
+		var ce *core.Error
+		if !errors.As(err, &ce) || !slices.Contains(core.PreflightCauses(), ce.Message) {
+			t.Errorf("%s: error %v has a message that is not in core.PreflightCauses", name, err)
+		}
 	}
 }

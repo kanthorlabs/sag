@@ -22,13 +22,6 @@ import (
 
 const closeTimeout = 5 * time.Second
 
-const (
-	preflightConnectFailed = "preflight connect failed"
-	preflightTLSFailed     = "preflight TLS handshake failed"
-	preflightQueryFailed   = "preflight query failed"
-	preflightTimedOut      = "preflight timed out"
-)
-
 const acquireTimedOut = "timed out waiting for a connection"
 
 var errPoolSize = errors.New("pool_size is out of range")
@@ -98,9 +91,9 @@ func acquireError(ctx context.Context, err error) error {
 	case ctx.Err() != nil:
 		return &core.Error{Code: core.CodeTimeout, Message: acquireTimedOut, Cause: err}
 	case isTLSError(err):
-		return &core.Error{Code: core.CodeResourceUnavailable, Message: preflightTLSFailed, Cause: err}
+		return &core.Error{Code: core.CodeResourceUnavailable, Message: core.PreflightTLSFailed, Cause: err}
 	default:
-		return &core.Error{Code: core.CodeResourceUnavailable, Message: preflightConnectFailed, Cause: err}
+		return &core.Error{Code: core.CodeResourceUnavailable, Message: core.PreflightConnectFailed, Cause: err}
 	}
 }
 
@@ -119,15 +112,6 @@ func (c *conn) Query(ctx context.Context, text string, args ...any) (sql.Rows, e
 
 func (c *conn) Exec(ctx context.Context, text string) error {
 	return engineError(ctx, c.pc.PgConn().ExecParams(ctx, text, nil, nil, nil, nil).Read().Err)
-}
-
-func (c *conn) ExecParams(ctx context.Context, text string, args ...any) error {
-	r, err := c.pc.Query(ctx, text, args...)
-	if err != nil {
-		return engineError(ctx, err)
-	}
-	r.Close()
-	return engineError(ctx, r.Err())
 }
 
 func (c *conn) Release() {
@@ -269,9 +253,9 @@ func stateClass(state string) sql.Class {
 func preflightError(ctx context.Context, message string, err error) error {
 	switch {
 	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded):
-		message = preflightTimedOut
+		message = core.PreflightTimedOut
 	case isTLSError(err):
-		message = preflightTLSFailed
+		message = core.PreflightTLSFailed
 	}
 	return &core.Error{Code: core.CodeResourceUnavailable, Message: message, Cause: err}
 }

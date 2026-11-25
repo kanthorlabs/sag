@@ -153,12 +153,6 @@ func (c *fakeConn) Exec(ctx context.Context, text string) error {
 	return c.execErr[text]
 }
 
-func (c *fakeConn) ExecParams(ctx context.Context, text string, args ...any) error {
-	c.ev.add("conn:execParams:" + text)
-	c.texts = append(c.texts, text)
-	return c.execErr[text]
-}
-
 func (c *fakeConn) Query(ctx context.Context, text string, args ...any) (Rows, error) {
 	c.ev.add("conn:query:" + text)
 	c.texts = append(c.texts, text)

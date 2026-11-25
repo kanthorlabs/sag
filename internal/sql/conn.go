@@ -15,7 +15,6 @@ type Pool interface {
 type Conn interface {
 	CatalogReader
 	Exec(ctx context.Context, text string) error
-	ExecParams(ctx context.Context, text string, args ...any) error
 	Release()
 	Close() error
 }

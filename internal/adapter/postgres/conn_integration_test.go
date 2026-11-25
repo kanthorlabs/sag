@@ -157,8 +157,9 @@ func TestSessionGuardReadOnly(t *testing.T) {
 		t.Fatalf("default_transaction_read_only = %q; want on", got)
 	}
 	assertEngineError(t, c.Exec(ctx, "CREATE TABLE sg_probe (id int)"), sqlStateReadOnly, sql.ReadOnlyViolation)
-	assertEngineError(t, c.ExecParams(ctx, "INSERT INTO sg_rows VALUES ($1)", 2), sqlStateReadOnly, sql.ReadOnlyViolation)
-	_, err := queryValues(ctx, c, "DELETE FROM sg_rows RETURNING id")
+	_, err := queryValues(ctx, c, "INSERT INTO sg_rows VALUES ($1) RETURNING id", 2)
+	assertEngineError(t, err, sqlStateReadOnly, sql.ReadOnlyViolation)
+	_, err = queryValues(ctx, c, "DELETE FROM sg_rows RETURNING id")
 	assertEngineError(t, err, sqlStateReadOnly, sql.ReadOnlyViolation)
 
 	if got := fixtureString(t, pg, "SELECT count(*)::text FROM sg_rows"); got != "1" {
@@ -260,7 +261,6 @@ func TestExtendedProtocolOneStatement(t *testing.T) {
 	}
 	const multi = "SELECT 1; DELETE FROM ext_rows"
 	assertEngineError(t, c.Exec(ctx, multi), "42601", sql.Other)
-	assertEngineError(t, c.ExecParams(ctx, multi), "42601", sql.Other)
 	_, err := queryValues(ctx, c, multi)
 	assertEngineError(t, err, "42601", sql.Other)
 	if got := fixtureString(t, pg, "SELECT count(*)::text FROM ext_rows"); got != "1" {

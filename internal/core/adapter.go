@@ -69,6 +69,17 @@ type PreflightCheck struct {
 	Detail string
 }
 
+const (
+	PreflightConnectFailed = "preflight connect failed"
+	PreflightTLSFailed     = "preflight TLS handshake failed"
+	PreflightQueryFailed   = "preflight query failed"
+	PreflightTimedOut      = "preflight timed out"
+)
+
+func PreflightCauses() []string {
+	return []string{PreflightConnectFailed, PreflightTLSFailed, PreflightQueryFailed, PreflightTimedOut}
+}
+
 type PreflightReport struct {
 	Passed   bool
 	Checks   []PreflightCheck
