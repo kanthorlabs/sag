@@ -12,6 +12,8 @@ import (
 
 const serveUsage = "usage: sag serve"
 
+var runDaemon = daemon.Run
+
 func serveProduct(args []string, std IO) int {
 	return serve(args, std, nil)
 }
@@ -23,7 +25,7 @@ func serve(args []string, std IO, wrap func(sql.Dialect) sql.Dialect) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	err := daemon.Run(ctx, daemon.Options{
+	err := runDaemon(ctx, daemon.Options{
 		ConfigPath:  paths.Config,
 		SecretsDir:  paths.Secrets,
 		SecretUID:   paths.SecretUID,

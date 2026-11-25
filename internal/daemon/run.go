@@ -35,6 +35,8 @@ var (
 	errEndpoint    = errors.New("endpoint")
 )
 
+const passThroughWarning = "pass-through dialect active: test-only conformance build without C1, not a product artifact"
+
 func stageError(stage, err error) error {
 	return fmt.Errorf("%w: %w", stage, err)
 }
@@ -55,6 +57,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	log := slog.New(slog.NewJSONHandler(opts.Log, nil))
 	log.Info("sag starting", "version", opts.Version)
+	if opts.WrapDialect != nil {
+		log.Warn(passThroughWarning)
+	}
 
 	cfg, err := config.Load(opts.ConfigPath)
 	if err != nil {

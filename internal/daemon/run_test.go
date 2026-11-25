@@ -183,3 +183,17 @@ func TestWrapDialectNilInProduct(t *testing.T) {
 		t.Fatal("WrapDialect set on an adapter without sql.Opener: want the adapter Open path")
 	}
 }
+
+func TestWarnsWhenWrapDialectSet(t *testing.T) {
+	f := newFixture(t, make([]byte, 16))
+	_ = Run(context.Background(), f.opts)
+	if strings.Contains(f.log.String(), passThroughWarning) {
+		t.Fatalf("product start logs the pass-through warning:\n%s", f.log.String())
+	}
+	f = newFixture(t, make([]byte, 16))
+	f.opts.WrapDialect = func(d sql.Dialect) sql.Dialect { return d }
+	_ = Run(context.Background(), f.opts)
+	if !strings.Contains(f.log.String(), `"level":"WARN","msg":"`+passThroughWarning+`"`) {
+		t.Fatalf("start with WrapDialect lacks the warning:\n%s", f.log.String())
+	}
+}

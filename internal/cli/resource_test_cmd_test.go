@@ -96,13 +96,25 @@ func TestResourceTestPassedPrintsReport(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("exit = %d; want %d; stdout %q stderr %q", code, ExitOK, out, errOut)
 	}
-	for _, want := range []string{"check engine: pass: PostgreSQL 17.12", "check operator_names: pass: <> = ~~*", "warning: tls insecure-skip-verify: not verified", "result: resource main passed preflight"} {
+	for _, want := range []string{`check engine: pass: "PostgreSQL 17.12"`, `check operator_names: pass: "<> = ~~*"`, "warning: tls insecure-skip-verify: not verified", "result: resource main passed preflight"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout = %q; want %q", out, want)
 		}
 	}
 	if resultLines(out) != 1 || !res.closed {
 		t.Fatalf("stdout = %q, closed %v; want exactly one result line and a closed resource", out, res.closed)
+	}
+}
+
+func TestResourceTestEscapesDetail(t *testing.T) {
+	res := &preflightResource{report: core.PreflightReport{
+		Checks: []core.PreflightCheck{{Name: "risky_objects", Passed: false, Detail: "not approved: \x1b[2Kdblink"}},
+		Hint:   "resource main has risky objects \x1b[2Kdblink",
+	}}
+	withPreflightAdapter(t, &preflightAdapter{res: res})
+	_, out, _ := runResourceTest("main")
+	if strings.Contains(out, "\x1b") || !strings.Contains(out, `"not approved: \x1b[2Kdblink"`) || !strings.Contains(out, `hint: "resource main has risky objects \x1b[2Kdblink"`) {
+		t.Fatalf("stdout = %q; want escaped catalog text", out)
 	}
 }
 
@@ -117,7 +129,7 @@ func TestResourceTestRefusedPrintsHint(t *testing.T) {
 	if code != ExitFailure {
 		t.Fatalf("exit = %d; want %d", code, ExitFailure)
 	}
-	for _, want := range []string{"check risky_objects: FAIL: not approved: dblink", "hint: " + hint, "result: resource main refused by preflight"} {
+	for _, want := range []string{`check risky_objects: FAIL: "not approved: dblink"`, `hint: "` + hint + `"`, "result: resource main refused by preflight"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout = %q; want %q", out, want)
 		}

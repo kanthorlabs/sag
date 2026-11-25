@@ -56,13 +56,13 @@ func printReport(w io.Writer, report core.PreflightReport) {
 		if c.Passed {
 			status = checkPassed
 		}
-		fmt.Fprintf(w, "check %s: %s: %s\n", c.Name, status, c.Detail)
+		fmt.Fprintf(w, "check %s: %s: %q\n", c.Name, status, c.Detail)
 	}
 	for _, warning := range report.Warnings {
 		fmt.Fprintf(w, "warning: %s\n", warning)
 	}
 	if report.Hint != "" {
-		fmt.Fprintf(w, "hint: %s\n", report.Hint)
+		fmt.Fprintf(w, "hint: %q\n", report.Hint)
 	}
 }
 

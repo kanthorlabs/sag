@@ -16,6 +16,7 @@ import (
 const (
 	extensionApproveUsage = "usage: sag extension approve <resource>"
 	extensionRevokeUsage  = "usage: sag extension revoke <resource>"
+	revokedFormat         = "approval revoked for resource %s; the resource stays served until the next preflight re-check or a daemon restart\n"
 )
 
 var (
@@ -73,10 +74,10 @@ func extensionApprove(args []string, std IO) int {
 func printObjects(w io.Writer, name string, o approval.Objects, fingerprint string) {
 	fmt.Fprintf(w, "resource %s has risky objects:\n", name)
 	for _, e := range o.Extensions {
-		fmt.Fprintf(w, "  extension %s version %s schema %s\n", e.Name, e.Version, e.Schema)
+		fmt.Fprintf(w, "  extension %q version %q schema %q\n", e.Name, e.Version, e.Schema)
 	}
 	for _, l := range o.Languages {
-		fmt.Fprintf(w, "  language %s\n", l)
+		fmt.Fprintf(w, "  language %q\n", l)
 	}
 	fmt.Fprintf(w, "fingerprint %s\n", fingerprint)
 }
@@ -99,6 +100,6 @@ func extensionRevoke(args []string, std IO) int {
 	if err := store.Revoke(args[0]); err != nil {
 		return fail(std, err)
 	}
-	fmt.Fprintf(std.Out, "approval revoked for resource %s\n", args[0])
+	fmt.Fprintf(std.Out, revokedFormat, args[0])
 	return ExitOK
 }

@@ -73,8 +73,13 @@ func addSQLTools(srv *mcp.Server, calls caller) {
 }
 
 func callOperation(calls caller, capability, operation string) mcp.ToolHandler {
-	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
 		id := ulid.Make().String()
+		defer func() {
+			if recover() != nil {
+				result, err = errorResult(id, core.NewError(core.CodeInternal, messageInternal))
+			}
+		}()
 		input := json.RawMessage(req.Params.Arguments)
 		if len(input) == 0 {
 			input = json.RawMessage(`{}`)

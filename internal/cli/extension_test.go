@@ -229,6 +229,27 @@ func revokePaths(t *testing.T) string {
 	return filepath.Join(paths.State, approval.DirName)
 }
 
+func TestApproveEscapesCatalogText(t *testing.T) {
+	f := newApproveFixture(t)
+	spoof := "s\x1b[1A\x1b[2K\rresource ext has no risky objects"
+	f.inspector.objects = approval.Objects{
+		Extensions: []approval.Extension{{Name: "dblink", Version: "1.2\x1b[2K", Schema: spoof}},
+		Languages:  []string{"pl\rperlu"},
+	}
+	std, out, errOut := approveIO("ext\n", true, true)
+	if code := Run([]string{"extension", "approve", "ext"}, std); code != ExitOK {
+		t.Fatalf("exit = %d; want %d; stderr %q", code, ExitOK, errOut.String())
+	}
+	if strings.ContainsAny(out.String(), "\x1b\r") {
+		t.Fatalf("stdout holds a raw control byte: %q", out.String())
+	}
+	for _, want := range []string{`schema "s\x1b[1A\x1b[2K\rresource ext has no risky objects"`, `version "1.2\x1b[2K"`, `language "pl\rperlu"`} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("stdout = %q; want %q", out.String(), want)
+		}
+	}
+}
+
 func TestRevokeRemovesRecord(t *testing.T) {
 	dir := revokePaths(t)
 	store := approval.NewStore(dir, approvalTestKey)
@@ -243,8 +264,8 @@ func TestRevokeRemovesRecord(t *testing.T) {
 	if err := store.Verify("ext", fp); !errors.Is(err, approval.ErrNotApproved) {
 		t.Fatalf("Verify after revoke = %v; want ErrNotApproved", err)
 	}
-	if !strings.Contains(out.String(), "ext") {
-		t.Fatalf("stdout = %q; want the resource name", out.String())
+	if want := "approval revoked for resource ext; the resource stays served until the next preflight re-check or a daemon restart\n"; out.String() != want {
+		t.Fatalf("stdout = %q; want %q", out.String(), want)
 	}
 }
 

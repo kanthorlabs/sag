@@ -292,3 +292,21 @@ func TestSuccessResultShape(t *testing.T) {
 		t.Fatalf("empty result text = %s", text)
 	}
 }
+
+type panicCaller struct{}
+
+func (panicCaller) Execute(context.Context, pipeline.Request) (core.Result, error) {
+	panic("index out of range")
+}
+
+func TestToolPanicReturnsInternal(t *testing.T) {
+	session := sqlSession(t, panicCaller{}, "")
+	obj := errorObject(t, callTool(t, session, "sql_query", map[string]any{"resource": "main", "sql": "SELECT 1"}))
+	if obj["code"] != string(core.CodeInternal) || obj["message"] != "internal error" {
+		t.Fatalf("error = %v; want internal", obj)
+	}
+	obj = errorObject(t, callTool(t, session, "sql_query", map[string]any{"resource": "main", "sql": "SELECT 1"}))
+	if obj["code"] != string(core.CodeInternal) {
+		t.Fatalf("second call error = %v; want internal from a live server", obj)
+	}
+}
