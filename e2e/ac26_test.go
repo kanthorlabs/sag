@@ -169,7 +169,7 @@ func runAC26(t *testing.T, env harness.Env) {
 	sum := sha256.Sum256([]byte(ac26AllowSQL))
 	if allow.str("decision") != "allow" || allow.str("reason") != "" || allow.str("resource") != ac26Resource || allow.str("capability") != "sql" || allow.str("operation") != "query" ||
 		allow.str("sql") != ac26AllowSQL || allow.str("sql_sha256") != hex.EncodeToString(sum[:]) || len(allow.str("rendered_sha256")) != 64 ||
-		allow["rows"] != 1.0 || !ac26IsNumber(allow["bytes"]) || allow["truncated"] != false {
+		allow["rows"] != 1.0 || !ac26Positive(allow["bytes"]) || allow["truncated"] != false {
 		t.Fatalf("allow record = %v", allow)
 	}
 	deny := byID[denyID]
@@ -248,7 +248,7 @@ func ac26Unauthorized(ctx context.Context, t *testing.T, env harness.Env, header
 	}
 }
 
-func ac26IsNumber(v any) bool {
-	_, ok := v.(float64)
-	return ok
+func ac26Positive(v any) bool {
+	f, ok := v.(float64)
+	return ok && f > 0
 }
