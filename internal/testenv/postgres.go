@@ -86,6 +86,7 @@ func (r *Run) StartPostgres(ctx context.Context, major int) (*Postgres, error) {
 	r.addContainer(name)
 	err = podmanOK(ctx, nil,
 		"run", "--detach",
+		"--log-driver", "k8s-file",
 		"--name", name,
 		"--network", r.Network,
 		"--publish", fmt.Sprintf("127.0.0.1::%d", containerPort),
