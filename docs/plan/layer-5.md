@@ -57,7 +57,7 @@ A task is done only when its verify command passes and the task is merged (READM
 - Reads: `internal/mcpserver/types.go`, `internal/pipeline`, `internal/inventory`.
 - Depends on: `T5.0`.
 - Tests first: `schemas_test.go`: `TestAnnotations`, `TestDescriptionSentence`, `TestStructuredEqualsText`, `TestOutputMatchesSchema`; `errors_test.go`: `TestErrorCodesClosedSet`, `TestNotFoundForForeignResource`.
-- e2e: `AC29_Authorization`: agent `ac29a` gets `not_found` for resource `only-b`, and `list_resources` for `ac29a` excludes `only-b`. `AC30_ToolShapes`: the go-sdk client calls the 4 tools, and each `structuredContent` validates against the output schema.
+- e2e: `AC29_Authorization`: agent `ac29a` gets `not_found` for resource `only-b`, and `list_resources` for `ac29a` excludes `only-b`. `AC30_ToolShapes`: the go-sdk client calls the 4 tools, and each `structuredContent` is validated with jsonschema-go against the output schema.
 - ACs: AC29, AC30.
 - Verify: `go test -count=1 ./internal/mcpserver/...`. Expected: `ok`.
 - Done when: each tool result has `structuredContent` and the same JSON as text.
