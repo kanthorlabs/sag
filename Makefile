@@ -5,6 +5,8 @@ export GOTOOLCHAIN
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 IMAGE ?= localhost/sag:e2e
 CONFORMANCE_IMAGE ?= localhost/sag-conformance:e2e
+export SAG_E2E_IMAGE := $(IMAGE)
+export SAG_E2E_CONFORMANCE_IMAGE := $(CONFORMANCE_IMAGE)
 LAYER ?= 1
 PG ?= 17
 PGS ?= 14 17 19
