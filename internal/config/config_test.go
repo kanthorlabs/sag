@@ -397,3 +397,58 @@ func TestHardMaximumsExported(t *testing.T) {
 		t.Fatal("HardMaximums() returns shared state")
 	}
 }
+
+func withOrigins(list string) string {
+	return strings.Replace(minimal, "server:\n", "server:\n  allowed_origins: "+list+"\n", 1)
+}
+
+func TestAllowedOriginsAccepted(t *testing.T) {
+	want := []string{"https://agent.example", "http://localhost:3000", "http://127.0.0.1:8080", "https://[::1]:8443", "https://xn--bcher-kva.example"}
+	cfg := mustParse(t, withOrigins(`["`+strings.Join(want, `", "`)+`"]`))
+	if !slices.Equal(cfg.Server.AllowedOrigins, want) {
+		t.Fatalf("allowed_origins = %q; want %q", cfg.Server.AllowedOrigins, want)
+	}
+	if cfg := mustParse(t, withOrigins("[]")); len(cfg.Server.AllowedOrigins) != 0 {
+		t.Fatalf("allowed_origins = %q; want empty", cfg.Server.AllowedOrigins)
+	}
+}
+
+func TestAllowedOriginsRejected(t *testing.T) {
+	cases := map[string]string{
+		"trailing slash":    "https://agent.example/",
+		"path":              "https://agent.example/mcp",
+		"query":             "https://agent.example?a=1",
+		"fragment":          "https://agent.example#a",
+		"upper case host":   "https://Agent.example",
+		"upper case scheme": "HTTPS://agent.example",
+		"other scheme":      "ftp://agent.example",
+		"no scheme":         "agent.example",
+		"no host":           "https://",
+		"empty":             "",
+		"null":              "null",
+		"wildcard":          "*",
+		"user info":         "https://user@agent.example",
+		"empty port":        "https://agent.example:",
+		"port zero":         "https://agent.example:0",
+		"port too large":    "https://agent.example:65536",
+		"port leading zero": "https://agent.example:08443",
+		"default https":     "https://agent.example:443",
+		"default http":      "http://agent.example:80",
+		"space":             "https://agent.example ",
+	}
+	for name, origin := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(withOrigins(`["https://ok.example", "` + origin + `"]`)))
+			if err == nil {
+				t.Fatalf("Parse accepted %q", origin)
+			}
+			const want = "server.allowed_origins[1]: must be a serialized origin <scheme>://<host>[:<port>]"
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %q; want it to contain %q", err, want)
+			}
+			if origin != "" && strings.Contains(err.Error(), origin) {
+				t.Fatalf("error holds the entry: %v", err)
+			}
+		})
+	}
+}

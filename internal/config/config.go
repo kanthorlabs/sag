@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -224,7 +225,29 @@ func buildServer(raw rawServer, p *problems) Server {
 	if !validListen(s.Listen) {
 		p.add("server.listen", "must be <host>:<port>")
 	}
+	for i, origin := range s.AllowedOrigins {
+		if !validOrigin(origin) {
+			p.add(fmt.Sprintf("server.allowed_origins[%d]", i), "must be a serialized origin <scheme>://<host>[:<port>] with scheme http or https, a lowercase host, no default port, and no path")
+		}
+	}
 	return s
+}
+
+func validOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Hostname() == "" {
+		return false
+	}
+	if u.Scheme+"://"+u.Host != origin || u.Host != strings.ToLower(u.Host) || strings.HasSuffix(u.Host, ":") {
+		return false
+	}
+	port := u.Port()
+	if port == "" {
+		return true
+	}
+	n, err := strconv.Atoi(port)
+	defaultPort := u.Scheme == "http" && n == 80 || u.Scheme == "https" && n == 443
+	return err == nil && strconv.Itoa(n) == port && n >= 1 && n <= 65535 && !defaultPort
 }
 
 func validListen(addr string) bool {
