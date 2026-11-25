@@ -13,6 +13,9 @@ import (
 
 func rejectionMessage(reason string) string {
 	rule, _, _ := strings.Cut(reason, ":")
+	if closedDetailRules[rule] {
+		return rejectionPrefix + reason
+	}
 	return rejectionPrefix + rule
 }
 

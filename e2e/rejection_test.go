@@ -13,8 +13,13 @@ import (
 
 const rejectionPrefix = "statement rejected: "
 
+var closedDetailRules = map[string]bool{"statement_count": true, "statement": true, "node": true, "depth": true}
+
 func rejectionMessage(reason string) string {
 	rule, _, _ := strings.Cut(reason, ":")
+	if closedDetailRules[rule] {
+		return rejectionPrefix + reason
+	}
 	return rejectionPrefix + rule
 }
 

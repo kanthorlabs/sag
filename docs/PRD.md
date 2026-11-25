@@ -254,7 +254,7 @@ Fail-closed rules:
 - SAG rejects a text that holds a NUL byte.
 - SAG rejects a parse tree with more than 500 levels of nested messages. This check runs in `ValidateStatic`, before `Render`.
 - SAG rejects any AST node type that is not on the allowlist.
-- A rejection returns `query_rejected` with the message `statement rejected: <rule>` or `statement rejected: <Node.Field>`. The message does not hold the rejected name. The audit `reason` holds the full reason (section 10.2).
+- A rejection returns `query_rejected` with the message `statement rejected: <rule>`, `statement rejected: <rule>:<detail>`, or `statement rejected: <Node.Field>`. The message never holds a name that the agent writes. The audit `reason` holds the full reason (section 10.2).
 - For each allowed node type, the allowlist names each permitted field. A non-zero field outside the list rejects the statement.
 - The walk uses `protoreflect` over the pg_query parse tree. The walk does not use a visitor that can skip fields.
 
@@ -452,7 +452,7 @@ Value encoding: `NULL` is `null`. Integers inside ±(2^53 − 1) are JSON number
 ### 10.2 Secret scrub and errors
 
 - An error message to the agent holds fixed text only. It never holds agent text or driver text.
-- A rejected statement returns `statement rejected: <rule>` or `statement rejected: <Node.Field>`, without the rejected name. The full reason with the name goes to the audit `reason` only.
+- A rejected statement returns `statement rejected: <rule>`, `statement rejected: <rule>:<detail>`, or `statement rejected: <Node.Field>`. A detail comes from a closed set and never from agent text: the node type for `statement` and `node` (`statement:InsertStmt`), the limit for `depth` (`depth:500`), and the count for `statement_count` (`statement_count:2`). Names that the agent writes stay out of the message: relations, functions, operators, schemas, EXPLAIN options, and field names. The full reason with the name goes to the audit `reason` only.
 - Before SAG logs a line or appends an audit record, SAG removes every exact occurrence of each loaded secret value and of its password part. The scrub applies to log text, error causes, and the audit fields `sql` and `reason`. The scrub does not apply to the agent message.
 - SAG never puts a DSN string into an error or a log line.
 - For a connect error, the agent receives the code `resource_unavailable`, a fixed message, and the `request_id`. The scrubbed driver error goes to the daemon log only.

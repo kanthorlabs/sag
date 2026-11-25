@@ -127,8 +127,8 @@ func runProductC1ServesReadsOnly(t *testing.T, env harness.Env) {
 	})
 	t.Run("INSERT rejected by C1", func(t *testing.T) {
 		got := productQuery(ctx, t, env, productInsert)
-		if got.Code != "query_rejected" || got.Message != "statement rejected: statement" {
-			t.Fatalf("sql_query %q = %+v; want query_rejected \"statement rejected: statement\"", productInsert, got)
+		if got.Code != "query_rejected" || got.Message != "statement rejected: statement:InsertStmt" {
+			t.Fatalf("sql_query %q = %+v; want query_rejected \"statement rejected: statement:InsertStmt\"", productInsert, got)
 		}
 		assertAuditReasons(ctx, t, env, harness.ContainerSAG, map[string]string{got.RequestID: "statement:InsertStmt"})
 	})
@@ -173,8 +173,8 @@ func runProductSQLSizeLimit(t *testing.T, env harness.Env) {
 	}
 	deep := "SELECT ARRAY" + strings.Repeat("[", 4700) + "1" + strings.Repeat("]", 4700)
 	got := productQuery(ctx, t, env, deep)
-	if got.Code != "query_rejected" || got.Message != "statement rejected: depth" {
-		t.Fatalf("sql_query of %d nested arrays = %+v; want query_rejected \"statement rejected: depth\"", 4700, got)
+	if got.Code != "query_rejected" || got.Message != "statement rejected: depth:500" {
+		t.Fatalf("sql_query of %d nested arrays = %+v; want query_rejected \"statement rejected: depth:500\"", 4700, got)
 	}
 	assertAuditReasons(ctx, t, env, harness.ContainerSAG, map[string]string{got.RequestID: "depth:500"})
 	for _, text := range []string{atLimit + "1", chain(22000)} {

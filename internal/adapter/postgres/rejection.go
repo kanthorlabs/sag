@@ -34,11 +34,18 @@ func (r *Rejection) Reason() string {
 	return r.Node + "." + r.Field
 }
 
+var closedDetailRules = map[string]bool{
+	ruleStatementCount: true,
+	ruleStatement:      true,
+	ruleNode:           true,
+	ruleDepth:          true,
+}
+
 func (r *Rejection) Message() string {
-	if r.Rule != "" {
+	if r.Rule != "" && !closedDetailRules[r.Rule] {
 		return rejectionPrefix + r.Rule
 	}
-	return rejectionPrefix + r.Node + "." + r.Field
+	return rejectionPrefix + r.Reason()
 }
 
 func (r *Rejection) Error() string {

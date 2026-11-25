@@ -62,6 +62,10 @@ func TestRejectionIsNotSecretOracle(t *testing.T) {
 		`SELECT * FROM x."%s".y.z`,
 		`SELECT 1 OPERATOR("%s".+) 1`,
 		`EXPLAIN ("%s") SELECT 1`,
+		`INSERT INTO "%s" VALUES (1)`,
+		`SELECT 1; SELECT '%s'`,
+		`SELECT * FROM t AS "%s" TABLESAMPLE SYSTEM (50)`,
+		`SELECT * FROM "%s" FOR UPDATE`,
 	} {
 		withSecret := ask(strings.Replace(shape, "%s", loaded, 1))
 		withOther := ask(strings.Replace(shape, "%s", other, 1))
