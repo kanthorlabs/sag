@@ -3,9 +3,13 @@ package bootstrap
 import (
 	"context"
 
+	"github.com/kanthorlabs/sag/internal/deps"
 	"github.com/kanthorlabs/sag/internal/hoststate"
+	"github.com/kanthorlabs/sag/internal/pins"
+	"github.com/kanthorlabs/sag/internal/portcheck"
 	"github.com/kanthorlabs/sag/internal/prompt"
 	"github.com/kanthorlabs/sag/internal/stepline"
+	"github.com/kanthorlabs/sag/internal/tailscale"
 )
 
 type Flags struct {
@@ -18,18 +22,22 @@ type Flags struct {
 }
 
 type State struct {
-	Flags      Flags
-	Paths      hoststate.Paths
-	Answers    hoststate.Answers
-	Lock       *hoststate.Lock
-	Asker      prompt.Asker
-	Out        stepline.Writer
-	PodmanPath string
-	SAGPath    string
-	UID        string
-	Home       string
-	CfgCreated bool
-	Changed    bool
+	Flags          Flags
+	Paths          hoststate.Paths
+	Answers        hoststate.Answers
+	Lock           *hoststate.Lock
+	Asker          prompt.Asker
+	Out            stepline.Writer
+	PodmanPath     string
+	SAGPath        string
+	UID            string
+	Home           string
+	CfgCreated     bool
+	Changed        bool
+	Pins           []pins.Item
+	DepPlan        deps.Plan
+	TailscaleState tailscale.State
+	PortHolder     portcheck.Holder
 }
 
 type Step struct {

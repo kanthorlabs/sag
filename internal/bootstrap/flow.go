@@ -40,6 +40,10 @@ type Deps struct {
 	SaveAnswers  func(hoststate.Paths, hoststate.Answers) error
 	FindPodman   func(stored string) (string, error)
 
+	PlanDeps      func(context.Context, *State) error
+	PlanTailscale func(context.Context, *State) error
+	PlanPort      func(context.Context, *State) error
+
 	ResolveYesNo func(prompt.Asker, string, string, string, string) (string, error)
 	Asker        prompt.Asker
 
@@ -84,6 +88,10 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 		LoadAnswers:  hoststate.LoadAnswers,
 		SaveAnswers:  hoststate.SaveAnswers,
 		FindPodman:   hoststate.FindPodman,
+
+		PlanDeps:      defaultPlanDeps(hoststate.FindPodman),
+		PlanTailscale: func(_ context.Context, _ *State) error { return nil },
+		PlanPort:      func(_ context.Context, _ *State) error { return nil },
 
 		ResolveYesNo: prompt.ResolveYesNo,
 		Asker:        asker,
@@ -212,10 +220,6 @@ func (d Deps) stepPlatformCheck(_ context.Context, s *State) error {
 	return nil
 }
 
-func (d Deps) stepSelectPins(_ context.Context, _ *State) error {
-	return nil
-}
-
 func (d Deps) stepPlan(ctx context.Context, s *State) error {
 	paths, err := d.ResolvePaths()
 	if err != nil {
@@ -241,10 +245,6 @@ func (d Deps) stepLock(_ context.Context, s *State) error {
 
 func (d Deps) stepPlanAgain(ctx context.Context, s *State) error {
 	return d.planOnce(ctx, s)
-}
-
-func (d Deps) stepDeps(_ context.Context, _ *State) error {
-	return nil
 }
 
 func (d Deps) stepImage(ctx context.Context, s *State) error {
@@ -324,10 +324,6 @@ func (d Deps) stepServiceStart(ctx context.Context, s *State) error {
 	return nil
 }
 
-func (d Deps) stepTailscale(_ context.Context, _ *State) error {
-	return nil
-}
-
 func (d Deps) stepAgentSetup(_ context.Context, _ *State) error {
 	return nil
 }
@@ -338,18 +334,22 @@ func (d Deps) stepPrintEndpoint(_ context.Context, s *State) error {
 	return nil
 }
 
-func (d Deps) planOnce(_ context.Context, s *State) error {
+func (d Deps) planOnce(ctx context.Context, s *State) error {
 	fresh, err := d.LoadAnswers(s.Paths)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 
-	if s.PodmanPath == "" {
-		p, err := d.FindPodman(fresh.PodmanPath)
-		if err != nil {
-			return err
-		}
-		s.PodmanPath = p
+	s.TailscaleState.Address = fresh.TailscaleIP
+
+	if err := d.PlanDeps(ctx, s); err != nil {
+		return err
+	}
+	if err := d.PlanTailscale(ctx, s); err != nil {
+		return err
+	}
+	if err := d.PlanPort(ctx, s); err != nil {
+		return err
 	}
 
 	storedAutostart := s.Answers.Autostart
@@ -366,6 +366,7 @@ func (d Deps) planOnce(_ context.Context, s *State) error {
 		merged := fresh
 		merged.Autostart = s.Answers.Autostart
 		merged.PodmanPath = s.PodmanPath
+		merged.TailscaleIP = s.TailscaleState.Address
 		if err := d.SaveAnswers(s.Paths, merged); err != nil {
 			return err
 		}
