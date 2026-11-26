@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
@@ -29,7 +30,10 @@ func testDXAC04BootstrapNoTerminal(t *testing.T, ctx context.Context, groupDir, 
 	}
 	env = append(env, "PATH="+dxh.TestPATH(binDir))
 
-	cmd := exec.CommandContext(ctx, sagBin, "bootstrap")
+	testCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(testCtx, sagBin, "bootstrap")
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
@@ -62,5 +66,16 @@ func testDXAC04BootstrapNoTerminal(t *testing.T, ctx context.Context, groupDir, 
 
 	if _, statErr := os.Stat(cfg); statErr == nil {
 		t.Fatalf("DXAC04: cfg dir %s exists after exit 3; want absent", cfg)
+	}
+
+	r := dxh.NewRunner()
+	for _, name := range []string{"sag-master-key", "sag-tls-cert", "sag-tls-key"} {
+		out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "name=^"+name+"$", "--format", "{{.Name}}")
+		if err != nil {
+			t.Fatalf("DXAC04: podman secret ls %s: %v", name, err)
+		}
+		if strings.TrimSpace(string(out)) != "" {
+			t.Fatalf("DXAC04: secret %s exists after exit 3; want absent", name)
+		}
 	}
 }

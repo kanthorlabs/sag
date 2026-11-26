@@ -121,16 +121,10 @@ func testHarnessSkeleton(t *testing.T, ctx context.Context, groupDir, binDir str
 }
 
 func cfgDir(home string) string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "sag")
-	}
 	return filepath.Join(home, ".config", "sag")
 }
 
 func configBaseDir(home string) string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return xdg
-	}
 	return filepath.Join(home, ".config")
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/deploy"
+	"github.com/kanthorlabs/sag/internal/secret"
 )
 
 var oidNameConstraints = asn1.ObjectIdentifier{2, 5, 29, 30}
@@ -71,14 +72,24 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 
 	home := os.Getenv("HOME")
 	cfgDir := dxh.CfgDir(home)
-	sagCfg, err := config.Load(filepath.Join(cfgDir, "sag.yaml"))
+	_, err = config.Load(filepath.Join(cfgDir, "sag.yaml"))
 	if err != nil {
 		t.Fatalf("load <cfg>/sag.yaml: %v", err)
 	}
-	wantSecrets := len(deploy.SecretMounts(sagCfg))
+
+	wantSecretNames := []string{secret.MasterKeyName, "sag-tls-cert", "sag-tls-key"}
 	gotSecrets := len(c.Config.Secrets)
-	if gotSecrets != wantSecrets {
-		t.Fatalf("secret count = %d; want %d", gotSecrets, wantSecrets)
+	if gotSecrets != len(wantSecretNames) {
+		t.Fatalf("secret count = %d; want %d", gotSecrets, len(wantSecretNames))
+	}
+	secretSet := map[string]bool{}
+	for _, s := range c.Config.Secrets {
+		secretSet[s.Name] = true
+	}
+	for _, name := range wantSecretNames {
+		if !secretSet[name] {
+			t.Errorf("secret %q not found in container inspect; got %v", name, c.Config.Secrets)
+		}
 	}
 
 	root := repoRoot(t)

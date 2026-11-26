@@ -27,7 +27,7 @@ func DXAC28_ServiceStopStart(t *testing.T, ctx context.Context) {
 		t.Fatal("container still running after service stop")
 	}
 
-	if !healthzFails(ctx, caPath) {
+	if !healthzFailsOnce(ctx, caPath) {
 		t.Fatal("/healthz returned 200 after service stop")
 	}
 

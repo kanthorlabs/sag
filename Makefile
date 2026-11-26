@@ -75,13 +75,14 @@ e2e-devx:
 		rm -rf "$(DEVX_LOCK)"; \
 	fi; \
 	until mkdir "$(DEVX_LOCK)" 2>/dev/null; do echo "Waiting for devx-e2e lock $(DEVX_LOCK)..."; sleep 30; done; \
-	echo "$$PPID $(CURDIR)" > "$(DEVX_LOCK)/owner"; \
-	trap 'rm -rf $(DEVX_LOCK); exit 130' INT; trap 'rm -rf $(DEVX_LOCK)' EXIT TERM; \
+	token=$$(openssl rand -hex 16); \
+	echo "$$PPID $$token" > "$(DEVX_LOCK)/owner"; \
+	trap 'rm -rf "$(DEVX_LOCK)"; exit 130' INT; trap 'rm -rf "$(DEVX_LOCK)"' EXIT TERM; \
 	$(MAKE) build build-devxtest || exit 1; \
 	$(call build_image,$(DEVX_IMAGE),deploy/Containerfile,.,sag.devx-e2e=1) || exit 1; \
 	mkdir -p $(REPORT)/devx-$(SUITE); \
 	git rev-parse HEAD > $(REPORT)/devx-$(SUITE)/commit; \
-	SAG_TEST_IMAGE=$(DEVX_IMAGE) $(GO) test -tags devxe2e -json -count=1 -timeout 90m \
+	SAG_TEST_IMAGE=$(DEVX_IMAGE) DEVX_RUN_TOKEN=$$token $(GO) test -tags devxe2e -json -count=1 -timeout 90m \
 		-run '^TestDevx$(SUITE)$$/.*$(if $(RUN),/($(RUN)))' \
 		./e2e/devx/ > $(REPORT)/devx-$(SUITE)/events.json; \
 	$(GO) run ./e2e/cmd/acreport -suite devx -layer $(LAYER) -phase $(PHASE) \
