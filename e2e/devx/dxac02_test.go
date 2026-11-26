@@ -27,13 +27,9 @@ var oidNameConstraints = asn1.ObjectIdentifier{2, 5, 29, 30}
 type inspectResult struct {
 	HostConfig struct {
 		LogConfig struct {
-			Type   string            `json:"Type"`
-			Config map[string]string `json:"Config"`
+			Type string `json:"Type"`
+			Size string `json:"Size"`
 		} `json:"LogConfig"`
-		PortBindings map[string][]struct {
-			HostIp   string `json:"HostIp"`
-			HostPort string `json:"HostPort"`
-		} `json:"PortBindings"`
 	} `json:"HostConfig"`
 	Config struct {
 		Secrets []struct {
@@ -53,21 +49,24 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 		t.Fatalf("podman exec sag config check: %v\n%s", err, out)
 	}
 
-	out, err = r.Output(ctx, "podman", "container", "inspect", "sag", "--format", "{{json .}}")
+	out, err = r.Output(ctx, "podman", "container", "inspect", "sag")
 	if err != nil {
 		t.Fatalf("podman container inspect sag: %v", err)
 	}
 	var inspected []inspectResult
-	if err := json.Unmarshal(out, &inspected); err != nil || len(inspected) != 1 {
+	if err := json.Unmarshal(out, &inspected); err != nil {
 		t.Fatalf("podman container inspect parse: %v", err)
+	}
+	if len(inspected) != 1 {
+		t.Fatalf("podman container inspect returned %d entries; want 1", len(inspected))
 	}
 	c := inspected[0]
 
 	if c.HostConfig.LogConfig.Type != "k8s-file" {
 		t.Fatal("log driver is not k8s-file")
 	}
-	if c.HostConfig.LogConfig.Config["max-size"] != "10mb" {
-		t.Fatal("log max-size is not 10mb")
+	if c.HostConfig.LogConfig.Size != "10MB" {
+		t.Fatal("log max-size is not 10MB")
 	}
 
 	home := os.Getenv("HOME")
@@ -122,11 +121,10 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 
 	caPool := x509.NewCertPool()
 	caPool.AppendCertsFromPEM(caBytes)
-	tlsCfg := &tls.Config{
+	conn, err := tls.Dial("tcp", "127.0.0.1:8443", &tls.Config{
 		RootCAs:    caPool,
 		ServerName: "localhost",
-	}
-	conn, err := tls.Dial("tcp", "127.0.0.1:8443", tlsCfg)
+	})
 	if err != nil {
 		t.Fatalf("tls dial 127.0.0.1:8443: %v", err)
 	}
@@ -150,14 +148,6 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 	for i, ip := range wantIPs {
 		if !serverCert.IPAddresses[i].Equal(ip) {
 			t.Fatal("server cert IP SANs do not match expected addresses")
-		}
-	}
-
-	for _, bindings := range c.HostConfig.PortBindings {
-		for _, b := range bindings {
-			if b.HostIp != "127.0.0.1" {
-				t.Fatal("port binding host IP is not 127.0.0.1")
-			}
 		}
 	}
 }

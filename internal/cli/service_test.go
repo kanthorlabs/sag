@@ -10,31 +10,33 @@ import (
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
-func withFakeCfg(cfg service.Config) (restore func()) {
+func withFakeCfg(t *testing.T, cfg service.Config) {
+	t.Helper()
 	released := false
 	oldBuild := buildCfgFn
 	buildCfgFn = func() (service.Config, func(), error) {
 		return cfg, func() { released = true }, nil
 	}
-	return func() {
+	t.Cleanup(func() {
 		buildCfgFn = oldBuild
 		if !released {
-			panic("buildCfgFn release was not called")
+			t.Error("buildCfgFn release was not called")
 		}
-	}
+	})
 }
 
-func withFakeCfgErr(err error) (restore func()) {
+func withFakeCfgErr(t *testing.T, err error) {
+	t.Helper()
 	oldBuild := buildCfgFn
 	buildCfgFn = func() (service.Config, func(), error) {
 		return service.Config{}, noop, err
 	}
-	return func() { buildCfgFn = oldBuild }
+	t.Cleanup(func() { buildCfgFn = oldBuild })
 }
 
 func TestServiceStartSucceeds(t *testing.T) {
 	cfg := service.Config{Image: "localhost/sag:test"}
-	restore := withFakeCfg(cfg)
+	withFakeCfg(t, cfg)
 
 	oldStart := startFn
 	var gotCfg service.Config
@@ -42,22 +44,20 @@ func TestServiceStartSucceeds(t *testing.T) {
 		gotCfg = c
 		return nil
 	}
-	defer func() { startFn = oldStart }()
+	t.Cleanup(func() { startFn = oldStart })
 
 	std, _ := testIO()
 	std.Mode = ModeHost
 	if code := serviceStart(nil, std); code != ExitOK {
 		t.Fatalf("serviceStart = %d; want 0", code)
 	}
-	restore()
 	if gotCfg.Image != "localhost/sag:test" {
 		t.Fatalf("startFn received wrong image %q", gotCfg.Image)
 	}
 }
 
 func TestServiceStartFailsOnBuildError(t *testing.T) {
-	restore := withFakeCfgErr(fmt.Errorf("build failed"))
-	defer restore()
+	withFakeCfgErr(t, fmt.Errorf("build failed"))
 
 	std, errOut := testIO()
 	std.Mode = ModeHost
@@ -70,19 +70,18 @@ func TestServiceStartFailsOnBuildError(t *testing.T) {
 }
 
 func TestServiceStartReleasesOnError(t *testing.T) {
-	cfg := service.Config{}
 	released := false
 	oldBuild := buildCfgFn
 	buildCfgFn = func() (service.Config, func(), error) {
-		return cfg, func() { released = true }, nil
+		return service.Config{}, func() { released = true }, nil
 	}
-	defer func() { buildCfgFn = oldBuild }()
+	t.Cleanup(func() { buildCfgFn = oldBuild })
 
 	oldStart := startFn
 	startFn = func(_ context.Context, _ service.Config, _ stepline.Writer) error {
 		return fmt.Errorf("start failed")
 	}
-	defer func() { startFn = oldStart }()
+	t.Cleanup(func() { startFn = oldStart })
 
 	std, _ := testIO()
 	std.Mode = ModeHost
@@ -97,7 +96,7 @@ func TestServiceStartReleasesOnError(t *testing.T) {
 
 func TestServiceStopSucceeds(t *testing.T) {
 	cfg := service.Config{Image: "localhost/sag:test"}
-	restore := withFakeCfg(cfg)
+	withFakeCfg(t, cfg)
 
 	oldStop := stopFn
 	var gotCfg service.Config
@@ -105,22 +104,20 @@ func TestServiceStopSucceeds(t *testing.T) {
 		gotCfg = c
 		return nil
 	}
-	defer func() { stopFn = oldStop }()
+	t.Cleanup(func() { stopFn = oldStop })
 
 	std, _ := testIO()
 	std.Mode = ModeHost
 	if code := serviceStop(nil, std); code != ExitOK {
 		t.Fatalf("serviceStop = %d; want 0", code)
 	}
-	restore()
 	if gotCfg.Image != "localhost/sag:test" {
 		t.Fatalf("stopFn received wrong image %q", gotCfg.Image)
 	}
 }
 
 func TestServiceStopFailsOnBuildError(t *testing.T) {
-	restore := withFakeCfgErr(fmt.Errorf("build failed"))
-	defer restore()
+	withFakeCfgErr(t, fmt.Errorf("build failed"))
 
 	std, errOut := testIO()
 	std.Mode = ModeHost
@@ -133,19 +130,18 @@ func TestServiceStopFailsOnBuildError(t *testing.T) {
 }
 
 func TestServiceStopReleasesOnError(t *testing.T) {
-	cfg := service.Config{}
 	released := false
 	oldBuild := buildCfgFn
 	buildCfgFn = func() (service.Config, func(), error) {
-		return cfg, func() { released = true }, nil
+		return service.Config{}, func() { released = true }, nil
 	}
-	defer func() { buildCfgFn = oldBuild }()
+	t.Cleanup(func() { buildCfgFn = oldBuild })
 
 	oldStop := stopFn
 	stopFn = func(_ context.Context, _ service.Config, _ stepline.Writer) error {
 		return fmt.Errorf("stop failed")
 	}
-	defer func() { stopFn = oldStop }()
+	t.Cleanup(func() { stopFn = oldStop })
 
 	std, _ := testIO()
 	std.Mode = ModeHost
