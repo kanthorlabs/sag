@@ -16,51 +16,46 @@ import (
 )
 
 var (
-	serviceStartImpl = defaultServiceStart
-	serviceStopImpl  = defaultServiceStop
+	buildCfgFn = defaultBuildCfg
+	startFn    = service.Start
+	stopFn     = service.Stop
 )
 
-func serviceStart(args []string, std IO) int {
-	return serviceStartImpl(args, std)
-}
-
-func serviceStop(args []string, std IO) int {
-	return serviceStopImpl(args, std)
-}
-
-func defaultServiceStart(args []string, std IO) int {
-	cfg, err := buildServiceConfig()
+func serviceStart(_ []string, std IO) int {
+	cfg, release, err := buildCfgFn()
 	if err != nil {
 		return fail(std, err)
 	}
+	defer release()
 	out := stepline.New(std.Out)
-	if err := service.Start(context.Background(), cfg, out); err != nil {
+	if err := startFn(context.Background(), cfg, out); err != nil {
 		return fail(std, err)
 	}
 	return ExitOK
 }
 
-func defaultServiceStop(args []string, std IO) int {
-	cfg, err := buildServiceConfig()
+func serviceStop(_ []string, std IO) int {
+	cfg, release, err := buildCfgFn()
 	if err != nil {
 		return fail(std, err)
 	}
+	defer release()
 	out := stepline.New(std.Out)
-	if err := service.Stop(context.Background(), cfg, out); err != nil {
+	if err := stopFn(context.Background(), cfg, out); err != nil {
 		return fail(std, err)
 	}
 	return ExitOK
 }
 
-func buildServiceConfig() (service.Config, error) {
+func defaultBuildCfg() (service.Config, func(), error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return service.Config{}, fmt.Errorf("home dir: %w", err)
+		return service.Config{}, noop, fmt.Errorf("home dir: %w", err)
 	}
 	cfgDir := resolveCfgDir(home)
 	binPath, err := os.Executable()
 	if err != nil {
-		return service.Config{}, fmt.Errorf("executable: %w", err)
+		return service.Config{}, noop, fmt.Errorf("executable: %w", err)
 	}
 	image := testhook.Image()
 	if image == "" {
@@ -68,17 +63,20 @@ func buildServiceConfig() (service.Config, error) {
 	}
 	podmanPath, err := findPodmanPath()
 	if err != nil {
-		return service.Config{}, err
+		return service.Config{}, noop, err
 	}
-	return service.Config{
+	cfg := service.Config{
 		Podman:  podman.Runner{Path: podmanPath},
 		CfgDir:  cfgDir,
 		UID:     strconv.Itoa(os.Getuid()),
 		Home:    home,
 		BinPath: binPath,
 		Image:   image,
-	}, nil
+	}
+	return cfg, noop, nil
 }
+
+func noop() {}
 
 func resolveCfgDir(home string) string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {

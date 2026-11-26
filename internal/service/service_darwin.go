@@ -31,16 +31,31 @@ const (
 type deps struct {
 	launchctlRun func(ctx context.Context, args ...string) ([]byte, error)
 	healthzCheck func(ctx context.Context, caPath string) error
+	logTail      func(ctx context.Context, n int) ([]byte, error)
 	interval     time.Duration
 	timeout      time.Duration
 }
 
-func defaultDeps() deps {
+func defaultDeps(cfg Config) deps {
 	return deps{
 		launchctlRun: realLaunchctl,
 		healthzCheck: realHealthzCheck,
+		logTail:      makeLogTail(cfg),
 		interval:     time.Second,
 		timeout:      healthzDeadline,
+	}
+}
+
+func makeLogTail(cfg Config) func(ctx context.Context, n int) ([]byte, error) {
+	runner, ok := cfg.Podman.(podman.Runner)
+	if ok {
+		return func(ctx context.Context, n int) ([]byte, error) {
+			cmd := exec.CommandContext(ctx, runner.Path, "logs", "--tail", fmt.Sprintf("%d", n), "sag")
+			return cmd.CombinedOutput()
+		}
+	}
+	return func(ctx context.Context, n int) ([]byte, error) {
+		return cfg.Podman.Run(ctx, nil, "logs", "--tail", fmt.Sprintf("%d", n), "sag")
 	}
 }
 
@@ -101,7 +116,7 @@ type machineInfo struct {
 }
 
 func Start(ctx context.Context, cfg Config, out stepline.Writer) error {
-	return start(ctx, cfg, defaultDeps(), out)
+	return start(ctx, cfg, defaultDeps(cfg), out)
 }
 
 func start(ctx context.Context, cfg Config, d deps, out stepline.Writer) error {
@@ -132,7 +147,7 @@ func start(ctx context.Context, cfg Config, d deps, out stepline.Writer) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			tail, _ := cfg.Podman.Run(ctx, nil, "logs", "--tail", fmt.Sprintf("%d", logTailLines), "sag")
+			tail, _ := d.logTail(ctx, logTailLines)
 			return fmt.Errorf("sag health check timed out:\n%s", strings.TrimSpace(string(tail)))
 		}
 		select {
@@ -187,7 +202,7 @@ func Running(ctx context.Context, cfg Config) (bool, error) {
 }
 
 func ApplyAutostart(ctx context.Context, cfg Config, enable bool, out stepline.Writer) (changed bool, err error) {
-	return applyAutostart(ctx, cfg, enable, defaultDeps(), out)
+	return applyAutostart(ctx, cfg, enable, defaultDeps(cfg), out)
 }
 
 func applyAutostart(ctx context.Context, cfg Config, enable bool, d deps, out stepline.Writer) (bool, error) {
@@ -196,6 +211,10 @@ func applyAutostart(ctx context.Context, cfg Config, enable bool, d deps, out st
 	target := "gui/" + cfg.UID + "/" + launchAgentLabel
 
 	if !enable {
+		if _, err := os.Stat(plistPath); os.IsNotExist(err) {
+			out.Line(stepline.StatusOK, "autostart", "")
+			return false, nil
+		}
 		_ = bootout(ctx, d, target)
 		if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
 			return false, err

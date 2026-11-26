@@ -51,10 +51,6 @@ func (f *fakeRunner) Run(_ context.Context, _ io.Reader, args ...string) ([]byte
 	return f.defaults, nil
 }
 
-func writerOf(sb *strings.Builder) stepline.Writer {
-	return stepline.New(sb)
-}
-
 func (f *fakeRunner) called(substr string) bool {
 	for _, c := range f.calls {
 		if strings.Contains(c, substr) {
@@ -62,6 +58,10 @@ func (f *fakeRunner) called(substr string) bool {
 		}
 	}
 	return false
+}
+
+func writerOf(sb *strings.Builder) stepline.Writer {
+	return stepline.New(sb)
 }
 
 func writeSAGYAML(t *testing.T, dir string) {
@@ -75,6 +75,7 @@ func testDeps(healthzErr error) deps {
 	return deps{
 		launchctlRun: func(_ context.Context, _ ...string) ([]byte, error) { return nil, nil },
 		healthzCheck: func(_ context.Context, _ string) error { return healthzErr },
+		logTail:      func(_ context.Context, _ int) ([]byte, error) { return nil, nil },
 		interval:     time.Millisecond,
 		timeout:      50 * time.Millisecond,
 	}
@@ -87,23 +88,29 @@ func TestMacStartsStoppedMachineOnly(t *testing.T) {
 	t.Run("running machine does not start", func(t *testing.T) {
 		r := newFake()
 		r.outputs["machine list --format json"] = []byte(`[{"Name":"podman-machine-default","Running":true}]`)
-		r.outputs["run -d --replace --name sag"] = nil
 
 		cfg := Config{
 			Podman: r, CfgDir: dir, UID: "501", Home: dir, BinPath: "/usr/local/bin/sag",
 			Image: "localhost/sag:test",
 		}
 		d := testDeps(nil)
-		d.timeout = time.Millisecond
 		d.healthzCheck = func(_ context.Context, _ string) error { return nil }
 
 		var out strings.Builder
-		w := writerOf(&out)
-		if err := start(context.Background(), cfg, d, w); err != nil {
+		if err := start(context.Background(), cfg, d, writerOf(&out)); err != nil {
 			t.Fatal(err)
 		}
 		if r.called("machine start") {
 			t.Fatal("machine start called on running machine")
+		}
+		if !r.called("--replace") {
+			t.Fatal("podman run did not include --replace")
+		}
+		if !r.called("--restart=on-failure") {
+			t.Fatal("podman run did not include --restart=on-failure")
+		}
+		if !r.called("localhost/sag:test") {
+			t.Fatal("podman run did not use the configured image")
 		}
 	})
 
@@ -132,7 +139,6 @@ func TestHealthzTimeoutTailsLog(t *testing.T) {
 
 	r := newFake()
 	r.outputs["machine list --format json"] = []byte(`[{"Name":"podman-machine-default","Running":true}]`)
-	r.outputs["logs --tail 50 sag"] = []byte("container log line")
 
 	cfg := Config{
 		Podman: r, CfgDir: dir, UID: "501", Home: dir, BinPath: "/usr/local/bin/sag",
@@ -141,6 +147,7 @@ func TestHealthzTimeoutTailsLog(t *testing.T) {
 	d := deps{
 		launchctlRun: func(_ context.Context, _ ...string) ([]byte, error) { return nil, nil },
 		healthzCheck: func(_ context.Context, _ string) error { return fmt.Errorf("not ready") },
+		logTail:      func(_ context.Context, _ int) ([]byte, error) { return []byte("container log line"), nil },
 		interval:     time.Millisecond,
 		timeout:      10 * time.Millisecond,
 	}
@@ -196,9 +203,9 @@ func TestBootoutNotLoadedIsNotFailure(t *testing.T) {
 			}
 			return nil, nil
 		},
-		healthzCheck: func(_ context.Context, _ string) error { return nil },
-		interval:     time.Millisecond,
-		timeout:      time.Millisecond,
+		logTail:  func(_ context.Context, _ int) ([]byte, error) { return nil, nil },
+		interval: time.Millisecond,
+		timeout:  time.Millisecond,
 	}
 
 	cfg := Config{
@@ -242,9 +249,9 @@ func TestUnchangedPlistNoReload(t *testing.T) {
 			}
 			return nil, nil
 		},
-		healthzCheck: func(_ context.Context, _ string) error { return nil },
-		interval:     time.Millisecond,
-		timeout:      time.Millisecond,
+		logTail:  func(_ context.Context, _ int) ([]byte, error) { return nil, nil },
+		interval: time.Millisecond,
+		timeout:  time.Millisecond,
 	}
 
 	cfg := Config{
@@ -282,9 +289,9 @@ func TestNoGUIDomainWarns(t *testing.T) {
 			}
 			return nil, nil
 		},
-		healthzCheck: func(_ context.Context, _ string) error { return nil },
-		interval:     time.Millisecond,
-		timeout:      time.Millisecond,
+		logTail:  func(_ context.Context, _ int) ([]byte, error) { return nil, nil },
+		interval: time.Millisecond,
+		timeout:  time.Millisecond,
 	}
 
 	cfg := Config{
@@ -302,5 +309,15 @@ func TestNoGUIDomainWarns(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "warn autostart") {
 		t.Errorf("expected warn autostart line, got: %q", out.String())
+	}
+}
+
+func TestLinuxUnsupported(t *testing.T) {
+	err := unsupportedPlatformErr("linux", "amd64")
+	if err == nil {
+		t.Fatal("expected non-nil error")
+	}
+	if !strings.Contains(err.Error(), "unsupported platform linux/amd64") {
+		t.Fatalf("error %q does not contain expected text", err.Error())
 	}
 }

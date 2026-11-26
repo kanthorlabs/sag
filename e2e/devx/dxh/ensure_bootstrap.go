@@ -1,11 +1,11 @@
-//go:build devxe2e
-
 package dxh
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,11 +69,12 @@ func findSagBin() (string, error) {
 	if bin := os.Getenv("SAG_TEST_BIN"); bin != "" {
 		return bin, nil
 	}
-	devDir, err := SharedDevDir()
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
-		return "", fmt.Errorf("SharedDevDir: %w", err)
+		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
 	}
-	p := filepath.Join(filepath.Dir(devDir), "bin", "sag-devxtest")
+	root := string(bytes.TrimSpace(out))
+	p := filepath.Join(root, "bin", "sag-devxtest")
 	if _, err := os.Stat(p); err != nil {
 		return "", fmt.Errorf("sag-devxtest not found at %s; build with make build-devxtest", p)
 	}

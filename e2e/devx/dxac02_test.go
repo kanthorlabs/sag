@@ -4,6 +4,8 @@ package devx_test
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,12 +21,7 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 
 	r := dxh.NewRunner()
 
-	bin, err := sagBinForTest()
-	if err != nil {
-		t.Fatalf("find sag bin: %v", err)
-	}
-
-	out, err := r.Output(ctx, "podman", "exec", "sag", bin, "config", "check")
+	out, err := r.Output(ctx, "podman", "exec", "sag", "sag", "config", "check")
 	if err != nil {
 		t.Fatalf("podman exec sag config check: %v\n%s", err, out)
 	}
@@ -43,8 +40,18 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 	if err != nil {
 		t.Fatalf("read ca.pem: %v", err)
 	}
-	caStr := string(caBytes)
-	if strings.Contains(caStr, "Name Constraints") || strings.Contains(caStr, "nameConstraints") {
+	block, _ := pem.Decode(caBytes)
+	if block == nil {
+		t.Fatal("ca.pem: no PEM block found")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("ca.pem: parse certificate: %v", err)
+	}
+	if cert.PermittedDNSDomains != nil || cert.ExcludedDNSDomains != nil ||
+		cert.PermittedIPRanges != nil || cert.ExcludedIPRanges != nil ||
+		cert.PermittedEmailAddresses != nil || cert.ExcludedEmailAddresses != nil ||
+		cert.PermittedURIDomains != nil || cert.ExcludedURIDomains != nil {
 		t.Fatal("ca.pem has name constraints extension")
 	}
 
