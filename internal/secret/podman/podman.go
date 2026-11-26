@@ -121,7 +121,7 @@ func isExistsError(err error) bool {
 	if !errors.As(err, &re) {
 		return false
 	}
-	return strings.Contains(re.Stderr, "already exists") || strings.Contains(re.Stderr, "already exist")
+	return strings.Contains(re.Stderr, "secret name in use") || strings.Contains(re.Stderr, "secret ID already in use")
 }
 
 func isNotFoundError(err error) bool {

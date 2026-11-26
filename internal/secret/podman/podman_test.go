@@ -42,7 +42,7 @@ func (f *fakeRunner) SecretCreate(_ context.Context, name string, value io.Reade
 	data, _ := io.ReadAll(value)
 	f.createCalls = append(f.createCalls, createCall{name: name, stdin: data, labels: labels})
 	if f.createExist {
-		return &ipodman.RunError{ExitCode: 125, Stderr: "Error: secret name " + name + " already exists"}
+		return &ipodman.RunError{ExitCode: 125, Stderr: name + ": secret name in use"}
 	}
 	return f.createErr
 }
