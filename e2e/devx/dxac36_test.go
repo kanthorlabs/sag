@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -16,11 +17,10 @@ import (
 
 func testDXAC36_HostGuards(t *testing.T, ctx context.Context, groupDir, binDir string) {
 	t.Run("DXAC36_HostGuards", func(t *testing.T) {
-		root, err := worktreeRoot()
+		sagDevxtest, err := dxh.TestBinary()
 		if err != nil {
-			t.Fatalf("worktreeRoot: %v", err)
+			t.Fatalf("test binary: %v", err)
 		}
-		sagDevxtest := filepath.Join(root, "bin", "sag-devxtest")
 
 		gr := dxh.NewGroupRunner(groupDir, binDir)
 
@@ -58,13 +58,16 @@ func testDXAC36_HostGuards(t *testing.T, ctx context.Context, groupDir, binDir s
 		}
 		defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 
-		_, err = gr.Output(ctx, sagDevxtest, "service", "start")
+		_, err = gr.Output(ctx, sagDevxtest, "bootstrap", "--autostart", "no")
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
-			t.Fatalf("service start with lock held: want exit error, got %v", err)
+			t.Fatalf("bootstrap with lock held: want exit error, got %v", err)
 		}
 		if exitErr.ExitCode() != 1 {
-			t.Fatalf("service start with lock held: exit %d; want 1", exitErr.ExitCode())
+			t.Fatalf("bootstrap with lock held: exit %d; want 1; stderr: %s", exitErr.ExitCode(), exitErr.Stderr)
+		}
+		if !strings.Contains(string(exitErr.Stderr), "another process holds the lock") {
+			t.Fatalf("bootstrap with lock held: stderr %q does not name the lock", exitErr.Stderr)
 		}
 	})
 }

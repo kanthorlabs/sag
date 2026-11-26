@@ -54,7 +54,11 @@ func TestDevxMain(t *testing.T) {
 
 	dxh.RunGroup(t, ctx, r, tcfg, "base", nil, func(t *testing.T) {})
 
-	dxh.RunGroup(t, ctx, r, tcfg, "noterm", nil, func(t *testing.T) {})
+	dxh.RunGroup(t, ctx, r, tcfg, "noterm", nil, func(t *testing.T) {
+		t.Run("DXAC04_BootstrapNoTerminal", func(t *testing.T) {
+			testDXAC04BootstrapNoTerminal(t, ctx, groupDir, binDir)
+		})
+	})
 
 	dxh.RunGroup(t, ctx, r, tcfg, "guards", nil, func(t *testing.T) {
 		testDXAC33_ProductBinary(t, ctx, groupDir, binDir)

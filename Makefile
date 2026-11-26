@@ -52,7 +52,7 @@ test-integration:
 
 e2e: test image image-conformance
 	mkdir -p $(REPORT)/pg$(PG)
-	SAG_TEST_PG_MAJOR=$(PG) SAG_AC_SKIP='$(AC_SKIP)' $(E2E_TEST) $(if $(RUN),-run 'TestE2E/.*/$(RUN)') ./e2e/... > $(REPORT)/pg$(PG)/events.json; \
+	SAG_TEST_PG_MAJOR=$(PG) SAG_AC_SKIP='$(AC_SKIP)' $(E2E_TEST) $(if $(RUN),-run 'TestE2E/.*/($(RUN))') ./e2e/... > $(REPORT)/pg$(PG)/events.json; \
 	$(GO) run ./e2e/cmd/acreport -layer $(LAYER) -skip '$(AC_SKIP)' $(if $(RUN),-run '$(RUN)') -in $(REPORT)/pg$(PG)/events.json -out $(REPORT)
 
 e2e-matrix: test image image-conformance
@@ -82,7 +82,7 @@ e2e-devx:
 	mkdir -p $(REPORT)/devx-$(SUITE); \
 	git rev-parse HEAD > $(REPORT)/devx-$(SUITE)/commit; \
 	SAG_TEST_IMAGE=$(DEVX_IMAGE) $(GO) test -tags devxe2e -json -count=1 -timeout 90m \
-		-run '^TestDevx$(SUITE)$$/.*$(if $(RUN),/$(RUN))' \
+		-run '^TestDevx$(SUITE)$$/.*$(if $(RUN),/($(RUN)))' \
 		./e2e/devx/ > $(REPORT)/devx-$(SUITE)/events.json; \
 	$(GO) run ./e2e/cmd/acreport -suite devx -layer $(LAYER) -phase $(PHASE) \
 		$(if $(RUN),-run '$(RUN)') \
