@@ -16,34 +16,29 @@ import (
 
 func testDXAC36_HostGuards(t *testing.T, ctx context.Context, groupDir, binDir string) {
 	t.Run("DXAC36_HostGuards", func(t *testing.T) {
-		devDir, err := dxh.SharedDevDir()
+		root, err := worktreeRoot()
 		if err != nil {
-			t.Fatalf("SharedDevDir: %v", err)
+			t.Fatalf("worktreeRoot: %v", err)
 		}
-		repoRoot := filepath.Dir(devDir)
-		sagDevxtest := filepath.Join(repoRoot, "bin", "sag-devxtest")
-
-		if err := dxh.AddRealProgramLink(binDir, "sag-devxtest", sagDevxtest); err != nil {
-			t.Fatalf("AddRealProgramLink: %v", err)
-		}
+		sagDevxtest := filepath.Join(root, "bin", "sag-devxtest")
 
 		gr := dxh.NewGroupRunner(groupDir, binDir)
 
 		internalCmds := [][]string{
-			{"sag-devxtest", "serve"},
-			{"sag-devxtest", "credential", "check", "dummy"},
-			{"sag-devxtest", "audit", "read"},
-			{"sag-devxtest", "agent", "issue", "a"},
+			{sagDevxtest, "serve"},
+			{sagDevxtest, "credential", "check", "dummy"},
+			{sagDevxtest, "audit", "read"},
+			{sagDevxtest, "agent", "issue", "a"},
 		}
 		for _, args := range internalCmds {
 			_, err := gr.Output(ctx, args[0], args[1:]...)
 			var exitErr *exec.ExitError
 			if !errors.As(err, &exitErr) {
-				t.Errorf("%v: want exit error, got %v", args, err)
+				t.Errorf("%v: want exit error, got %v", args[1:], err)
 				continue
 			}
 			if exitErr.ExitCode() != 2 {
-				t.Errorf("%v: exit %d; want 2", args, exitErr.ExitCode())
+				t.Errorf("%v: exit %d; want 2", args[1:], exitErr.ExitCode())
 			}
 		}
 
@@ -63,7 +58,7 @@ func testDXAC36_HostGuards(t *testing.T, ctx context.Context, groupDir, binDir s
 		}
 		defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 
-		_, err = gr.Output(ctx, "sag-devxtest", "service", "start")
+		_, err = gr.Output(ctx, sagDevxtest, "service", "start")
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
 			t.Fatalf("service start with lock held: want exit error, got %v", err)

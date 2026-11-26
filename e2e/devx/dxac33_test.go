@@ -9,18 +9,23 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
+
+func worktreeRoot() (string, error) {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
 
 func testDXAC33_ProductBinary(t *testing.T, ctx context.Context, groupDir, binDir string) {
 	t.Run("DXAC33_ProductBinary", func(t *testing.T) {
-		devDir, err := dxh.SharedDevDir()
+		root, err := worktreeRoot()
 		if err != nil {
-			t.Fatalf("SharedDevDir: %v", err)
+			t.Fatalf("worktreeRoot: %v", err)
 		}
-		repoRoot := filepath.Dir(devDir)
-		sagBin := filepath.Join(repoRoot, "bin", "sag")
+		sagBin := filepath.Join(root, "bin", "sag")
 
 		if _, err := os.Stat(sagBin); err != nil {
 			t.Fatalf("product binary not found: %v", err)
@@ -34,7 +39,7 @@ func testDXAC33_ProductBinary(t *testing.T, ctx context.Context, groupDir, binDi
 			t.Fatal("product binary symbol table contains devxtest")
 		}
 
-		err = filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, err error) error {
+		err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
