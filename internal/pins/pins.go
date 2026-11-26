@@ -45,9 +45,13 @@ func ValidateItem(item Item, requireHTTPS bool) error {
 	default:
 		return fmt.Errorf("pins: unknown source %q for %s", item.Source, item.Name)
 	}
-	if item.SHA256 != "-" {
+	if item.Source == "apt" {
+		if item.SHA256 != "-" {
+			return fmt.Errorf("pins: sha256 for apt item %s must be -", item.Name)
+		}
+	} else {
 		if len(item.SHA256) != 64 {
-			return fmt.Errorf("pins: sha256 for %s must be 64 hex chars or -", item.Name)
+			return fmt.Errorf("pins: sha256 for %s must be 64 hex chars", item.Name)
 		}
 		for _, c := range item.SHA256 {
 			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {

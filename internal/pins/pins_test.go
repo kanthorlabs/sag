@@ -2,6 +2,7 @@ package pins_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/kanthorlabs/sag/internal/pins"
@@ -178,5 +179,25 @@ func TestLinuxWildcard(t *testing.T) {
 	got := pins.SelectPlatform(items, "linux", "amd64")
 	if len(got) != 1 || got[0].Platform != "linux/*" {
 		t.Fatalf("SelectPlatform linux/amd64 = %v; want one linux/* item", got)
+	}
+}
+
+func TestValidateItemReleaseDash(t *testing.T) {
+	item := pins.Item{
+		Name: "podman", Version: "5.5.1", Platform: "darwin/arm64",
+		Source: "release", Locator: "https://example.invalid/podman.pkg", SHA256: "-",
+	}
+	if err := pins.ValidateItem(item, true); err == nil {
+		t.Fatal("ValidateItem release with dash: want error, got nil")
+	}
+}
+
+func TestValidateItemAptHash(t *testing.T) {
+	item := pins.Item{
+		Name: "podman", Version: "5.4.2", Platform: "linux/*",
+		Source: "apt", Locator: "podman", SHA256: strings.Repeat("0", 64),
+	}
+	if err := pins.ValidateItem(item, true); err == nil {
+		t.Fatal("ValidateItem apt with hash: want error, got nil")
 	}
 }
