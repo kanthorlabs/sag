@@ -14,7 +14,7 @@
 
 | Task | Owns |
 |---|---|
-| `D3.0` | `deploy/pins`, `deploy/embed.go`, `deploy/Containerfile`, `internal/daemon/containerfile_test.go`, `internal/bootstrap/steps.go` (calls to the new stubs), stubs of `internal/pins`, `internal/deps`, `internal/tailscale`, `internal/portcheck`, `internal/bootstrap/deps.go`, `internal/bootstrap/tailscale.go`, `internal/bootstrap/port.go`, `internal/service/port.go`, `e2e/devx/suite_pins_test.go`, `e2e/devx/suite_main_test.go` |
+| `D3.0` | `deploy/pins`, `deploy/embed.go`, `deploy/Containerfile`, `internal/daemon/containerfile_test.go`, `internal/bootstrap/steps.go` (calls to the new stubs), `internal/bootstrap/flow.go` (bootstrap flow, formerly `deps.go`), stubs of `internal/pins`, `internal/deps`, `internal/tailscale`, `internal/portcheck`, `internal/bootstrap/deps.go`, `internal/bootstrap/tailscale.go`, `internal/bootstrap/port.go`, `internal/service/port.go`, `e2e/devx/suite_pins_test.go`, `e2e/devx/suite_main_test.go` |
 | `D3.1` | `internal/pins/*`, `internal/deps/*`, `internal/bootstrap/deps.go`, `internal/cli/bootstrap.go`, `internal/cli/bootstrap_test.go`, `e2e/devx/cmd/fakeinstall/*`, `e2e/devx/dxac06_test.go`, `dxac07_test.go`, `dxac08_test.go`, `e2e/devx/testdata/pins/*` |
 | `D3.2` | `internal/tailscale/*`, `internal/bootstrap/tailscale.go`, `e2e/devx/cmd/faketailscale/*`, `e2e/devx/dxac50_test.go` |
 | `D3.3` | `internal/portcheck/*`, `internal/bootstrap/port.go`, `internal/service/port.go`, `e2e/devx/dxac03_test.go`, `e2e/devx/dxac53_test.go` |

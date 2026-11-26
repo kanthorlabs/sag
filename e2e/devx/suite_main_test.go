@@ -57,6 +57,7 @@ func TestDevxMain(t *testing.T) {
 	dxh.RunGroup(t, ctx, r, tcfg, "base", tagImage, func(t *testing.T) {
 		t.Run("DXAC01_Bootstrap", func(t *testing.T) { DXAC01_Bootstrap(t, ctx) })
 		t.Run("DXAC02_ContainerAndCert", func(t *testing.T) { DXAC02_ContainerAndCert(t, ctx) })
+		t.Run("DXAC03_BootstrapIdempotent", func(t *testing.T) { DXAC03_BootstrapIdempotent(t, ctx) })
 	})
 
 	dxh.RunGroup(t, ctx, r, tcfg, "noterm", tagImage, func(t *testing.T) {
@@ -73,6 +74,14 @@ func TestDevxMain(t *testing.T) {
 	dxh.RunGroup(t, ctx, r, tcfg, "service", tagImage, func(t *testing.T) {
 		t.Run("DXAC27_Autostart", func(t *testing.T) { DXAC27_Autostart(t, ctx) })
 		t.Run("DXAC28_ServiceStopStart", func(t *testing.T) { DXAC28_ServiceStopStart(t, ctx) })
+	})
+
+	dxh.RunGroup(t, ctx, r, tcfg, "tailscale", tagImage, func(t *testing.T) {
+		t.Run("DXAC50_TailscaleFake", func(t *testing.T) { DXAC50_TailscaleFake(t, ctx) })
+	})
+
+	dxh.RunGroup(t, ctx, r, tcfg, "port", tagImage, func(t *testing.T) {
+		t.Run("DXAC53_PortHolder", func(t *testing.T) { DXAC53_PortHolder(t, ctx) })
 	})
 }
 

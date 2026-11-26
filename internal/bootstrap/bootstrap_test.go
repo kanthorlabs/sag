@@ -63,6 +63,14 @@ func baseDeps(dir string) Deps {
 		},
 		SaveAnswers: func(p hoststate.Paths, a hoststate.Answers) error { return nil },
 		FindPodman:  func(stored string) (string, error) { return "/usr/bin/podman", nil },
+		PlanDeps: func(_ context.Context, s *State) error {
+			if s.PodmanPath == "" {
+				s.PodmanPath = "/usr/bin/podman"
+			}
+			return nil
+		},
+		PlanTailscale: func(_ context.Context, _ *State) error { return nil },
+		PlanPort:      func(_ context.Context, _ *State) error { return nil },
 		ResolveYesNo: func(a prompt.Asker, flagValue, stored, question, flagName string) (string, error) {
 			if flagValue != "" {
 				return flagValue, nil

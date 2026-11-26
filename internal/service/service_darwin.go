@@ -32,6 +32,7 @@ type deps struct {
 	launchctlRun func(ctx context.Context, args ...string) ([]byte, error)
 	healthzCheck func(ctx context.Context, caPath string) error
 	logTail      func(ctx context.Context, n int) ([]byte, error)
+	portCheck    func(ctx context.Context, pm podman.Command, out stepline.Writer) error
 	interval     time.Duration
 	timeout      time.Duration
 }
@@ -41,6 +42,7 @@ func defaultDeps(cfg Config) deps {
 		launchctlRun: realLaunchctl,
 		healthzCheck: realHealthzCheck,
 		logTail:      makeLogTail(cfg),
+		portCheck:    checkPort,
 		interval:     time.Second,
 		timeout:      healthzDeadline,
 	}
@@ -122,6 +124,11 @@ func Start(ctx context.Context, cfg Config, out stepline.Writer) error {
 func start(ctx context.Context, cfg Config, d deps, out stepline.Writer) error {
 	if err := ensureMachineRunning(ctx, cfg); err != nil {
 		return err
+	}
+	if d.portCheck != nil {
+		if err := d.portCheck(ctx, cfg.Podman, out); err != nil {
+			return err
+		}
 	}
 
 	sagCfg, err := config.Load(filepath.Join(cfg.CfgDir, "sag.yaml"))
