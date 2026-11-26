@@ -25,7 +25,7 @@
 - Goal: Freeze the `internal/deploy` API, the SecureStorage interface, the Podman runner API, and the DX AC table.
 - Owns: see the ownership table.
 - Reads: PRD-devx 11.1, 13, 17; `e2e/harness/flags.go`; `e2e/acs.go`; README section 5.4.
-- Depends on: `D0.1`, `D0.2`.
+- Depends on: `D0.1`, `D0.2`, `D0.3`.
 - Content:
   - `internal/deploy`: `ProductFlags`, `ContainerFlags`, `LogFlags`, `ImageDigest` (empty `var`), `RunArgs(cfg, opts) []string`, `Quadlet(cfg, opts) string`, `SecretMounts(cfg) []string` in `mounts.go`. `opts` holds the image, the config source path, the autostart value, and the restart policy.
   - `internal/secret/storage.go`: `Metadata`, `ErrExists`, `ErrNotFound`, `ErrUnavailable`, `SecureStorage`, exactly as PRD-devx 11.1.
@@ -80,14 +80,20 @@
 - Reads: PRD-devx 15, 17.1; README sections 2.1, 5; `e2e/cmd/acreport/*`; `e2e/harness/tty.go`.
 - Depends on: `D1.0`.
 - Method:
-  - `dxh` runs the host binary with a given environment and the test `PATH` of README section 2.1. It drives a pseudo-terminal with `creack/pty`.
-  - `dxh` builds Go programs into the test program directory. It runs the PRD-devx 15 teardown steps 1 to 8 for macOS.
-  - `dxh` checks the preconditions of README section 2.1 before the first group. A failed check exits 1 and changes nothing.
+  - `dxh` runs the host binary with the child environment and the test `PATH` of README section 2.1. It drives a pseudo-terminal with `creack/pty`.
+  - Child environment: the allow list of README section 2.1. In the suites `Main`, `Pins`, and `Mac`, new test directories for `CLAUDE_CONFIG_DIR` and `PI_CODING_AGENT_DIR` for each group.
+  - `dxh` builds Go programs into the test program directory. It runs the teardown of README section 2.1: PRD-devx 15 steps 2 to 8 for macOS, `podman secret rm` in place of step 1, and the labelled objects.
+  - `dxh` checks the preconditions of README section 2.1 before the first group, the free space first. A failed check exits 1 and changes nothing.
+  - Run recovery of README section 2.1: the marker `.dev/local/devx-run-active`, and one teardown on a failed precondition with the marker.
+  - `make e2e-devx` writes the lock file `owner`. It removes a lock whose owner PID does not run, with `kill -0 <PID>`.
+  - Each container, volume, secret, network, and image that `dxh` creates has the label `sag.devx-e2e=1`. `dxh` records each pulled image in `.dev/local/devx-pulled.txt`.
+  - Group setup: before each group except `image`, tag `localhost/sag:devx-e2e` as `docker.io/kanthorlabs/sag:main`.
   - `TestDevxMain` runs the group `harness` with the subtest `DX_Harness_Skeleton`. It checks the preconditions and rootless `podman info` through `podman-machine-default`.
+  - `DX_Harness_Skeleton` also proves the host effects of an agent session: `launchctl print gui/<uid>` exits 0. A file write and removal in `~/Library/LaunchAgents` and in `~/.config` succeed. A listener on `127.0.0.1:8443` opens and closes. One pseudo-terminal round trip succeeds. The free-space check passes.
   - `acreport`: `-suite devx`, `-layer`, `-phase`, the `env` block, and the gate rule of README section 5.4.
   - `Makefile`: `build-devxtest` and `e2e-devx` (README section 5.2). `contract-check` adds `go vet -tags devxtest ./...` and `go vet -tags devxe2e ./e2e/devx/...`.
   - `ci.yml`: job `devx-unit` (README section 5.3).
-- Tests first: `e2e/cmd/acreport/report_test.go`: `TestDevxOtherPhase`, `TestDevxEnvBlockHasNoIP`, `TestDevxGateRule`, `TestDevxCommitMismatchFails`, `TestDevxTestLayers`; `dxh/teardown_test.go` with a fake runner: `TestTeardownOrder`; `dxh/precondition_test.go`: `TestRefusesSecondMachine`, `TestRefusesStoppedMachine`, `TestRefusesContainerSag`, `TestRefusesDevContainers`, `TestRefusesPortHeld`, `TestRefusesCfgOrLaunchAgent`, `TestNoPodmanMachineCommandRuns`; `dxh/path_test.go`: `TestPathHasNoHarnessOrTailscale`.
+- Tests first: `e2e/cmd/acreport/report_test.go`: `TestDevxOtherPhase`, `TestDevxEnvBlockHasNoIP`, `TestDevxGateRule`, `TestDevxCommitMismatchFails`, `TestDevxTestLayers`; `dxh/teardown_test.go` with a fake runner: `TestTeardownOrder`, `TestTeardownRemovesOnlyLabeled`, `TestTeardownNeverCallsCredentialDelete`, `TestTeardownKeepsDevxImage`; `dxh/precondition_test.go`: `TestRefusesSecondMachine`, `TestRefusesStoppedMachine`, `TestRefusesLowDisk`, `TestRefusesContainerSag`, `TestRefusesDevContainers`, `TestRefusesPortHeld`, `TestRefusesCfgOrLaunchAgent`, `TestRefusesSAGSecretsOrVolume`, `TestMarkerRunsTeardownOnce`, `TestNoMarkerChangesNothing`, `TestNoPodmanMachineCommandRuns`; `dxh/env_test.go`: `TestChildEnvAllowList`, `TestHarnessDirsAreTestDirs`; `dxh/path_test.go`: `TestPathHasNoHarnessOrTailscale`, `TestRealProgramLinkDir`; `dxh/group_test.go`: `TestGroupSetupTagsMainImage`.
 - ACs: none.
 - Verify: `go test -count=1 ./e2e/cmd/acreport/... ./e2e/devx/dxh/... && make contract-check && make e2e-devx SUITE=Main LAYER=1 && podman run --rm -v "$PWD:/repo:ro" -w /repo docker.io/rhysd/actionlint:1.7.9`. Expected: `ok`, then exit 0 for each command.
 - Done when: `e2e/report/devx/ac-report.md` shows `DX_Harness_Skeleton` `PASS` and the AC table rows equal README section 8.

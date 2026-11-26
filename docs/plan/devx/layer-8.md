@@ -14,10 +14,10 @@
 
 | Task | Owns |
 |---|---|
-| `D8.0` | `go.mod`, `go.sum` (AWS SDK modules), stubs of `internal/config/storage.go`, `internal/secret/ref.go`, `internal/secret/awssm/*.go`, `internal/scrub/scrub.go` (`Add` signature), `internal/credential/backend.go`, `e2e/devx/dxh/localstack.go` (image digest constant) |
+| `D8.0` | `go.mod`, `go.sum` (AWS SDK modules), `e2e/devx/suite_main_test.go`, stubs of `internal/config/storage.go`, `internal/secret/ref.go`, `internal/secret/awssm/*.go`, `internal/scrub/scrub.go` (`Add` signature), `internal/credential/backend.go`, `e2e/devx/dxh/localstack.go` (image digest constant, `EnsureLocalStack` stub) |
 | `D8.1` | `internal/secret/awssm/*`, `internal/secret/ref.go`, `internal/secret/ref_test.go`, `internal/config/storage.go`, `internal/config/storage_test.go`, `internal/config/config.go`, `internal/config/config_test.go`, `internal/config/schema.go` |
 | `D8.2` | `internal/daemon/resources.go`, `internal/daemon/aws_open.go`, `internal/daemon/run.go`, their tests, `internal/scrub/*`, `internal/preflight/scheduler.go`, `internal/preflight/scheduler_test.go`, `internal/cli/config_check.go`, `internal/cli/config_check_test.go`, `e2e/devx/dxac32_test.go` |
-| `D8.3` | `internal/credential/backend.go`, `internal/credential/create.go`, `internal/credential/delete.go`, `internal/credential/list.go`, `internal/credential/*_test.go`, `internal/cli/credential.go`, `internal/cli/credential_test.go`, `internal/deploy/mounts.go`, `internal/deploy/mounts_test.go`, `e2e/devx/dxh/localstack.go`, `e2e/devx/dxac31_test.go` |
+| `D8.3` | `internal/credential/backend.go`, `internal/credential/create.go`, `internal/credential/delete.go`, `internal/credential/list.go`, `internal/credential/*_test.go`, `internal/cli/credential.go`, `internal/cli/credential_test.go`, `internal/deploy/mounts.go`, `internal/deploy/mounts_test.go`, `e2e/devx/dxh/localstack.go`, `e2e/devx/dxh/localstack_test.go`, `e2e/devx/dxac31_test.go` |
 | `D8.4` | Every layer-8 file after `D8.1` to `D8.3` merge. `docs/reviews/devx-layer-8.md`. |
 
 ## D8.0 Contract
@@ -29,6 +29,7 @@
 - Content:
   - `go.mod`: add `github.com/aws/aws-sdk-go-v2/config` and `github.com/aws/aws-sdk-go-v2/service/secretsmanager`.
   - Signatures only: `config.StorageAWS` (`Region`, `Credentials`), `secret.ParseRef(string) (Ref, error)`, `Ref` (`Backend`, `Name`), `awssm.New(cfg) SecureStorage`, `scrub.Scrubber.Add(secret.Credential)`, `credential.BackendFor(cfg, name) (SecureStorage, error)`.
+  - `suite_main_test.go`: add the group `aws` to `TestDevxMain` with its group setup (README section 5.1). `dxh/localstack.go`: `EnsureLocalStack(t)` stub.
   - Confirm the LocalStack image digest and its access rules (PRD-devx 19 step 7). Write the digest constant to `dxh/localstack.go`.
   - Confirm a method that makes the AWS endpoint drop packets on the development machine, for example `podman pause` of the LocalStack container. The method changes no setting of `podman-machine-default`. Record it in `docs/reviews/devx-layer-8.md`.
 - Tests first: none. The contract has no logic.
@@ -59,14 +60,14 @@
 - Goal: Start the listener without AWS. Open each `aws-sm:` resource in the background, with the 60 s retry.
 - Owns: see the ownership table.
 - Reads: PRD-devx 11.4; PRD 9.1, 10.2.
-- Depends on: `D8.0`. Verify after `D8.1`.
+- Depends on: `D8.0`. Verify after `D8.1`, `D8.3`, because DX-AC32 calls `EnsureLocalStack`.
 - Method:
   - The daemon reads each `secret:` reference at start. It adds each resource with an `aws-sm:` reference as unopened.
   - A background open starts at once and calls `Load`. The open retry of PRD 9.1 calls `Load` again every 60 s.
   - A request to an unopened resource returns `resource_unavailable`.
   - The scrubber adds each credential when `Load` returns it. At start it adds the value of the `storage.aws.credentials` file.
   - `sag config check` skips the owner and mode check for each `aws-sm:` reference.
-  - DX-AC32 uses the packet drop method of `D8.0`.
+  - DX-AC32 uses the packet drop method of `D8.0`. `DXAC32_AWSUnavailable` calls `EnsureLocalStack`.
 - Tests first: `aws_open_test.go`: `TestListenerBeforeAWS`, `TestUnavailableUntilLoad`, `TestRetryBringsBack`, `TestScrubAddOnLoad`, `TestCredentialsFileScrubbed`; `scrub_test.go`: `TestAddConcurrent`; `config_check_test.go`: `TestAWSRefSkipsFileCheck`.
 - e2e: `DXAC32_AWSUnavailable`.
 - ACs: DX-AC32.
@@ -83,11 +84,12 @@
   - `--backend aws-sm` needs `storage.aws` in `sag.yaml`. Secret names `sag/<name>/conn` and `sag/<name>/ca`.
   - `delete` collects owned secrets in each configured backend. An unreachable backend gives exit 1 and no change.
   - `SecretMounts` adds the `storage.aws.credentials` reference. An `aws-sm:` reference gets no mount.
-  - LocalStack runs as a container pinned by digest. The test sets `AWS_ENDPOINT_URL_SECRETS_MANAGER` in the container environment.
-- Tests first: `backend_test.go`: `TestBackendNeedsStorageAWS`, `TestAWSSecretNames`, `TestDeleteUnreachableNoChange`, `TestListMixedBackends`; `mounts_test.go`: `TestSecretMountsSkipAWS`, `TestSecretMountsAWSCredentials`.
+  - LocalStack runs as a container pinned by digest, with the label `sag.devx-e2e=1`. The test sets `AWS_ENDPOINT_URL_SECRETS_MANAGER` in the container environment.
+  - `EnsureLocalStack` calls `EnsureBootstrapped`. It starts LocalStack and adds `storage.aws` to `sag.yaml` when they are absent. `DXAC31_AWSBackend` calls it.
+- Tests first: `backend_test.go`: `TestBackendNeedsStorageAWS`, `TestAWSSecretNames`, `TestDeleteUnreachableNoChange`, `TestListMixedBackends`; `localstack_test.go` with a fake runner: `TestEnsureLocalStackSkipsWhenPresent`; `mounts_test.go`: `TestSecretMountsSkipAWS`, `TestSecretMountsAWSCredentials`.
 - e2e: `DXAC31_AWSBackend`.
 - ACs: DX-AC31.
-- Verify: `go test -count=1 ./internal/credential/... ./internal/deploy/... ./internal/cli/... && make e2e-devx SUITE=Main RUN=DXAC31_ LAYER=8`. Expected: `ok`, then exit 0.
+- Verify: `go test -count=1 ./internal/credential/... ./internal/deploy/... ./internal/cli/... ./e2e/devx/dxh/... && make e2e-devx SUITE=Main RUN=DXAC31_ LAYER=8`. Expected: `ok`, then exit 0.
 - Done when: the tags of each created AWS secret are exactly the three labels.
 
 ## D8.4 Integration and gate

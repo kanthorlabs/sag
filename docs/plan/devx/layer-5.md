@@ -14,7 +14,7 @@
 
 | Task | Owns |
 |---|---|
-| `D5.0` | `internal/podman/exec.go` (`ExecTTY`, `Exec`), stub of `internal/credential/delete.go` |
+| `D5.0` | `internal/podman/exec.go` (`ExecTTY`, `Exec`), stub of `internal/credential/delete.go`, `e2e/devx/suite_main_test.go` |
 | `D5.1` | `internal/credential/delete.go`, `internal/credential/delete_test.go`, `internal/credential/oneshot.go`, `internal/credential/oneshot_test.go`, `e2e/devx/dxac18_test.go` to `dxac23_test.go` |
 | `D5.2` | `internal/cli/host_forms.go`, `internal/cli/host_forms_test.go`, `internal/cli/jwt_generate.go`, `internal/cli/jwt_generate_test.go`, `internal/cli/extension.go`, `internal/cli/extension_test.go`, `internal/cli/resource_test_cmd.go`, `internal/cli/resource_test_cmd_test.go`, `internal/adapter/postgres/preflight.go`, `preflight_test.go`, `preflight_integration_test.go`, `e2e/ac11_test.go`, `e2e/devx/dxac24_test.go` |
 | `D5.3` | `internal/cli/logs.go`, `internal/cli/audit_read.go`, their tests, `e2e/devx/dxac25_test.go` |
@@ -31,6 +31,7 @@
 - Content:
   - `podman.ExecTTY(ctx, args)` gives the terminal of the process to `podman exec -it`. `podman.Exec(ctx, stdin, args)` runs without `-t`.
   - `credential.Delete(ctx, name, tty) error`.
+  - `e2e/devx/suite_main_test.go`: add the groups `delete` and `hostforms` to `TestDevxMain`, each with its group setup (README section 5.1). Each criterion of the group `delete` calls `EnsureCanary`.
 - Tests first: none. The contract has no logic.
 - ACs: none.
 - Verify: `make contract-check`. Expected: exit 0.

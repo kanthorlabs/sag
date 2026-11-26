@@ -14,7 +14,7 @@
 
 | Task | Owns |
 |---|---|
-| `D3.0` | `deploy/pins`, `deploy/embed.go`, `deploy/Containerfile`, `internal/daemon/containerfile_test.go`, `internal/bootstrap/steps.go` (calls to the new stubs), stubs of `internal/pins`, `internal/deps`, `internal/tailscale`, `internal/portcheck`, `internal/bootstrap/deps.go`, `internal/bootstrap/tailscale.go`, `internal/bootstrap/port.go`, `internal/service/port.go`, `e2e/devx/suite_pins_test.go` |
+| `D3.0` | `deploy/pins`, `deploy/embed.go`, `deploy/Containerfile`, `internal/daemon/containerfile_test.go`, `internal/bootstrap/steps.go` (calls to the new stubs), stubs of `internal/pins`, `internal/deps`, `internal/tailscale`, `internal/portcheck`, `internal/bootstrap/deps.go`, `internal/bootstrap/tailscale.go`, `internal/bootstrap/port.go`, `internal/service/port.go`, `e2e/devx/suite_pins_test.go`, `e2e/devx/suite_main_test.go` |
 | `D3.1` | `internal/pins/*`, `internal/deps/*`, `internal/bootstrap/deps.go`, `internal/cli/bootstrap.go`, `internal/cli/bootstrap_test.go`, `e2e/devx/cmd/fakeinstall/*`, `e2e/devx/dxac06_test.go`, `dxac07_test.go`, `dxac08_test.go`, `e2e/devx/testdata/pins/*` |
 | `D3.2` | `internal/tailscale/*`, `internal/bootstrap/tailscale.go`, `e2e/devx/cmd/faketailscale/*`, `e2e/devx/dxac50_test.go` |
 | `D3.3` | `internal/portcheck/*`, `internal/bootstrap/port.go`, `internal/service/port.go`, `e2e/devx/dxac03_test.go`, `e2e/devx/dxac53_test.go` |
@@ -35,6 +35,7 @@
   - `portcheck.Holder(ctx) (Holder, error)`. `Holder` is none, container `sag`, another container, or a process.
   - Stub files of the bootstrap and service call points: `bootstrap/deps.go`, `bootstrap/tailscale.go`, `bootstrap/port.go`, `service/port.go`.
   - `e2e/devx/suite_pins_test.go`: `TestDevxPins` with the group `pins`.
+  - `e2e/devx/suite_main_test.go`: add the groups `tailscale` and `port` to `TestDevxMain`, each with its group setup (README section 5.1). `DXAC03_BootstrapIdempotent` calls `EnsureBootstrapped`.
 - Tests first: none. The contract has no logic.
 - ACs: none.
 - Verify: `make contract-check && make image && go test -count=1 ./internal/daemon/... -run Containerfile`. Expected: exit 0, then `ok`.

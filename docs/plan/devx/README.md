@@ -4,9 +4,9 @@
 |---|---|
 | Owner | Ulrich |
 | Author | Aelita |
-| Revision | 2 |
+| Revision | 3 |
 | Date | 2026-11-26 |
-| Source of truth | `docs/PRD-devx.md`, revision 7 (commit `08d56e5`) |
+| Source of truth | `docs/PRD-devx.md`, revision 8 (commit `8227e10`) |
 | Base | `docs/PRD.md` revision 16, tag `sag-layer-6`, v1 plan in `docs/plan/` |
 | Scope | `sag bootstrap`, `sag service`, `sag credential`, `sag logs`, SecureStorage (Podman, AWS Secrets Manager), Tailscale serve, port checks, `sag agent setup`, release flow, removal of the development scripts. DX-AC1 to DX-AC53. |
 
@@ -32,7 +32,7 @@ The rules of `docs/plan/README.md` sections 1 to 7 apply. The v1 files `foundati
 | Task branch | `feat/v1-postgres--<task-id>` | `feat/devx--<task-id>`, created from `feat/devx` |
 | Task worktree | `.dev/<task-id>` | `.dev/<task-id>`, for example `.dev/D4.2` |
 | Claims, merge lock | `.dev/claims/<task-id>/`, `.dev/claims/merge.lock/` | Same paths |
-| DX run lock | None | `.dev/claims/devx-e2e.lock/`. `make e2e-devx` holds it during a run. |
+| DX run lock | None | `.dev/claims/devx-e2e.lock/`. `make e2e-devx` holds it during a run. The file `owner` in the lock directory holds the PID and the worktree of the run. |
 | Layer tag | `sag-layer-<N>` | `sag-devx-<N>`. `sag-devx-0` marks the commit of this plan. |
 | Review file | `docs/reviews/layer-<N>.md` | `docs/reviews/devx-layer-<N>.md` |
 | Layer count | 6 | 10. Phase A: layers 1 to 9. Phase B: layer 10. |
@@ -57,7 +57,7 @@ Additional rules:
 
 ### 1.1 Layer 0
 
-Layer 0 has no contract task and no gate. `D1.0` starts after `D0.1` and `D0.2`. `D2.0` starts after `D0.3`.
+Layer 0 has no contract task and no gate. `D1.0` starts after `D0.1`, `D0.2`, and `D0.3`.
 
 #### D0.1 Plan bootstrap
 
@@ -131,15 +131,51 @@ The machine is shared with the work of Ulrich. Each devx task, test, and gate ob
 `dxh` checks these preconditions before each DX run. On a failed check, the run exits 1, names the check, and changes nothing:
 
 - `podman machine list` shows exactly one machine, `podman-machine-default`, and it runs.
+- `/var` in `podman-machine-default` has at least 10 GiB free (ruling Q36). `dxh` reads it with `podman machine ssh podman-machine-default df -Pk /var`. Below the limit, the run writes `fail podman machine free space <n> GiB; need 10`.
 - No container `sag`, `sag-dev`, or `sag-dev-pg` exists. Port 8443 is free.
-- `<cfg>` and `~/Library/LaunchAgents/net.kanthorlabs.sag.plist` do not exist.
+- No volume `sag-state` and no image `docker.io/kanthorlabs/sag` exist.
+- No secret `sag-master-key`, `sag-tls-cert`, `sag-tls-key`, or `sag-aws-credentials` exists. No secret has a `sag.resource` label.
+- `<cfg>`, `~/Library/LaunchAgents/net.kanthorlabs.sag.plist`, and `~/Library/Logs/sag/` do not exist.
+
+Run recovery:
+
+- `dxh` writes the marker `.dev/local/devx-run-active` at the start of a run. It removes the marker after the last teardown.
+- When a precondition fails and the marker exists, `dxh` runs the teardown one time and checks again.
+- When a precondition fails and no marker exists, the run exits 1 and changes nothing.
+- `make e2e-devx` removes a lock whose owner PID does not run.
+
+Teardown:
+
+- `dxh` runs the PRD-devx 15 teardown for macOS before and after each group.
+- In place of step 1, `dxh` runs `podman secret rm` for each secret with a `sag.resource` label. It never calls `sag credential delete`.
+- Before each group except `image`, `dxh` tags `localhost/sag:devx-e2e` as `docker.io/kanthorlabs/sag:main`. The LaunchAgent process has no `SAG_TEST_IMAGE`, so it finds this tag and pulls nothing. Teardown step 7 removes the tag.
+- No test calls `launchctl setenv`. No test adds a test key to the LaunchAgent.
+
+Podman store (ruling Q36):
+
+- Each container, volume, secret, network, and image that `dxh` or a test creates has the label `sag.devx-e2e=1`. Test containers run with `--rm`.
+- The product objects of PRD-devx 15 have no such label. The preconditions prove that they are absent before the run. The run thus created each of them.
+- The teardown removes each labelled container, volume, secret, and network, then the product objects of PRD-devx 15. It keeps the image `localhost/sag:devx-e2e`.
+- `dxh` records each image that it pulls by its exact name in `.dev/local/devx-pulled.txt`. An agent removes a pulled image only by a name of this record.
+- No task, test, or agent runs `podman system prune`, `podman image prune`, `podman volume prune`, `podman system reset`, or `podman rmi -a`.
+- DX-AC7 and DX-AC38 remove their download directory on the host at the end of the criterion.
+- Each gate records `podman system df` before and after its run (section 6.1).
+
+Child environment:
+
+- `dxh` builds the environment of each child process from an allow list: `HOME`, the test `PATH`, `TMPDIR`, `USER`, `LANG`, and each `SAG_TEST_*` variable.
+- No other variable passes. This removes `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, `NODE_EXTRA_CA_CERTS`, `XDG_CONFIG_HOME`, `ZDOTDIR`, `SHELL`, and each `CLAUDE*` variable.
+- A criterion test sets a variable only when its criterion states it, for example `SHELL=/bin/bash` for DX-AC41.
+- In the suites `Main`, `Pins`, and `Mac`, `dxh` sets `CLAUDE_CONFIG_DIR` and `PI_CODING_AGENT_DIR` to new test directories for each group.
+- The `User` suite sets neither variable (ruling Q35).
 
 Test `PATH`:
 
 - The test `PATH` holds the test program directory and `/usr/bin:/bin:/usr/sbin:/sbin`.
 - `sag` finds `podman` through the search order of PRD-devx 5.3.
 - `dxh` checks that `claude`, `pi`, and `tailscale` resolve only to a stub, a fake, or nothing.
-- DX-AC52 adds the directory of the real `tailscale` for its run only.
+- Exception: a criterion that needs a real program gets one new directory with a symbolic link to each real program that it needs. `dxh` adds only that directory to the test `PATH`.
+- DX-AC52 gets a link to `tailscale`. The `User` suite gets links to `claude`, `pi`, and `node`.
 
 Who runs what:
 
@@ -149,8 +185,14 @@ Who runs what:
 | `User` | Ulrich | Outside each Claude Code session |
 
 - The `User` suite refuses to start while a `claude` process runs. Ulrich exits each Claude Code session first. The coordinator resumes after the run.
-- Before the `User` suite, `dxh` copies `~/.claude.json`, `~/.claude/settings.json`, `~/.pi/agent/mcp.json`, and the shell profile to `.dev/local/devx-user/<UTC time>/`, mode 0700.
-- After the PRD-devx 15 teardown, `dxh` compares only the SAG entries of PRD-devx 17.1 with the copy. It restores no file.
+- The `User` suite uses the default Claude Code profile: `~/.claude` and `~/.claude.json` (ruling Q35).
+- When `CLAUDE_CONFIG_DIR` is set, the `User` suite exits 1 with `unset CLAUDE_CONFIG_DIR; this suite uses the default profile` and changes nothing.
+- When `PI_CODING_AGENT_DIR` is set, the `User` suite exits 1 with `unset PI_CODING_AGENT_DIR; this suite uses the default profile` and changes nothing.
+- Precondition: `env -u CLAUDE_CONFIG_DIR claude -p "ok"` works. Ulrich checks it before the run.
+- No suite, task, or agent changes `~/.ccp`.
+- Before the `User` suite, `dxh` copies `~/.claude.json`, `~/.claude/settings.json`, `~/.pi/agent/mcp.json`, and the shell profile to `.dev/local/devx-user/<UTC time>/`, mode 0700. A file that is absent at the copy is recorded as absent.
+- After the PRD-devx 15 teardown with steps 9 and 10, `dxh` compares only the SAG entries of PRD-devx 17.1 with the copy. It restores no file.
+- A file recorded as absent passes the compare when it is absent or holds no SAG entry.
 - On a difference, the run exits 1, keeps the copy directory, and prints its path. Ulrich restores by hand.
 - After a successful compare, `dxh` removes the copy directory. It can hold a token of Ulrich.
 - DX-AC41 changes `~/.bash_profile`. The test copies it, removes the two lines of PRD-devx 12.5 at the end, and compares.
@@ -195,7 +237,7 @@ New and changed paths. One responsibility per package. The v1 layout of `docs/pl
 | `internal/agentsetup` | `agent setup` for Claude Code and pi, JSON write rule, assets, remote mode | 6 |
 | `internal/cli` | One file per command. New: `mode.go`, `bootstrap.go`, `service.go`, `credential.go`, `credential_check.go`, `logs.go`, `audit_read.go`, `host_forms.go`, `agent_setup.go`, `agent_issue.go`. `D2.0` creates each of them. | 2 to 6 |
 | `e2e/devx` | DX e2e suites, build tag `devxe2e`: `acs.go` (53 rows), one file `suite_<suite>_test.go` per suite, one file `dxac<NN>_test.go` per criterion | 1 to 10 |
-| `e2e/devx/dxh` | DX harness: host binary runner, pseudo-terminal driver, test `PATH`, preconditions, teardown, `User` suite copy and compare | 1, 9, 10 |
+| `e2e/devx/dxh` | DX harness: host binary runner, pseudo-terminal driver, child environment, test `PATH`, preconditions, teardown, group `Ensure` helpers, `User` suite copy and compare | 1, 2, 4, 6, 8, 9, 10 |
 | `e2e/devx/cmd/fakeharness` | Stub `claude` and `pi`, selected by `argv[0]` | 6 |
 | `e2e/devx/cmd/faketailscale` | Fake `tailscale` of PRD-devx 17.1 | 3 |
 | `e2e/devx/cmd/fakeinstall` | Test install command of the test pins. It records its argument and runs no `sudo`. | 3 |
@@ -250,6 +292,22 @@ Terms:
 - Suite: one top-level Go test `TestDevx<Suite>`. `SUITE=<Suite>` of `make e2e-devx` selects it.
 - Group: one subtest `TestDevx<Suite>/<group>`. The PRD-devx 15 teardown runs before and after each group.
 - Criterion test: one subtest `TestDevx<Suite>/<group>/DXAC<NN>_<Name>`.
+- Group setup: one function per group. It runs after the teardown before the group.
+
+Group setup rule:
+
+- The group setup creates the state that the criteria of the group need, for example a bootstrapped host or the canary resource.
+- Each criterion test calls the `dxh` `Ensure` helper of each state that it needs. An `Ensure` helper creates the state only when it is absent.
+- A criterion test never needs the effect of another criterion subtest. The exception is an order that PRD-devx 17 states inside one criterion.
+- Each criterion that `RUN` selects thus passes alone.
+- The contract task of each layer adds the groups of the layer to the suite file and owns the suite file in that layer.
+
+| `Ensure` helper | File | State | Owner |
+|---|---|---|---|
+| `EnsureBootstrapped` | `dxh/ensure_bootstrap.go` | `bootstrap --autostart yes --agent-setup claude-code=no --agent-setup pi=no` completed | `D2.3` |
+| `EnsureCanary` | `dxh/ensure_canary.go` | Bootstrapped host, PostgreSQL container, and the canary resource of DX-AC9 | `D4.2` |
+| `EnsureAgentSetup` | `dxh/ensure_agent.go` | Bootstrapped host, and agent setup of the stubs `claude` and `pi` as DX-AC39 and DX-AC41 | `D6.3` |
+| `EnsureLocalStack` | `dxh/localstack.go` | LocalStack container pinned by digest and `storage.aws` in `sag.yaml` | `D8.3` |
 
 | Suite | Phase | Run by | Groups in order, with their criteria in order |
 |---|---|---|---|
@@ -262,8 +320,8 @@ Terms:
 - Package `e2e/devx`. Its test files have the build tag `devxe2e`. `make e2e` does not build them, so no v1 run touches the real `HOME`.
 - `e2e/devx/acs.go` has no build tag, so `acreport` imports the table.
 - A layer adds its groups. A group of a later layer is absent.
-- The suites run the test build `bin/sag-devxtest`. DX-AC33 and DX-AC30 also use the product build `bin/sag`.
-- `SAG_TEST_IMAGE` names `localhost/sag:e2e`, built by `make image`.
+- The suites run the test build `bin/sag-devxtest`. DX-AC33 also uses the product build `bin/sag`. DX-AC30 uses two test builds (`D7.1`).
+- `SAG_TEST_IMAGE` names `localhost/sag:devx-e2e`. No v1 target builds this tag, so the DX run lock protects it.
 - `dxh` builds the harness stubs, the fake `tailscale`, and `fakeinstall` into the test program directory.
 - DX-AC44 has no Go subtest. `make e2e-devx-unit` runs the Node tests and writes a TAP file.
 - DX-AC49 is the Go unit test `TestDXAC49_SkillNamesToolsAndCodes`. `make e2e-devx-unit` runs it with `go test -json`.
@@ -273,7 +331,7 @@ Terms:
 | Target | Function | Layer |
 |---|---|---|
 | `build-devxtest` | `go build -tags devxtest -o bin/sag-devxtest ./cmd/sag` | 1 |
-| `e2e-devx` | Variables `SUITE` (default `Main`), `RUN` (criterion pattern, default all), `LAYER`. Wait for the DX run lock with `mkdir`, then `make build build-devxtest image`. Run `go test -tags devxe2e -json -count=1 -timeout 90m -run '^TestDevx$(SUITE)$$/.*/$(RUN)' ./e2e/devx/`. Write `e2e/report/devx-$(SUITE)/events.json` and the commit hash. Release the lock on each exit path. Run `acreport -suite devx -layer $(LAYER)`. | 1 |
+| `e2e-devx` | Variables `SUITE` (default `Main`), `RUN` (criterion pattern, default all), `LAYER`. Wait for the DX run lock with `mkdir`, and write the file `owner`. Remove a lock whose owner PID does not run. Then `make build build-devxtest`, and build `localhost/sag:devx-e2e` from `deploy/Containerfile` with the label `sag.devx-e2e=1`. Run `go test -tags devxe2e -json -count=1 -timeout 90m -run '^TestDevx$(SUITE)$$/.*/$(RUN)' ./e2e/devx/`. Write `e2e/report/devx-$(SUITE)/events.json` and the commit hash. Release the lock on each exit path. Run `acreport -suite devx -layer $(LAYER)`. | 1 |
 | `e2e-devx-unit` | `node --test --test-reporter=tap "internal/agentsetup/assets/pi/*.test.ts"` to `e2e/report/devx-unit/node.tap`, and `go test -json -count=1 -run '^TestDXAC49_' ./internal/agentsetup/` to `e2e/report/devx-unit/events.json`. Then `acreport -suite devx -layer $(LAYER)`. | 6 |
 
 - Example: `make e2e-devx SUITE=Main RUN=DXAC04_ LAYER=2` runs DX-AC4 only.
@@ -310,16 +368,17 @@ No CI job is a gate (PRD-devx 17). A CI result is information for Ulrich.
 
 The v1 gate (`docs/plan/README.md` section 7) applies on `feat/devx` with these steps in place of its steps 3 and 4:
 
-1. In `.dev/devx`, run `make test` and `make e2e-matrix LAYER=6 PGS="14 17 19"`. Expected: exit 0 (v1 regression).
+1. In `.dev/devx`, run `podman system df` and record the output. Run `make test` and `make e2e-matrix LAYER=6 PGS="14 17 19"`. Expected: exit 0 (v1 regression).
 2. From layer 2, run `make e2e-devx SUITE=Main LAYER=<N>`. From layer 3, also run `make e2e-devx SUITE=Pins LAYER=<N>`. From layer 6, also run `make e2e-devx-unit LAYER=<N>`.
 3. In layer 9, also run the steps of `D9.6`: `make e2e-devx SUITE=Mac LAYER=9` and the `User` run of Ulrich.
-4. Read `e2e/report/devx/ac-report.md`. Expected: the gate rule of section 5.4 holds.
+4. Read `e2e/report/devx/ac-report.md`. Expected: the gate rule of section 5.4 holds. Run `podman system df` and record the output.
 5. If a step fails, fix the cause in `.dev/devx` and run the step again.
 
 - The review diff is `git diff sag-devx-<N-1> > ../local/devx-layer-<N>.diff`.
 - The review sub-agent uses `model: fable` and `effort: high`. It gets the diff, the PRD-devx sections of the layer, the AC report, and the layer file. It counts as one agent of the pool.
 - After the review fixes, run steps 1 to 4 again. This second run is part of the gate.
-- The review file appends the final `ac-report.md` table and the `env` block.
+- The review file appends the final `ac-report.md` table, the `env` block, and the two `podman system df` outputs of the second run.
+- A growth of the reclaimable size from the previous gate to this gate is a defect of the layer.
 - The gate closes when the tag `sag-devx-<N>` exists and the gate rule holds.
 
 ### 6.2 Phase B gate
@@ -341,11 +400,11 @@ Layer 0  Plan bootstrap, PRD.md changes, harness form record
 Phase A, macOS development machine
 
 Layer 1  Base: deploy package, SecureStorage, DX harness (no DX-AC)
-  D0.1 D0.2 -> D1.0 -> D1.1 D1.2 D1.3
+  D0.1 D0.2 D0.3 -> D1.0 -> D1.1 D1.2 D1.3
   all  -> D1.4
 
 Layer 2  Bootstrap and service on macOS (DX-AC1 2 4 27 28 33 36)
-  D1.4 D0.3 -> D2.0 -> D2.1 D2.2 D2.3 D2.4
+  D1.4 -> D2.0 -> D2.1 D2.2 D2.3 D2.4
   D2.2 (verify after D2.1)
   D2.3 (verify after D2.2, D2.4)
   all  -> D2.5
@@ -380,7 +439,7 @@ Layer 7  Image selection and release workflow (DX-AC30)
 
 Layer 8  AWS Secrets Manager backend (DX-AC31 32)
   D7.3 -> D8.0 -> D8.1 D8.2 D8.3
-  D8.2 (verify after D8.1)
+  D8.2 (verify after D8.1, D8.3)
   D8.3 (verify after D8.1)
   all  -> D8.4
 
@@ -507,7 +566,7 @@ Aelita estimate in hours, not a commitment. Wall-clock is contract + parallel ph
 | Gate run | v1 matrix (about 45 min) and the DX suites of the layer, in series |
 | Wall-clock with the pool of 3 agents | about 108 h for phase A, about 15 h for phase B |
 | Agent-hours | about 180 h |
-| Serial floor | about 75 h: 11 contract tasks, 10 integration tasks with two gate runs each, and layer 0 |
+| Serial floor | about 75 h: 10 contract tasks, 10 integration tasks with two gate runs each, and layer 0 |
 | Pushes | None needed by a gate |
 | Ulrich time | `D0.2` approval, `D0.3` (about 20 min), the `User` run of `D9.6` (about 30 min), the phase B access and ruling, each review approval |
 
@@ -515,14 +574,14 @@ Aelita estimate in hours, not a commitment. Wall-clock is contract + parallel ph
 
 1. Phase A proves no Linux path. Linux defects show only in layer 10. Its estimate has the least evidence.
 2. Phase B waits for the Debian machine and a ruling. Debian 12 ships Podman 4.3.1, which is older than the Linux pin 4.9.3. The ruling can change the Linux pin, PRD-devx 1 and 3, and DX-AC5.
-3. 3 agents, the DX suites, and the v1 matrix share `podman-machine-default` (4 CPU, 8 GiB). The DX run lock makes the DX runs wait for each other.
-4. The DX suites change real user state on the machine: `<cfg>`, the LaunchAgent, the container `sag`, port 8443, and `~/.bash_profile`. A crashed run can leave state. The next precondition check stops and names it.
-5. DX-AC10 scans the real `$HOME` of Ulrich for a private key. The scan can take minutes. It prints no file content.
+3. 3 agents, the DX suites, and the v1 matrix share `podman-machine-default` (4 CPU, 8 GiB). The DX run lock makes the DX runs wait for each other. The free-space precondition of section 2.1 stops a DX run below 10 GiB. Ulrich frees other space himself.
+4. The DX suites change real user state on the machine: `<cfg>`, the LaunchAgent, the container `sag`, port 8443, and `~/.bash_profile`. A crashed run can leave state. The next run removes it through the marker of section 2.1. Without the marker, the precondition check stops and names it.
+5. DX-AC10 scans the real `$HOME` of Ulrich for a private key. The scan reads only files that changed after the start of the group. A file older than the group cannot hold a key of that group. The scan has a limit of 5 min and prints no file content.
 6. DX-AC52 changes the real Tailscale serve configuration of Ulrich during its run. The teardown and the saved serve status check it.
 7. The `User` suite detects a Claude Code process by the command name `claude`. A Claude Code process with another command name is not detected. `D9.1` also matches a `node` process whose arguments hold `claude`.
 8. The stub formats follow one recorded line of Claude Code 2.1.332 (`D0.3`). A new harness version can change the format. The pins in PRD-devx 1 hold the versions.
 9. `host.containers.internal` on the Podman machine reaches a published port of the macOS host only through `gvproxy`. `D4.0` confirms it for DX-AC9 before the tasks start.
-10. DX-AC30 needs a registry redirect for `docker.io/kanthorlabs/sag`. On the macOS machine, the pull runs inside `podman-machine-default`, and a `registries.conf` change there changes the shared machine. Open point O1 needs a ruling before `D7.0`.
+10. DX-AC30 proves the digest pull only from a local registry through `SAG_TEST_REGISTRY` (ruling Q34). The first real release proves the pull from `docker.io`.
 11. DX-AC32 needs an AWS endpoint that drops packets. `D8.0` confirms a method on the machine, for example `podman pause` of the LocalStack container. No method changes `podman-machine-default`.
 12. The UID 0 clause of DX-AC36 needs `sudo -n`. The development machine does not give it, so the clause runs only in phase B. Phase A has the unit test `TestUID0Refused`.
 13. Probe evidence (plan review, Ubuntu 24.04 container, arm64, Podman 4.9.3): `podman container inspect` lists the secrets, and `apt-get remove podman` keeps the rootless store. `D1.2` confirms the secret list on the development machine. `D10.0` confirms both on the Debian machine.

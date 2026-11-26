@@ -16,10 +16,10 @@ These bootstrap steps stay stubs in this layer: the dependency rule (step 6), Ta
 
 | Task | Owns |
 |---|---|
-| `D2.0` | `internal/cli/cli.go` (dispatch table, exit code 3, host and container command sets, mode field of the command frame), each new `internal/cli` command file of README section 3 as a stub, `internal/hoststate/types.go`, `internal/stepline/stepline.go`, `internal/testhook/*.go` stubs, `internal/bootstrap/steps.go`, stubs of `internal/service`, `internal/endpointcert`, `internal/masterkey`, `internal/image` |
+| `D2.0` | `internal/cli/cli.go` (dispatch table, exit code 3, host and container command sets, mode field of the command frame), each new `internal/cli` command file of README section 3 as a stub, `internal/hoststate/types.go`, `internal/stepline/stepline.go`, `internal/testhook/*.go` stubs, `internal/bootstrap/steps.go`, stubs of `internal/service`, `internal/endpointcert`, `internal/masterkey`, `internal/image`, `e2e/devx/suite_main_test.go`, stub of `e2e/devx/dxh/ensure_bootstrap.go` |
 | `D2.1` | `internal/cli/mode.go`, the existing `internal/cli/*_test.go` files, `internal/hoststate/*`, `internal/prompt/*`, `internal/testhook/*`, `e2e/devx/dxac33_test.go`, `e2e/devx/dxac36_test.go` |
 | `D2.2` | `internal/bootstrap/*` except `steps.go`, `internal/cli/bootstrap.go`, `internal/cli/bootstrap_test.go`, `e2e/devx/dxac04_test.go` |
-| `D2.3` | `internal/service/*`, `internal/cli/service.go`, `internal/cli/service_test.go`, `e2e/devx/dxac01_test.go`, `e2e/devx/dxac02_test.go`, `e2e/devx/dxac27_test.go`, `e2e/devx/dxac28_test.go` |
+| `D2.3` | `internal/service/*`, `internal/cli/service.go`, `internal/cli/service_test.go`, `e2e/devx/dxh/ensure_bootstrap.go`, `e2e/devx/dxh/ensure_bootstrap_test.go`, `e2e/devx/dxac01_test.go`, `e2e/devx/dxac02_test.go`, `e2e/devx/dxac27_test.go`, `e2e/devx/dxac28_test.go` |
 | `D2.4` | `internal/endpointcert/*`, `internal/masterkey/*`, `internal/image/*` |
 | `D2.5` | Every layer-2 file after `D2.1` to `D2.4` merge. `docs/reviews/devx-layer-2.md`. |
 
@@ -28,14 +28,16 @@ These bootstrap steps stay stubs in this layer: the dependency rule (step 6), Ta
 - Goal: Freeze the host command frame, the state types, the step order, and the test hook names.
 - Owns: see the ownership table.
 - Reads: PRD-devx 1, 2.1, 5, 6, 17.1.
-- Depends on: `D1.4`, `D0.3`.
+- Depends on: `D1.4`.
 - Content:
   - `cli.go`: `ExitRefusal = 3`. The command frame has a mode field (host or container). A test sets it directly. The dispatch table lists each command of PRD-devx 1.1.
   - Each new command file of README section 3 holds its entry function. A command not built yet exits 1 with `not implemented`. Later contract tasks own these files and do not change `cli.go`.
   - `hoststate/types.go`: `Paths` (`<cfg>`, `sag.yaml`, `ca.pem`, `answers.json`, `lock`), `Answers` with the JSON keys `autostart`, `agent_setup`, `deny_rules`, `shell_profile`, `guard`, `podman_path`, `tailscale_ip`.
   - `stepline.go`: `Writer.Line(status, item, detail)` with the five statuses of PRD-devx 1.3.
-  - `testhook`: each hook name of PRD-devx 17.1: `SAG_TEST_PINS`, `SAG_TEST_IMAGE`, `SAG_TEST_CERT_DAYS`, `SAG_TEST_ABSENT`, `SAG_TEST_STOP_BEFORE_INSTALL`, and the failure points of DX-AC16, DX-AC22, DX-AC29, DX-AC37. No later task adds a hook name.
+  - `testhook`: each hook name of PRD-devx 17.1: `SAG_TEST_PINS`, `SAG_TEST_IMAGE`, `SAG_TEST_CERT_DAYS`, `SAG_TEST_ABSENT`, `SAG_TEST_STOP_BEFORE_INSTALL`, `SAG_TEST_REGISTRY`, and the failure points of DX-AC16, DX-AC22, DX-AC29, DX-AC37. No later task adds a hook name.
   - `bootstrap/steps.go`: the ordered list of the 15 steps with one function value per step.
+  - `suite_main_test.go`: add the groups `base`, `noterm`, `guards`, and `service` to `TestDevxMain`, each with its group setup (README section 5.1).
+  - `dxh/ensure_bootstrap.go`: `EnsureBootstrapped(t)` stub.
 - Tests first: none. The contract has no logic.
 - ACs: none.
 - Verify: `make contract-check`. Expected: exit 0.
@@ -92,12 +94,15 @@ These bootstrap steps stay stubs in this layer: the dependency rule (step 6), Ta
   - Wait up to 30 s for `GET /healthz` with `<cfg>/ca.pem`. On a timeout, print the last 50 lines of the daemon log and exit 1.
   - LaunchAgent `net.kanthorlabs.sag` with `RunAtLoad` and `ProgramArguments` `<absolute path of sag> service start`. Output to `~/Library/Logs/sag/service.log`.
   - `launchctl bootout`, then `launchctl bootstrap gui/<uid> <plist>`. A `bootout` of an agent that is not loaded is not a failure.
+  - When the plist on disk equals the new plist, step 11 has nothing to do (PRD-devx 5.2). It writes an `ok` line and runs no `bootout` and no `bootstrap`.
+  - `EnsureBootstrapped` runs the bootstrap of README section 5.1 when `<cfg>` or the container `sag` is absent.
   - Without the domain `gui/<uid>`, write the file and the `warn autostart loads at the next GUI login` line.
   - `service_linux.go` stays a stub until layer 10.
-- Tests first: `service_test.go` with a fake runner: `TestMacStartsStoppedMachineOnly`, `TestHealthzTimeoutTailsLog`, `TestLaunchAgentPlist`, `TestBootoutNotLoadedIsNotFailure`, `TestNoGUIDomainWarns`, `TestLinuxUnsupported`.
+- Tests first: `service_test.go` with a fake runner: `TestMacStartsStoppedMachineOnly`, `TestHealthzTimeoutTailsLog`, `TestLaunchAgentPlist`, `TestBootoutNotLoadedIsNotFailure`, `TestUnchangedPlistNoReload`, `TestNoGUIDomainWarns`, `TestLinuxUnsupported`; `dxh/ensure_bootstrap_test.go` with a fake runner: `TestEnsureBootstrappedSkipsWhenPresent`.
 - e2e: `DXAC01_Bootstrap`, `DXAC02_ContainerAndCert`, `DXAC27_Autostart`, `DXAC28_ServiceStopStart`.
+- `DXAC27_Autostart` also checks the `launchd` start: after `sag service stop`, `launchctl kickstart -k gui/<uid>/net.kanthorlabs.sag` gives `/healthz` 200 within 30 s.
 - ACs: DX-AC1, DX-AC2, DX-AC27, DX-AC28.
-- Verify: `go test -count=1 ./internal/service/... ./internal/cli/... -run 'Service|Mac|Healthz|LaunchAgent|Bootout|GUIDomain|LinuxUnsupported' && GOOS=linux CGO_ENABLED=0 go vet ./internal/service/... && make e2e-devx SUITE=Main RUN='DXAC0[12]_|DXAC2[78]_' LAYER=2`. Expected: `ok`, then exit 0.
+- Verify: `go test -count=1 ./internal/service/... ./internal/cli/... -run 'Service|Mac|Healthz|LaunchAgent|Bootout|UnchangedPlist|GUIDomain|LinuxUnsupported' && go test -count=1 ./e2e/devx/dxh/... -run EnsureBootstrapped && GOOS=linux CGO_ENABLED=0 go vet ./internal/service/... && make e2e-devx SUITE=Main RUN='DXAC0[12]_|DXAC2[78]_' LAYER=2`. Expected: `ok`, then exit 0.
 - Done when: the teardown removes the LaunchAgent and the precondition check of the next run passes.
 
 ## D2.4 Master key, certificate, image pull

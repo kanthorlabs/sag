@@ -17,7 +17,7 @@ Agents edit code in their worktrees on the macOS development machine. They run e
 
 | Task | Owns |
 |---|---|
-| `D10.0` | `deploy/pins` (Linux line), `internal/bootstrap/platform.go` (list of accepted platforms only), the signatures of each `_linux.go` file below, `e2e/devx/suite_install_test.go`, `docs/reviews/devx-layer-10.md` (machine record) |
+| `D10.0` | `deploy/pins` (Linux line), `internal/bootstrap/platform.go` (list of accepted platforms only), the signatures of each `_linux.go` file below, `e2e/devx/suite_install_test.go`, `e2e/devx/dxh/precondition.go`, `e2e/devx/dxh/precondition_test.go`, `docs/reviews/devx-layer-10.md` (machine record) |
 | `D10.1` | `internal/bootstrap/platform.go` (after `D10.0`), `internal/bootstrap/platform_test.go`, `internal/deps/*_linux.go`, `internal/deps/apt_test.go`, `e2e/devx/dxac05_test.go`, `e2e/devx/dxac08_test.go`, `e2e/devx/testdata/pins/*` |
 | `D10.2` | `internal/service/*_linux.go`, `internal/service/linux_test.go`, `e2e/devx/dxh/journal.go`, `e2e/devx/dxh/journal_test.go`, `e2e/devx/dxh/teardown.go`, `e2e/devx/dxac01_test.go`, `dxac02_test.go`, `dxac10_test.go`, `dxac27_test.go`, `dxac40_test.go` |
 | `D10.3` | `internal/portcheck/*_linux.go`, `internal/portcheck/ss_test.go`, `internal/tailscale/*_linux.go`, `internal/tailscale/operator_test.go`, `e2e/devx/dxac36_test.go`, `dxac41_test.go`, `dxac50_test.go`, `dxac53_test.go` |
@@ -34,11 +34,13 @@ Agents edit code in their worktrees on the macOS development machine. They run e
   - `platform.go`: add the ruled Linux platforms to the list of accepted platforms. `D10.1` adds the distribution check.
   - Signatures of the Linux files: apt install, user Quadlet service, `ss` parse, operator step, user journal read.
   - `suite_install_test.go`: `TestDevxInstall` with the group `install`.
+  - Linux form of the `dxh` preconditions: no Podman machine check, and no check of the LaunchAgent or `~/Library/Logs/sag/`. Check that the file `~/.config/containers/systemd/sag.container` and the unit `sag.service` do not exist.
+  - Linux free-space check: the file system of the Podman store (`podman info --format '{{.Store.GraphRoot}}'`) has at least 10 GiB free. Below the limit, the run writes `fail podman store free space <n> GiB; need 10`.
   - Machine record in `docs/reviews/devx-layer-10.md`: OS version, Podman version from apt, linger state, `sudo -n` result for the test user.
   - Confirm that `podman container inspect` lists the secrets of a container (PRD-devx 8). Confirm that `apt-get install -y podman` installs `uidmap`. Record both results.
-- Tests first: none. The contract has no logic.
+- Tests first: `dxh/precondition_test.go` with a fake runner: `TestLinuxPreconditions`, `TestLinuxRefusesLowDisk`. The other content has no logic.
 - ACs: none.
-- Verify: `make contract-check && GOOS=linux CGO_ENABLED=0 go vet ./...`. Expected: exit 0.
+- Verify: `make contract-check && GOOS=linux CGO_ENABLED=0 go vet ./... && go test -count=1 ./e2e/devx/dxh/... -run Linux`. Expected: exit 0.
 - Done when: `D10.1` to `D10.3` compile against the signatures, and the machine record exists.
 
 ## D10.1 Linux install

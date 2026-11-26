@@ -14,9 +14,9 @@
 
 | Task | Owns |
 |---|---|
-| `D4.0` | `go.mod`, `go.sum` (`golang.org/x/term`), `internal/core/credential.go`, `internal/prompt/hidden.go` stub, stubs of `internal/credential/create.go`, `list.go` |
+| `D4.0` | `go.mod`, `go.sum` (`golang.org/x/term`), `internal/core/credential.go`, `internal/prompt/hidden.go` stub, stubs of `internal/credential/create.go`, `list.go`, `e2e/devx/suite_main_test.go`, stub of `e2e/devx/dxh/ensure_canary.go` |
 | `D4.1` | `internal/adapter/postgres/credential.go`, `internal/adapter/postgres/credential_test.go`, `internal/adapter/postgres/credential_integration_test.go`, `internal/cli/credential_check.go`, `internal/cli/credential_check_test.go`, `e2e/devx/dxac12_test.go`, `e2e/devx/dxac13_test.go` |
-| `D4.2` | `internal/credential/create.go`, `internal/credential/input.go`, `internal/credential/yaml.go`, their tests, `internal/prompt/hidden.go`, `internal/prompt/hidden_test.go`, `internal/cli/credential.go`, `internal/cli/credential_test.go`, `e2e/devx/dxac09_test.go`, `dxac11_test.go`, `dxac14_test.go`, `dxac15_test.go`, `dxac16_test.go`, `dxac37_test.go` |
+| `D4.2` | `internal/credential/create.go`, `internal/credential/input.go`, `internal/credential/yaml.go`, their tests, `internal/prompt/hidden.go`, `internal/prompt/hidden_test.go`, `internal/cli/credential.go`, `internal/cli/credential_test.go`, `e2e/devx/dxac09_test.go`, `dxac11_test.go`, `dxac14_test.go`, `dxac15_test.go`, `dxac16_test.go`, `dxac37_test.go`, `e2e/devx/dxh/ensure_canary.go`, `e2e/devx/dxh/ensure_canary_test.go` |
 | `D4.3` | `internal/credential/list.go`, `internal/credential/list_test.go`, `e2e/devx/dxac10_test.go`, `dxac17_test.go`, `dxac29_test.go`, `e2e/devx/dxh/leak.go`, `e2e/devx/dxh/leak_test.go` |
 | `D4.4` | Every layer-4 file after `D4.1` to `D4.3` merge. `docs/reviews/devx-layer-4.md`. |
 
@@ -31,6 +31,7 @@
   - `go.mod`: add `golang.org/x/term` as a direct module.
   - `prompt.ReadHidden(tty, label) (secret.Credential, error)`.
   - `credential.Create(ctx, opts) error`, `credential.List(ctx, opts) ([]Entry, error)`, `credential.Inspect(ctx, name, opts) (Entry, error)`. `Entry` holds exactly the fields of PRD-devx 8.
+  - `suite_main_test.go`: add the groups `credential` and `cert` to `TestDevxMain`, each with its group setup (README section 5.1). `dxh/ensure_canary.go`: `EnsureCanary(t)` stub.
   - Confirm that a container on `podman-machine-default` reaches a PostgreSQL container through `host.containers.internal` and its published port. Record the result in `docs/reviews/devx-layer-4.md`.
 - Tests first: none. The contract has no logic.
 - ACs: none.
@@ -66,10 +67,11 @@
   - Effects of PRD-devx 7.5 under the lock. Edit `sag.yaml` with a temporary file and a rename. Validate with the `config check` rules.
   - Rollback restores `sag.yaml`, deletes only the secrets of this call, runs `sag service start`, and exits 1.
   - Test hooks: fail step 3 after step 1 (DX-AC16), fail step 3 after step 2 (DX-AC37).
-- Tests first: `create_test.go` with fake backend and runner: `TestValidationOrder`, `TestNameRegexp`, `TestResourceExists`, `TestSecretExists`, `TestStdinLimits`, `TestStdinTerminalRefused`, `TestPipedWithoutStdinExit3`, `TestRollbackDeletesOwnSecretsOnly`, `TestKeepsOtherYAML`, `TestArgsHoldNoValue`.
+  - `EnsureCanary` calls `EnsureBootstrapped`. It starts the PostgreSQL container and creates the canary resource as DX-AC9 when the resource is absent.
+- Tests first: `create_test.go` with fake backend and runner: `TestValidationOrder`, `TestNameRegexp`, `TestResourceExists`, `TestSecretExists`, `TestStdinLimits`, `TestStdinTerminalRefused`, `TestPipedWithoutStdinExit3`, `TestRollbackDeletesOwnSecretsOnly`, `TestKeepsOtherYAML`, `TestArgsHoldNoValue`; `dxh/ensure_canary_test.go` with a fake runner: `TestEnsureCanarySkipsWhenPresent`.
 - e2e: `DXAC09_CreateCanary`, `DXAC11_CreateRejectsForm`, `DXAC14_CreateStdin`, `DXAC15_CreateSecretExists`, `DXAC16_CreateRollback`, `DXAC37_CreateTLSCA`.
 - ACs: DX-AC9, DX-AC11, DX-AC14, DX-AC15, DX-AC16, DX-AC37.
-- Verify: `go test -count=1 ./internal/credential/... ./internal/prompt/... ./internal/cli/... && make e2e-devx SUITE=Main RUN='DXAC09_|DXAC1[1456]_|DXAC37_' LAYER=4`. Expected: `ok`, then exit 0.
+- Verify: `go test -count=1 ./internal/credential/... ./internal/prompt/... ./internal/cli/... ./e2e/devx/dxh/... && make e2e-devx SUITE=Main RUN='DXAC09_|DXAC1[1456]_|DXAC37_' LAYER=4`. Expected: `ok`, then exit 0.
 - Done when: the value goes only to standard input of `podman secret create` and `podman exec -i`.
 
 ## D4.3 `credential list`, `inspect`, leak search
@@ -85,7 +87,11 @@
   - An unreachable backend gives a `warn` line and exit 0.
   - `dxh/leak.go` searches the sources of DX-AC10 for given strings. In phase A, the service log is `~/Library/Logs/sag/service.log`, and the start at login file is the LaunchAgent.
   - The private key scan of DX-AC10 walks `$HOME` and the temporary directory. It does not follow a symbolic link. It reads only PEM blocks and prints no file content.
-- Tests first: `list_test.go`: `TestJSONFieldSetExact`, `TestNoLoadCall`, `TestUnreachableBackendWarns`, `TestExpiryWarn`, `TestInspectUnknownExit1`; `leak_test.go`: `TestFindsGivenString`, `TestKeyScanPrintsNoContent`.
+  - The scan reads only regular files with a change time at or after the start of the group and a size of at most 1 MiB. It does not leave the file system of `$HOME`.
+  - The scan skips a directory that gives a permission error. One output line gives the count of skipped directories.
+  - The scan has a time limit of 5 min. It fails on the limit.
+  - `DXAC10_CanaryNoLeak` and `DXAC17_ListInspect` call `EnsureCanary`.
+- Tests first: `list_test.go`: `TestJSONFieldSetExact`, `TestNoLoadCall`, `TestUnreachableBackendWarns`, `TestExpiryWarn`, `TestInspectUnknownExit1`; `leak_test.go`: `TestFindsGivenString`, `TestKeyScanPrintsNoContent`, `TestKeyScanSkipsOldFiles`, `TestKeyScanCountsDenied`.
 - e2e: `DXAC10_CanaryNoLeak`, `DXAC17_ListInspect`, `DXAC29_CertRenewal`.
 - ACs: DX-AC10, DX-AC17, DX-AC29.
 - Verify: `go test -count=1 ./internal/credential/... ./e2e/devx/dxh/... && make e2e-devx SUITE=Main RUN='DXAC1[07]_|DXAC29_' LAYER=4`. Expected: `ok`, then exit 0.

@@ -49,12 +49,16 @@ The constraints of README section 2.1 apply to each task of this layer.
 - Depends on: `D9.0`.
 - Method:
   - `CheckNoClaude`: when a process with the command name `claude` runs, or a `node` process whose arguments hold `claude`, exit 1 and change nothing.
-  - `Snapshot`: copy `~/.claude.json`, `~/.claude/settings.json`, `~/.pi/agent/mcp.json`, and the shell profile to `.dev/local/devx-user/<UTC time>/`, mode 0700.
-  - After the PRD-devx 15 teardown, `CompareSAGEntries` compares only the SAG entries of PRD-devx 17.1 with the copy. It restores no file.
+  - Profile check (ruling Q35): when `CLAUDE_CONFIG_DIR` is set, exit 1 with `unset CLAUDE_CONFIG_DIR; this suite uses the default profile` and change nothing. When `PI_CODING_AGENT_DIR` is set, exit 1 with `unset PI_CODING_AGENT_DIR; this suite uses the default profile`.
+  - The `User` suite uses `~/.claude` and `~/.claude.json`. No code path reads or writes `~/.ccp`.
+  - The test `PATH` of the `User` suite holds one new directory with links to the real `claude`, `pi`, and `node` (README section 2.1).
+  - `Snapshot`: copy `~/.claude.json`, `~/.claude/settings.json`, `~/.pi/agent/mcp.json`, and the shell profile to `.dev/local/devx-user/<UTC time>/`, mode 0700. Record a file that is absent as absent.
+  - `userrun.go` runs PRD-devx 15 steps 9 and 10 on the real harness files after the teardown steps of `dxh`.
+  - After the teardown, `CompareSAGEntries` compares only the SAG entries of PRD-devx 17.1 with the copy. A file recorded as absent passes when it is absent or holds no SAG entry. It restores no file.
   - On a difference, exit 1, keep the copy directory, and print its path. After a successful compare, remove the copy directory.
-  - The `User` suite calls `CheckNoClaude`, the preconditions, and `Snapshot` before the group `harness`.
+  - The `User` suite calls `CheckNoClaude`, the profile check, the preconditions, and `Snapshot` before the group `harness`.
   - The runner masks the Tailscale IP in each output line with `<tailscale IP>`.
-- Tests first: `userrun_test.go` with fake commands and a test `HOME`: `TestRefusesClaudeProcess`, `TestRefusesNodeClaudeProcess`, `TestCompareSAGEntriesOnly`, `TestDifferenceKeepsCopy`, `TestNoRestore`, `TestCopyMode0700`, `TestMasksTailscaleIP`; `versions_test.go`: `TestEnvHasNoIP`.
+- Tests first: `userrun_test.go` with fake commands and a test `HOME`: `TestRefusesClaudeProcess`, `TestRefusesNodeClaudeProcess`, `TestRefusesClaudeConfigDir`, `TestRefusesPiCodingAgentDir`, `TestTeardownHarnessSteps`, `TestAbsentFileSnapshot`, `TestCompareSAGEntriesOnly`, `TestDifferenceKeepsCopy`, `TestNoRestore`, `TestCopyMode0700`, `TestMasksTailscaleIP`; `versions_test.go`: `TestEnvHasNoIP`.
 - ACs: none.
 - Verify: `go test -count=1 ./e2e/devx/dxh/... && go vet -tags devxe2e ./e2e/devx/...`. Expected: `ok`, then exit 0.
 - Done when: no code path of the guard writes a harness file of Ulrich.
@@ -101,7 +105,7 @@ The constraints of README section 2.1 apply to each task of this layer.
 - Depends on: `D9.0`.
 - Method:
   - Precondition: Tailscale up and no TCP 8443 entry in `tailscale serve status --json`. Else the criterion fails with `prerequisite missing` and changes nothing.
-  - Save the serve status before the run. The test `PATH` holds the directory of the real `tailscale` for this criterion only.
+  - Save the serve status before the run. For this criterion only, the test `PATH` holds one new directory with a link to the real `tailscale` (README section 2.1).
   - `curl --cacert <cfg>/ca.pem https://<tailscale IP>:8443/healthz` returns 200. `lsof -nP -iTCP:8443 -sTCP:LISTEN` shows no `*:8443`.
   - After `tailscale serve --tcp 8443 off`, the status has no TCP 8443 entry and the `curl` fails. The status equals the saved status.
   - Never run `tailscale funnel`. Read the address at run time. Write it to no file, log line, or report.
@@ -131,7 +135,7 @@ The constraints of README section 2.1 apply to each task of this layer.
 - Steps:
   1. Run README section 6.1 steps 1 and 2.
   2. Run `make e2e-devx SUITE=Mac LAYER=9`.
-  3. Tell Ulrich the command and its preconditions. Ulrich exits each Claude Code session, then runs `make e2e-devx SUITE=User LAYER=9` in `.dev/devx` from a new terminal.
+  3. Tell Ulrich the command and its preconditions. Ulrich exits each Claude Code session and opens a new terminal. He runs `unset CLAUDE_CONFIG_DIR PI_CODING_AGENT_DIR` and checks that `env -u CLAUDE_CONFIG_DIR claude -p "ok"` works. Then he runs `make e2e-devx SUITE=User LAYER=9` in `.dev/devx`.
   4. After Ulrich resumes the coordinator, read `e2e/report/devx-User/events.json` and the report. Check that they hold no IP address, no JWT, and no credential value.
   5. Run the review, the fixes, and the second gate run of README section 6.1. Ulrich runs the `User` suite again only when the exception of README section 5.4 does not hold.
   6. Record in `docs/reviews/devx-layer-9.md`: "18.1 not run; no macOS machine without Podman" (ruling Q32). Append the `env` block.

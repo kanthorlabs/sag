@@ -14,10 +14,10 @@
 
 | Task | Owns |
 |---|---|
-| `D6.0` | `internal/agentsetup/agentsetup.go`, `types.go`, `paths.go`, stubs of the files below, `internal/bootstrap/steps.go` (calls of step 14 and step 15), `Makefile` (`e2e-devx-unit`), `.github/workflows/ci.yml` (Node step of `devx-unit`), `e2e/devx/suite_user_test.go` |
+| `D6.0` | `internal/agentsetup/agentsetup.go`, `types.go`, `paths.go`, stubs of the files below, `internal/bootstrap/steps.go` (calls of step 14 and step 15), `Makefile` (`e2e-devx-unit`), `.github/workflows/ci.yml` (Node step of `devx-unit`), `e2e/devx/suite_user_test.go`, `e2e/devx/suite_main_test.go`, stub of `e2e/devx/dxh/ensure_agent.go` |
 | `D6.1` | `internal/agentsetup/jsonwrite.go`, `register.go`, `jwt.go`, `catrust.go`, `plan.go`, `verify.go`, their tests, `internal/cli/agent_issue.go`, `internal/cli/agent_setup.go`, their tests, `e2e/devx/dxac39_test.go`, `e2e/devx/user_dxac39_test.go`, `e2e/devx/dxac45_test.go` |
 | `D6.2` | `internal/agentsetup/assets/*`, `internal/agentsetup/skill_test.go`, `e2e/devx/cmd/fakeharness/*` |
-| `D6.3` | `internal/agentsetup/control.go`, `profile.go`, their tests, `e2e/devx/dxac26_test.go`, `dxac40_test.go`, `dxac41_test.go`, `dxac42_test.go`, `dxac43_test.go` |
+| `D6.3` | `internal/agentsetup/control.go`, `profile.go`, their tests, `e2e/devx/dxh/ensure_agent.go`, `e2e/devx/dxh/ensure_agent_test.go`, `e2e/devx/dxac26_test.go`, `dxac40_test.go`, `dxac41_test.go`, `dxac42_test.go`, `dxac43_test.go` |
 | `D6.4` | `internal/agentsetup/remote.go`, `remote_test.go`, `e2e/devx/dxac51_test.go` |
 | `D6.5` | `internal/bootstrap/agents.go`, `internal/bootstrap/next.go`, their tests, `internal/cli/bootstrap.go`, `internal/cli/bootstrap_test.go`, `e2e/devx/dxac46_test.go` |
 | `D6.6` | Every layer-6 file after `D6.1` to `D6.5` merge. `docs/reviews/devx-layer-6.md`. |
@@ -36,6 +36,7 @@
   - Bootstrap step 14 calls `agentsetup.Run` with the plan answers under the bootstrap lock. Step 15 calls `next.Print`.
   - `Makefile`: target `e2e-devx-unit` of README section 5.2. `ci.yml`: Node 24 and `node --test` in `devx-unit`.
   - `suite_user_test.go`: `TestDevxUser` with the group `harness`. It refuses to run until `D9.1` adds the guard.
+  - `suite_main_test.go`: add the groups `agent` and `bootagent` to `TestDevxMain`, each with its group setup (README section 5.1). `dxh/ensure_agent.go`: `EnsureAgentSetup(t)` stub.
 - Tests first: none. The contract has no logic.
 - ACs: none.
 - Verify: `make contract-check && podman run --rm -v "$PWD:/repo:ro" -w /repo docker.io/rhysd/actionlint:1.7.9`. Expected: exit 0.
@@ -92,11 +93,12 @@
   - Claude Code: the three deny rules in `settings.json` with the JSON write rule. No duplicate.
   - pi: two lines in the shell profile of PRD-devx 12.2. `sag-guard.ts` only over a file with the marker.
   - DX-AC41 on macOS with `SHELL=/bin/bash` writes `~/.bash_profile`. The test copies the file, removes the two lines at the end, and compares (README section 2.1).
-  - DX-AC40 searches the service log `~/Library/Logs/sag/service.log` in phase A.
-- Tests first: `control_test.go`: `TestDenyRulesNoDuplicate`, `TestDenyRulesNoKeepsFile`, `TestGuardMarkerOnly`; `profile_test.go`: `TestProfileByShell`, `TestProfileLineOnce`, `TestFishRefused`.
+  - DX-AC40 searches the service log `~/Library/Logs/sag/service.log` in phase A. `DXAC40_JWTNoLeak` calls `EnsureAgentSetup`.
+  - `EnsureAgentSetup` calls `EnsureBootstrapped`. When `mcpServers.sag` is absent in the test directories, it runs the agent setup of DX-AC39 and DX-AC41 with the stubs.
+- Tests first: `control_test.go`: `TestDenyRulesNoDuplicate`, `TestDenyRulesNoKeepsFile`, `TestGuardMarkerOnly`; `profile_test.go`: `TestProfileByShell`, `TestProfileLineOnce`, `TestFishRefused`; `dxh/ensure_agent_test.go` with a fake runner: `TestEnsureAgentSetupSkipsWhenPresent`.
 - e2e: `DXAC26_DenyRules`, `DXAC40_JWTNoLeak`, `DXAC41_PiSetup`, `DXAC42_CATrustConflict`, `DXAC43_AgentSetupRefusals`.
 - ACs: DX-AC26, DX-AC40, DX-AC41, DX-AC42, DX-AC43.
-- Verify: `go test -count=1 ./internal/agentsetup/... && make e2e-devx SUITE=Main RUN='DXAC26_|DXAC4[0-3]_' LAYER=6`. Expected: `ok`, then exit 0.
+- Verify: `go test -count=1 ./internal/agentsetup/... ./e2e/devx/dxh/... && make e2e-devx SUITE=Main RUN='DXAC26_|DXAC4[0-3]_' LAYER=6`. Expected: `ok`, then exit 0.
 - Done when: an exit in the plan changes no file.
 
 ## D6.4 Remote mode
