@@ -22,10 +22,10 @@ const (
 var errMatchFound = errors.New("match found")
 
 type KeyScanResult struct {
-	MatchFound  bool
-	MatchPath   string
-	DeniedDirs  int
-	TimedOut    bool
+	MatchFound bool
+	MatchPath  string
+	DeniedDirs int
+	TimedOut   bool
 }
 
 type CanaryParts struct {

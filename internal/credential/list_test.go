@@ -26,7 +26,7 @@ import (
 )
 
 type fakeBackend struct {
-	metas   map[string]secret.Metadata
+	metas      map[string]secret.Metadata
 	loadCalled bool
 }
 

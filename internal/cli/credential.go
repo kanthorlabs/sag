@@ -23,7 +23,7 @@ import (
 const credentialCreateUsage = "usage: sag credential create <name> --kind <kind> [--agent <sub>]... [--description <text>] [--tls disable|verify-full|insecure-skip-verify] [--tls-ca <path>] [--stdin] [--accept-failed-check]"
 
 var (
-	runCredentialList   = credential.List
+	runCredentialList    = credential.List
 	runCredentialInspect = credential.Inspect
 )
 

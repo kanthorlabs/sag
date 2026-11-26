@@ -149,4 +149,3 @@ func TestCredentialCheckServerConnectError(t *testing.T) {
 		t.Fatalf("credentialCheckServer query fail: got %v; want errCheckConnect", err)
 	}
 }
-

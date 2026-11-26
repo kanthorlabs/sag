@@ -266,4 +266,3 @@ func buildSecretEntry(
 
 	return se, unreachable, nil
 }
-

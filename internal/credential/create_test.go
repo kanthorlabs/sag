@@ -105,17 +105,17 @@ func baseOpts(t *testing.T) CreateOptions {
 	t.Helper()
 	store := newFakeStorage()
 	return CreateOptions{
-		Name:        "mydb",
-		Kind:        "fakedb",
-		Agents:      []string{"agent-a"},
-		TLS:         core.TLSDisable,
-		CfgDir:      t.TempDir(),
-		Storage:     store,
-		KindLookup:  func(k string) (core.CredentialKind, bool) { return fakeKind{}, k == "fakedb" },
-		CheckCred:   func(_ context.Context, _ string, _ core.TLSMode, _ secret.Credential, _ []byte) error { return nil },
+		Name:         "mydb",
+		Kind:         "fakedb",
+		Agents:       []string{"agent-a"},
+		TLS:          core.TLSDisable,
+		CfgDir:       t.TempDir(),
+		Storage:      store,
+		KindLookup:   func(k string) (core.CredentialKind, bool) { return fakeKind{}, k == "fakedb" },
+		CheckCred:    func(_ context.Context, _ string, _ core.TLSMode, _ secret.Credential, _ []byte) error { return nil },
 		ServiceStart: noopServiceStart,
 		ContainerRun: fakeContainerRunning,
-		OpenTTY:     func() (*os.File, error) { return nil, errors.New("no tty in tests") },
+		OpenTTY:      func() (*os.File, error) { return nil, errors.New("no tty in tests") },
 		StdinReader:  strings.NewReader("postgres://user:pass@db.example.com/mydb"),
 		IsStdinTerm:  false,
 		Stdin:        true,
@@ -148,17 +148,17 @@ func TestValidationOrder(t *testing.T) {
 
 	call := func(name, kind string, agents []string) error {
 		opts := CreateOptions{
-			Name:        name,
-			Kind:        kind,
-			Agents:      agents,
-			TLS:         core.TLSDisable,
-			CfgDir:      dir,
-			Storage:     store,
-			KindLookup:  func(k string) (core.CredentialKind, bool) { return fakeKind{}, k == "fakedb" },
-			CheckCred:   func(_ context.Context, _ string, _ core.TLSMode, _ secret.Credential, _ []byte) error { return nil },
+			Name:         name,
+			Kind:         kind,
+			Agents:       agents,
+			TLS:          core.TLSDisable,
+			CfgDir:       dir,
+			Storage:      store,
+			KindLookup:   func(k string) (core.CredentialKind, bool) { return fakeKind{}, k == "fakedb" },
+			CheckCred:    func(_ context.Context, _ string, _ core.TLSMode, _ secret.Credential, _ []byte) error { return nil },
 			ServiceStart: noopServiceStart,
 			ContainerRun: fakeContainerRunning,
-			OpenTTY:     func() (*os.File, error) { return nil, errors.New("no tty") },
+			OpenTTY:      func() (*os.File, error) { return nil, errors.New("no tty") },
 			StdinReader:  strings.NewReader("postgres://user:pass@db.example.com/mydb"),
 			IsStdinTerm:  false,
 			Stdin:        true,
@@ -277,7 +277,6 @@ func TestPipedWithoutStdinExit3(t *testing.T) {
 	}
 }
 
-
 func TestKeepsOtherYAML(t *testing.T) {
 	dir := t.TempDir()
 	writeSAGYAML(t, dir, baseYAML)
@@ -316,20 +315,20 @@ func TestArgsHoldNoValue(t *testing.T) {
 	var putArgs []string
 
 	opts := CreateOptions{
-		Name:        "mydb",
-		Kind:        "fakedb",
-		Agents:      []string{"agent-a"},
-		TLS:         core.TLSDisable,
-		CfgDir:      dir,
-		Storage:     store,
-		KindLookup:  func(k string) (core.CredentialKind, bool) { return fakeKind{}, k == "fakedb" },
+		Name:       "mydb",
+		Kind:       "fakedb",
+		Agents:     []string{"agent-a"},
+		TLS:        core.TLSDisable,
+		CfgDir:     dir,
+		Storage:    store,
+		KindLookup: func(k string) (core.CredentialKind, bool) { return fakeKind{}, k == "fakedb" },
 		CheckCred: func(_ context.Context, kind string, _ core.TLSMode, cred secret.Credential, _ []byte) error {
 			putArgs = append(putArgs, kind, cred.String())
 			return nil
 		},
 		ServiceStart: noopServiceStart,
 		ContainerRun: fakeContainerRunning,
-		OpenTTY:     func() (*os.File, error) { return nil, errors.New("no tty") },
+		OpenTTY:      func() (*os.File, error) { return nil, errors.New("no tty") },
 		StdinReader:  strings.NewReader(secretValue + "\n"),
 		IsStdinTerm:  false,
 		Stdin:        true,
