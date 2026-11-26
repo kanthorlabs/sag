@@ -124,11 +124,12 @@ func removeLabeledObjects(ctx context.Context, r Runner) error {
 }
 
 func macOSBootout(ctx context.Context, r Runner, uid string) error {
-	_, err := r.Output(ctx, "launchctl", "bootout", "gui/"+uid+"/net.kanthorlabs.sag")
-	if err != nil && !strings.Contains(err.Error(), "not loaded") {
-		return err
+	target := "gui/" + uid + "/net.kanthorlabs.sag"
+	if _, err := r.Output(ctx, "launchctl", "print", target); err != nil {
+		return nil
 	}
-	return nil
+	_, err := r.Output(ctx, "launchctl", "bootout", target)
+	return err
 }
 
 func removeVolumeIfPresent(ctx context.Context, r Runner, name string) error {

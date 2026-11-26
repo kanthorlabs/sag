@@ -16,6 +16,7 @@ func newCleanTeardownFake(home, uid, cfgDir string) (*fakeRunner, dxh.TeardownCo
 	r.set("podman ps -a --filter label=sag.devx-e2e=1 --format {{.Names}}", nil, nil)
 	r.set("podman volume ls --filter label=sag.devx-e2e=1 --format {{.Name}}", nil, nil)
 	r.set("podman network ls --filter label=sag.devx-e2e=1 --format {{.Name}}", nil, nil)
+	r.set("launchctl print gui/"+uid+"/net.kanthorlabs.sag", nil, nil)
 	r.set("launchctl bootout gui/"+uid+"/net.kanthorlabs.sag", nil, nil)
 	r.set("rm -f "+home+"/Library/LaunchAgents/net.kanthorlabs.sag.plist", nil, nil)
 	r.set("rm -rf "+home+"/Library/Logs/sag", nil, nil)
@@ -46,6 +47,7 @@ func TestTeardownOrder(t *testing.T) {
 		{"podman", "volume", "ls", "--filter", "label=sag.devx-e2e=1", "--format", "{{.Name}}"},
 		{"podman", "secret", "ls", "--format", "{{.Name}}"},
 		{"podman", "network", "ls", "--filter", "label=sag.devx-e2e=1", "--format", "{{.Name}}"},
+		{"launchctl", "print", "gui/1000/net.kanthorlabs.sag"},
 		{"launchctl", "bootout", "gui/1000/net.kanthorlabs.sag"},
 		{"rm", "-f", "/home/u/Library/LaunchAgents/net.kanthorlabs.sag.plist"},
 		{"rm", "-rf", "/home/u/Library/Logs/sag"},
@@ -158,6 +160,19 @@ func TestTeardownBootoutTarget(t *testing.T) {
 				t.Errorf("bootout target = %q, want %q", call[2], want)
 			}
 		}
+	}
+}
+
+func TestTeardownSkipsBootoutWhenAgentAbsent(t *testing.T) {
+	r, cfg := newCleanTeardownFake("/home/u", "1000", "/home/u/.config/sag")
+	r.set("launchctl print gui/1000/net.kanthorlabs.sag", nil, fmt.Errorf("exit status 113"))
+	r.set("launchctl bootout gui/1000/net.kanthorlabs.sag", nil, fmt.Errorf("exit status 3"))
+
+	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := callsContaining(r.calls, "launchctl bootout"); len(got) != 0 {
+		t.Errorf("bootout called for absent agent: %v", got)
 	}
 }
 
