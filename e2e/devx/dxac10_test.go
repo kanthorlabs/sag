@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,62 +30,124 @@ func DXAC10_CanaryNoLeak(t *testing.T, ctx context.Context) {
 	t.Helper()
 	dxh.EnsureCanary(t)
 
+	if len(dxh.ActiveCanaryTranscript) == 0 {
+		t.Fatal("DXAC10: ActiveCanaryTranscript is empty; D4.5b must set it before D4.5c runs")
+	}
+
 	canary := dxh.ActiveCanaryParts
-	needles := canaryNeedles(canary)
+	if canary.Password == "" || canary.Host == "" || canary.User == "" || canary.Database == "" {
+		t.Fatalf("DXAC10: canary parts incomplete: password=%v host=%v user=%v database=%v",
+			canary.Password != "", canary.Host != "", canary.User != "", canary.Database != "")
+	}
 
 	home := os.Getenv("HOME")
 	cfgDir := dxh.CfgDir(home)
 	uid := fmt.Sprintf("%d", os.Getuid())
 
+	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+		t.Fatalf("waitLaunchAgentIdle: %v", err)
+	}
+
 	t.Log("collect sources")
-	var sources []string
+	namedSources := map[string]string{}
 
-	listOut, listErr := runSAGWithStderr(t, ctx, "credential", "list")
-	sources = append(sources, listOut, listErr)
+	listOut, listErr, listRunErr := runSAGWithStderr(t, ctx, "credential", "list")
+	if listRunErr != nil {
+		t.Fatalf("credential list: %v", listRunErr)
+	}
+	namedSources["credential list stdout"] = listOut
+	namedSources["credential list stderr"] = listErr
 
-	inspectOut, inspectErr := runSAGWithStderr(t, ctx, "credential", "inspect", "canary")
-	sources = append(sources, inspectOut, inspectErr)
+	inspectOut, inspectErr, inspectRunErr := runSAGWithStderr(t, ctx, "credential", "inspect", "canary")
+	if inspectRunErr != nil {
+		t.Fatalf("credential inspect canary: %v", inspectRunErr)
+	}
+	namedSources["credential inspect stdout"] = inspectOut
+	namedSources["credential inspect stderr"] = inspectErr
+
+	namedSources["canary create transcript"] = string(dxh.ActiveCanaryTranscript)
+
+	podmanLogsCmd := exec.CommandContext(ctx, "podman", "logs", "--timestamps=false", "sag")
+	podmanLogsOut, err := podmanLogsCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("podman logs sag: %v\n%s", err, podmanLogsOut)
+	}
+	if len(podmanLogsOut) == 0 {
+		t.Fatal("DXAC10: podman logs sag: combined output is empty")
+	}
+	namedSources["podman logs sag"] = string(podmanLogsOut)
 
 	r := dxh.NewRunner()
 
-	podmanLogsOut, _ := r.Output(ctx, "podman", "logs", "sag")
-	sources = append(sources, string(podmanLogsOut))
-
-	podmanInspectOut, _ := r.Output(ctx, "podman", "container", "inspect", "sag")
-	sources = append(sources, string(podmanInspectOut))
+	podmanInspectOut, err := r.Output(ctx, "podman", "container", "inspect", "sag")
+	if err != nil {
+		t.Fatalf("podman container inspect sag: %v", err)
+	}
+	if len(podmanInspectOut) == 0 {
+		t.Fatal("DXAC10: podman container inspect sag: output is empty")
+	}
+	namedSources["podman container inspect sag"] = string(podmanInspectOut)
 
 	secretNames := collectSecretNames(ctx, r)
+	if len(secretNames) == 0 {
+		t.Fatal("DXAC10: no secrets found")
+	}
 	for _, sn := range secretNames {
-		siOut, _ := r.Output(ctx, "podman", "secret", "inspect", sn)
-		sources = append(sources, string(siOut))
+		siOut, err := r.Output(ctx, "podman", "secret", "inspect", sn)
+		if err != nil {
+			t.Fatalf("podman secret inspect %s: %v", sn, err)
+		}
+		if len(siOut) == 0 {
+			t.Fatalf("DXAC10: podman secret inspect %s: output is empty", sn)
+		}
+		namedSources["podman secret inspect "+sn] = string(siOut)
 	}
 
-	auditOut, _ := r.Output(ctx, "podman", "exec", "sag", "sag", "audit", "read")
-	sources = append(sources, string(auditOut))
+	auditOut, err := r.Output(ctx, "podman", "exec", "sag", "sag", "audit", "read")
+	if err != nil {
+		t.Fatalf("audit read: %v", err)
+	}
+	namedSources["audit log"] = string(auditOut)
 
 	serviceLogPath := filepath.Join(home, "Library", "Logs", "sag", "service.log")
 	if data, err := os.ReadFile(serviceLogPath); err == nil {
-		sources = append(sources, string(data))
+		namedSources["service log"] = string(data)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("read service log: %v", err)
 	}
 
 	answersPath := filepath.Join(cfgDir, "answers.json")
 	if data, err := os.ReadFile(answersPath); err == nil {
-		sources = append(sources, string(data))
+		namedSources["answers.json"] = string(data)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("read answers.json: %v", err)
 	}
 
-	if data, err := readDirFiles(cfgDir); err == nil {
-		sources = append(sources, data...)
+	cfgFiles, err := readNamedDirFiles(cfgDir)
+	if err != nil {
+		t.Fatalf("read cfg dir: %v", err)
+	}
+	for name, content := range cfgFiles {
+		namedSources["cfg:"+name] = content
 	}
 
 	launchAgentPath := filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist")
 	if data, err := os.ReadFile(launchAgentPath); err == nil {
-		sources = append(sources, string(data))
+		namedSources["launch agent"] = string(data)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("read launch agent: %v", err)
 	}
 
 	t.Log("search for canary parts in sources")
-	found := dxh.SearchStrings(sources, needles)
-	if len(found) > 0 {
-		t.Fatalf("canary parts found in sources: %v (content not logged per security rules)", found)
+	namedParts := map[string]string{
+		"password": canary.Password,
+		"host":     canary.Host,
+		"user":     canary.User,
+		"database": canary.Database,
+	}
+	findings := dxh.SearchNamedParts(namedSources, namedParts)
+	if len(findings) > 0 {
+		t.Fatalf("canary parts found in sources: %v", findings)
 	}
 
 	t.Log("scan for private key matching ca.pem")
@@ -97,6 +160,9 @@ func DXAC10_CanaryNoLeak(t *testing.T, ctx context.Context) {
 	tmpDir := os.Getenv("TMPDIR")
 	if tmpDir == "" {
 		tmpDir = "/tmp"
+	}
+	if resolved, err := filepath.EvalSymlinks(tmpDir); err == nil {
+		tmpDir = resolved
 	}
 
 	result, err := dxh.ScanForMatchingKey(ctx, home, tmpDir, pubKey, credentialGroupStart)
@@ -145,12 +211,12 @@ func collectSecretNames(ctx context.Context, r dxh.Runner) []string {
 	return names
 }
 
-func readDirFiles(dir string) ([]string, error) {
+func readNamedDirFiles(dir string) (map[string]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	var contents []string
+	result := make(map[string]string)
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -159,9 +225,21 @@ func readDirFiles(dir string) ([]string, error) {
 		if err != nil {
 			continue
 		}
-		contents = append(contents, string(data))
+		result[e.Name()] = string(data)
 	}
-	return contents, nil
+	return result, nil
+}
+
+func readDirFiles(dir string) ([]string, error) {
+	named, err := readNamedDirFiles(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, v := range named {
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 func readCAPubKey(caPath string) (*ecdsa.PublicKey, error) {

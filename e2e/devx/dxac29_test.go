@@ -9,11 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
+	"regexp"
 	"testing"
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
+
+var expiryWarnRe = regexp.MustCompile(`(?m)^warn endpoint certificate expires \d{4}-\d{2}-\d{2}; run sag bootstrap$`)
 
 func init() {
 	certTests["DXAC29_CertRenewal"] = func(t *testing.T, ctx context.Context) {
@@ -33,6 +35,9 @@ func DXAC29_CertRenewal(t *testing.T, ctx context.Context) {
 	t.Setenv("SAG_TEST_CERT_DAYS", "20")
 
 	t.Log("step 1: bootstrap with 20-day cert")
+	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+		t.Fatalf("waitLaunchAgentIdle (step 1): %v", err)
+	}
 	out, err := runSAG(t, ctx,
 		"bootstrap",
 		"--autostart", "yes",
@@ -45,17 +50,18 @@ func DXAC29_CertRenewal(t *testing.T, ctx context.Context) {
 		t.Fatalf("healthz after bootstrap (step 1): %v", err)
 	}
 
-	t.Log("step 2: credential list must write expiry warn to stderr")
+	t.Log("step 2: credential list must write expiry warn to stderr and exit 0")
 	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
 		t.Fatalf("waitLaunchAgentIdle (step 2): %v", err)
 	}
-	credStdout, credStderr := runSAGWithStderr(t, ctx, "credential", "list")
+	credStdout, credStderr, credRunErr := runSAGWithStderr(t, ctx, "credential", "list")
 	_ = credStdout
-	if !strings.Contains(credStderr, "warn") || !strings.Contains(credStderr, "expires") {
-		t.Fatalf("credential list (step 2): want expiry warn in stderr, got stderr=%q", credStderr)
+	if credRunErr != nil {
+		t.Fatalf("credential list (step 2): want exit 0, got %v", credRunErr)
 	}
-	if !strings.Contains(credStderr, "sag bootstrap") {
-		t.Fatalf("credential list (step 2): want 'sag bootstrap' in warn, got stderr=%q", credStderr)
+	if !expiryWarnRe.MatchString(credStderr) {
+		t.Fatalf("credential list (step 2): want expiry warn matching %q in stderr, got stderr=%q",
+			expiryWarnRe.String(), credStderr)
 	}
 
 	t.Log("step 3: bootstrap replaces ca.pem")
@@ -126,18 +132,18 @@ func DXAC29_CertRenewal(t *testing.T, ctx context.Context) {
 	}
 }
 
-func runSAGWithStderr(t *testing.T, ctx context.Context, args ...string) (stdout, stderr string) {
+func runSAGWithStderr(t *testing.T, ctx context.Context, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	bin, err := dxh.TestBinary()
-	if err != nil {
-		t.Fatalf("TestBinary: %v", err)
+	bin, binErr := dxh.TestBinary()
+	if binErr != nil {
+		t.Fatalf("TestBinary: %v", binErr)
 	}
 
 	groupDir := t.TempDir()
 	binDir := t.TempDir()
-	env, err := dxh.ChildEnv(os.Environ(), groupDir)
-	if err != nil {
-		t.Fatalf("ChildEnv: %v", err)
+	env, envErr := dxh.ChildEnv(os.Environ(), groupDir)
+	if envErr != nil {
+		t.Fatalf("ChildEnv: %v", envErr)
 	}
 	env = append(env, "PATH="+dxh.TestPATH(binDir))
 
@@ -146,6 +152,6 @@ func runSAGWithStderr(t *testing.T, ctx context.Context, args ...string) (stdout
 	cmd.Env = env
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
-	_ = cmd.Run()
-	return stdoutBuf.String(), stderrBuf.String()
+	err = cmd.Run()
+	return stdoutBuf.String(), stderrBuf.String(), err
 }

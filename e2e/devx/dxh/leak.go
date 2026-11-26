@@ -14,10 +14,13 @@ import (
 	"time"
 )
 
-const (
-	keyScanMaxSize = 1 << 20
-	keyScanTimeout = 5 * time.Minute
-)
+const keyScanMaxSize = 1 << 20
+
+var keyScanTimeout = 5 * time.Minute
+
+var keyScanDevOf = func(st *syscall.Stat_t) int64 {
+	return int64(st.Dev)
+}
 
 var errMatchFound = errors.New("match found")
 
@@ -52,6 +55,21 @@ func SearchStrings(sources []string, needles []string) []string {
 	return found
 }
 
+func SearchNamedParts(sources map[string]string, parts map[string]string) []string {
+	var findings []string
+	for partName, value := range parts {
+		if value == "" {
+			continue
+		}
+		for srcName, content := range sources {
+			if strings.Contains(content, value) {
+				findings = append(findings, partName+" in "+srcName)
+			}
+		}
+	}
+	return findings
+}
+
 func ScanForMatchingKey(ctx context.Context, home, tmpDir string, pubKey *ecdsa.PublicKey, groupStart time.Time) (KeyScanResult, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, keyScanTimeout)
 	defer cancel()
@@ -61,7 +79,7 @@ func ScanForMatchingKey(ctx context.Context, home, tmpDir string, pubKey *ecdsa.
 		return KeyScanResult{}, err
 	}
 	homeSys := homeSt.Sys().(*syscall.Stat_t)
-	homeDev := int64(homeSys.Dev)
+	homeDev := keyScanDevOf(homeSys)
 
 	var result KeyScanResult
 
@@ -69,7 +87,11 @@ func ScanForMatchingKey(ctx context.Context, home, tmpDir string, pubKey *ecdsa.
 		if root == "" {
 			continue
 		}
-		if err := scanDir(scanCtx, root, homeDev, pubKey, groupStart, &result); err != nil {
+		resolved, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			resolved = root
+		}
+		if err := scanDir(scanCtx, resolved, homeDev, pubKey, groupStart, &result); err != nil {
 			if errors.Is(err, errMatchFound) {
 				return result, nil
 			}
@@ -112,7 +134,7 @@ func scanDir(ctx context.Context, root string, homeDev int64, pubKey *ecdsa.Publ
 			if !ok {
 				return nil
 			}
-			if int64(st.Dev) != homeDev {
+			if keyScanDevOf(st) != homeDev {
 				return fs.SkipDir
 			}
 			return nil
@@ -131,7 +153,7 @@ func scanDir(ctx context.Context, root string, homeDev int64, pubKey *ecdsa.Publ
 			return nil
 		}
 
-		if int64(st.Dev) != homeDev {
+		if keyScanDevOf(st) != homeDev {
 			return nil
 		}
 
