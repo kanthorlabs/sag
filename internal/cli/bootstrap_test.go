@@ -12,6 +12,17 @@ import (
 	"github.com/kanthorlabs/sag/internal/prompt"
 )
 
+func bootstrapTestIO() (IO, *bytes.Buffer) {
+	errOut := &bytes.Buffer{}
+	return IO{
+		In:         strings.NewReader(""),
+		Out:        io.Discard,
+		Err:        errOut,
+		IsTerminal: func(any) bool { return false },
+		Mode:       ModeHost,
+	}, errOut
+}
+
 func TestBootstrapFlags(t *testing.T) {
 	saved := runBootstrap
 	defer func() { runBootstrap = saved }()
@@ -23,8 +34,7 @@ func TestBootstrapFlags(t *testing.T) {
 	}
 
 	t.Run("unknown flag gives exit 2", func(t *testing.T) {
-		std, _ := testIO()
-		std.Mode = ModeHost
+		std, _ := bootstrapTestIO()
 		code := bootstrapCmd([]string{"--no-such-flag"}, std)
 		if code != ExitUsage {
 			t.Fatalf("bootstrapCmd(--no-such-flag) = %d; want %d", code, ExitUsage)
@@ -32,14 +42,7 @@ func TestBootstrapFlags(t *testing.T) {
 	})
 
 	t.Run("bad autostart value gives exit 2", func(t *testing.T) {
-		var errBuf bytes.Buffer
-		std := IO{
-			In:         strings.NewReader(""),
-			Out:        io.Discard,
-			Err:        &errBuf,
-			IsTerminal: func(any) bool { return false },
-			Mode:       ModeHost,
-		}
+		std, _ := bootstrapTestIO()
 		code := bootstrapCmd([]string{"--autostart", "maybe"}, std)
 		if code != ExitUsage {
 			t.Fatalf("bootstrapCmd(--autostart maybe) = %d; want %d", code, ExitUsage)
@@ -47,14 +50,7 @@ func TestBootstrapFlags(t *testing.T) {
 	})
 
 	t.Run("bad agent-setup value gives exit 2", func(t *testing.T) {
-		var errBuf bytes.Buffer
-		std := IO{
-			In:         strings.NewReader(""),
-			Out:        io.Discard,
-			Err:        &errBuf,
-			IsTerminal: func(any) bool { return false },
-			Mode:       ModeHost,
-		}
+		std, _ := bootstrapTestIO()
 		code := bootstrapCmd([]string{"--agent-setup", "claude-code=bad"}, std)
 		if code != ExitUsage {
 			t.Fatalf("bootstrapCmd(--agent-setup claude-code=bad) = %d; want %d", code, ExitUsage)
@@ -66,17 +62,13 @@ func TestBootstrapFlags(t *testing.T) {
 			return &prompt.RefusalError{Flag: "--autostart"}
 		}
 		defer func() { runBootstrap = saved }()
-		var errBuf bytes.Buffer
-		std := IO{
-			In:         strings.NewReader(""),
-			Out:        io.Discard,
-			Err:        &errBuf,
-			IsTerminal: func(any) bool { return false },
-			Mode:       ModeHost,
-		}
+		std, errOut := bootstrapTestIO()
 		code := bootstrapCmd(nil, std)
 		if code != ExitRefusal {
 			t.Fatalf("bootstrapCmd() with RefusalError = %d; want %d", code, ExitRefusal)
+		}
+		if !strings.Contains(errOut.String(), "--autostart") {
+			t.Fatalf("stderr = %q; want --autostart", errOut.String())
 		}
 	})
 
@@ -85,8 +77,7 @@ func TestBootstrapFlags(t *testing.T) {
 			return errors.New("something failed")
 		}
 		defer func() { runBootstrap = saved }()
-		std, _ := testIO()
-		std.Mode = ModeHost
+		std, _ := bootstrapTestIO()
 		code := bootstrapCmd(nil, std)
 		if code != ExitFailure {
 			t.Fatalf("bootstrapCmd() with error = %d; want %d", code, ExitFailure)
@@ -99,8 +90,7 @@ func TestBootstrapFlags(t *testing.T) {
 	}
 
 	t.Run("agent-setup claude-code=no is parsed", func(t *testing.T) {
-		std, _ := testIO()
-		std.Mode = ModeHost
+		std, _ := bootstrapTestIO()
 		code := bootstrapCmd([]string{"--agent-setup", "claude-code=no"}, std)
 		if code != ExitOK {
 			t.Fatalf("bootstrapCmd(--agent-setup claude-code=no) = %d; want %d", code, ExitOK)
@@ -111,8 +101,7 @@ func TestBootstrapFlags(t *testing.T) {
 	})
 
 	t.Run("autostart yes is parsed", func(t *testing.T) {
-		std, _ := testIO()
-		std.Mode = ModeHost
+		std, _ := bootstrapTestIO()
 		code := bootstrapCmd([]string{"--autostart", "yes"}, std)
 		if code != ExitOK {
 			t.Fatalf("bootstrapCmd(--autostart yes) = %d; want %d", code, ExitOK)
@@ -123,8 +112,7 @@ func TestBootstrapFlags(t *testing.T) {
 	})
 
 	t.Run("success gives exit 0", func(t *testing.T) {
-		std, _ := testIO()
-		std.Mode = ModeHost
+		std, _ := bootstrapTestIO()
 		code := bootstrapCmd(nil, std)
 		if code != ExitOK {
 			t.Fatalf("bootstrapCmd() = %d; want %d", code, ExitOK)

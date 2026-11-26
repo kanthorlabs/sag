@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/endpointcert"
 	"github.com/kanthorlabs/sag/internal/hoststate"
 	"github.com/kanthorlabs/sag/internal/podman"
@@ -152,8 +153,26 @@ func TestExitInPlanLeavesNoCfg(t *testing.T) {
 func TestPlanTwice(t *testing.T) {
 	dir := t.TempDir()
 
-	promptCalls := 0
+	type call struct{ kind string }
+	var calls []call
+
 	deps := baseDeps(dir)
+	deps.LoadAnswers = func(p hoststate.Paths) (hoststate.Answers, error) {
+		calls = append(calls, call{"load"})
+		return hoststate.Answers{}, fs.ErrNotExist
+	}
+	deps.EnsureCfg = func(p hoststate.Paths) (bool, error) {
+		calls = append(calls, call{"ensure-cfg"})
+		if _, err := os.Stat(p.Cfg); err == nil {
+			return false, nil
+		}
+		return true, os.MkdirAll(p.Cfg, 0o700)
+	}
+	deps.AcquireLock = func(p hoststate.Paths) (*hoststate.Lock, error) {
+		calls = append(calls, call{"lock"})
+		return &hoststate.Lock{}, nil
+	}
+	promptCalls := 0
 	deps.ResolveYesNo = func(a prompt.Asker, flagValue, stored, question, flagName string) (string, error) {
 		if flagValue != "" {
 			return flagValue, nil
@@ -175,4 +194,74 @@ func TestPlanTwice(t *testing.T) {
 	if promptCalls != 1 {
 		t.Fatalf("prompt called %d times; want 1", promptCalls)
 	}
+
+	wantOrder := []string{"load", "ensure-cfg", "lock", "load"}
+	for i, want := range wantOrder {
+		if i >= len(calls) {
+			t.Fatalf("calls[%d] missing; want %q", i, want)
+		}
+		if calls[i].kind != want {
+			t.Fatalf("calls[%d] = %q; want %q", i, calls[i].kind, want)
+		}
+	}
+}
+
+func TestSAGConfigTemplate(t *testing.T) {
+	dir := t.TempDir()
+	created, err := createSAGConfig(dir)
+	if err != nil {
+		t.Fatalf("createSAGConfig: %v", err)
+	}
+	if !created {
+		t.Fatal("createSAGConfig: want created=true, got false")
+	}
+
+	_, err = config.Load(filepath.Join(dir, "sag.yaml"))
+	if err != nil {
+		t.Fatalf("config.Load after createSAGConfig: %v", err)
+	}
+
+	created2, err := createSAGConfig(dir)
+	if err != nil {
+		t.Fatalf("createSAGConfig (second): %v", err)
+	}
+	if created2 {
+		t.Fatal("createSAGConfig (second): want created=false, got true")
+	}
+}
+
+func TestSaveAnswersPreservesExistingKeys(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "sag")
+
+	var saved hoststate.Answers
+	deps := baseDeps(dir)
+	deps.LoadAnswers = func(p hoststate.Paths) (hoststate.Answers, error) {
+		return hoststate.Answers{
+			AgentSetup:  map[string]string{"claude-code": "yes"},
+			TailscaleIP: "100.64.0.1",
+		}, nil
+	}
+	deps.SaveAnswers = func(p hoststate.Paths, a hoststate.Answers) error {
+		saved = a
+		return nil
+	}
+	deps.ResolveYesNo = func(a prompt.Asker, flagValue, stored, question, flagName string) (string, error) {
+		return "yes", nil
+	}
+
+	if err := Run(context.Background(), Flags{Autostart: "yes"}, deps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if saved.AgentSetup["claude-code"] != "yes" {
+		t.Fatalf("saved.AgentSetup[claude-code] = %q; want %q", saved.AgentSetup["claude-code"], "yes")
+	}
+	if saved.TailscaleIP != "100.64.0.1" {
+		t.Fatalf("saved.TailscaleIP = %q; want %q", saved.TailscaleIP, "100.64.0.1")
+	}
+	if saved.PodmanPath == "" {
+		t.Fatal("saved.PodmanPath is empty; want a path")
+	}
+	_ = cfgDir
 }

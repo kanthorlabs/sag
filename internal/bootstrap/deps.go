@@ -279,6 +279,7 @@ func (d Deps) stepSAGYAML(_ context.Context, s *State) error {
 	if changed {
 		s.Changed = true
 	}
+	s.Out.Line(stepline.StatusOK, "sag-yaml", "")
 	return nil
 }
 
@@ -325,7 +326,7 @@ func (d Deps) stepPrintEndpoint(_ context.Context, s *State) error {
 	return nil
 }
 
-func (d Deps) planOnce(ctx context.Context, s *State) error {
+func (d Deps) planOnce(_ context.Context, s *State) error {
 	fresh, err := d.LoadAnswers(s.Paths)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -350,9 +351,13 @@ func (d Deps) planOnce(ctx context.Context, s *State) error {
 	s.Answers.Autostart = autostart
 
 	if s.Lock != nil {
-		if err := d.SaveAnswers(s.Paths, s.Answers); err != nil {
+		merged := fresh
+		merged.Autostart = s.Answers.Autostart
+		merged.PodmanPath = s.PodmanPath
+		if err := d.SaveAnswers(s.Paths, merged); err != nil {
 			return err
 		}
+		s.Answers = merged
 	}
 
 	return nil
