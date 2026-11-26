@@ -141,14 +141,17 @@ func assertNoCanaryPart(t *testing.T, label, text string, canary dxh.CanaryParts
 
 func assertSection8FieldsInText(t *testing.T, label, text string, isInspect bool) {
 	t.Helper()
-	fields := []string{"name", "kind", "description", "tls", "agents"}
-	for _, f := range fields {
-		if !strings.Contains(text, f) {
-			t.Errorf("%s: text output missing field %q", label, f)
+	labels := []string{
+		"name: ", "kind: ", "description: ", "tls: ", "agents: ",
+		".name: ", ".backend: ", ".role: ", ".exists: ", ".owned: ", ".created_at: ", ".mounted: ",
+	}
+	for _, lbl := range labels {
+		if !strings.Contains(text, lbl) {
+			t.Errorf("%s: text output missing label %q", label, lbl)
 		}
 	}
 	if isInspect {
-		if !strings.Contains(text, "container_running") {
+		if !strings.Contains(text, "container_running: ") {
 			t.Errorf("%s: text output missing field %q", label, "container_running")
 		}
 	}
