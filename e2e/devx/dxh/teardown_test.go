@@ -3,6 +3,7 @@ package dxh_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -39,27 +40,31 @@ func TestTeardownOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	calls := r.calls
-	labeledIdx := firstIndexContaining(calls, "label=sag.devx-e2e=1")
-	bootoutIdx := firstIndexContaining(calls, "bootout")
-	rmSagIdx := firstIndexContaining(calls, "podman rm")
-	for _, call := range calls {
-		joined := strings.Join(call, " ")
-		if strings.Contains(joined, "credential") && strings.Contains(joined, "delete") {
-			t.Errorf("teardown called credential delete: %v", call)
+	want := [][]string{
+		{"podman", "secret", "ls", "--format", "{{.Name}}"},
+		{"podman", "ps", "-a", "--filter", "label=sag.devx-e2e=1", "--format", "{{.Names}}"},
+		{"podman", "volume", "ls", "--filter", "label=sag.devx-e2e=1", "--format", "{{.Name}}"},
+		{"podman", "secret", "ls", "--format", "{{.Name}}"},
+		{"podman", "network", "ls", "--filter", "label=sag.devx-e2e=1", "--format", "{{.Name}}"},
+		{"launchctl", "bootout", "gui/1000/net.kanthorlabs.sag"},
+		{"rm", "-f", "/home/u/Library/LaunchAgents/net.kanthorlabs.sag.plist"},
+		{"rm", "-rf", "/home/u/Library/Logs/sag"},
+		{"podman", "rm", "-f", "sag"},
+		{"podman", "volume", "ls", "--filter", "name=sag-state", "--format", "{{.Name}}"},
+		{"podman", "secret", "ls", "--filter", "name=sag-master-key", "--format", "{{.Name}}"},
+		{"podman", "secret", "ls", "--filter", "name=sag-tls-cert", "--format", "{{.Name}}"},
+		{"podman", "secret", "ls", "--filter", "name=sag-tls-key", "--format", "{{.Name}}"},
+		{"podman", "secret", "ls", "--filter", "name=sag-aws-credentials", "--format", "{{.Name}}"},
+		{"podman", "image", "ls", "--filter", "reference=docker.io/kanthorlabs/sag", "--format", "{{.Repository}}:{{.Tag}}"},
+		{"rm", "-rf", "/home/u/.config/sag"},
+	}
+	if len(r.calls) != len(want) {
+		t.Fatalf("got %d calls, want %d:\n%v", len(r.calls), len(want), r.calls)
+	}
+	for i, w := range want {
+		if !slices.Equal(r.calls[i], w) {
+			t.Errorf("call[%d] = %v, want %v", i, r.calls[i], w)
 		}
-	}
-	if labeledIdx < 0 {
-		t.Error("teardown did not check for labeled objects")
-	}
-	if bootoutIdx < 0 {
-		t.Error("teardown did not call launchctl bootout")
-	}
-	if rmSagIdx < 0 {
-		t.Error("teardown did not remove sag container")
-	}
-	if labeledIdx >= bootoutIdx {
-		t.Error("labeled object removal should happen before launchctl bootout")
 	}
 }
 
@@ -102,8 +107,9 @@ func TestTeardownNeverCallsCredentialDelete(t *testing.T) {
 
 func TestTeardownKeepsDevxImage(t *testing.T) {
 	r, cfg := newCleanTeardownFake("/home/u", "1000", "/home/u/.config/sag")
-	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", []byte("docker.io/kanthorlabs/sag:main\n"), nil)
+	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", []byte("docker.io/kanthorlabs/sag:main\nlocalhost/sag:e2e\nlocalhost/sag:devx-e2e\n"), nil)
 	r.set("podman rmi docker.io/kanthorlabs/sag:main", nil, nil)
+	r.set("podman rmi localhost/sag:e2e", nil, nil)
 
 	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
 		t.Fatal(err)
@@ -114,6 +120,15 @@ func TestTeardownKeepsDevxImage(t *testing.T) {
 		if strings.Contains(joined, "localhost/sag:devx-e2e") && (strings.Contains(joined, "rmi") || strings.Contains(joined, "rm ")) {
 			t.Errorf("teardown removed devx-e2e image: %v", call)
 		}
+	}
+	e2eRemoved := false
+	for _, call := range r.calls {
+		if slices.Contains(call, "rmi") && slices.Contains(call, "localhost/sag:e2e") {
+			e2eRemoved = true
+		}
+	}
+	if !e2eRemoved {
+		t.Error("teardown did not remove localhost/sag:e2e")
 	}
 }
 
