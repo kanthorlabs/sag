@@ -142,6 +142,13 @@ func (p *Postgres) Connect(ctx context.Context) (*pgx.Conn, error) {
 }
 
 func (p *Postgres) Logs(ctx context.Context, since time.Time) (string, error) {
+	if !since.IsZero() {
+		offset, err := p.clockOffset(ctx)
+		if err != nil {
+			return "", err
+		}
+		since = since.Add(offset)
+	}
 	res, err := Podman(ctx, nil, "logs", "--since", since.UTC().Format(time.RFC3339Nano), p.Container)
 	if err != nil {
 		return "", err
@@ -150,6 +157,23 @@ func (p *Postgres) Logs(ctx context.Context, since time.Time) (string, error) {
 		return "", fmt.Errorf("podman logs: exit %d: %s", res.ExitCode, res.Stderr)
 	}
 	return res.Stdout + res.Stderr, nil
+}
+
+func (p *Postgres) clockOffset(ctx context.Context) (time.Duration, error) {
+	res, err := Podman(ctx, nil, "exec", p.Container, "date", "-u", "+%s.%N")
+	after := time.Now()
+	if err != nil {
+		return 0, err
+	}
+	if res.ExitCode != 0 {
+		return 0, fmt.Errorf("podman exec date: exit %d: %s", res.ExitCode, res.Stderr)
+	}
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(res.Stdout), 64)
+	if err != nil {
+		return 0, fmt.Errorf("podman exec date: %w", err)
+	}
+	container := time.Unix(0, int64(seconds*float64(time.Second)))
+	return container.Sub(after), nil
 }
 
 func (p *Postgres) Close(ctx context.Context) error {
