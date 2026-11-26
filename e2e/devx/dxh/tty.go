@@ -114,6 +114,10 @@ func (t *TTY) Expect(ctx context.Context, text string) error {
 	}
 }
 
+func (t *TTY) WaitEchoOff(ctx context.Context) error {
+	return waitEchoOff(ctx, t.master)
+}
+
 func (t *TTY) Send(text string) error {
 	_, err := t.master.Write([]byte(text))
 	return err

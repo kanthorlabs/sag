@@ -20,11 +20,31 @@ func DXAC09_CreateCanary(t *testing.T, ctx context.Context) {
 	t.Helper()
 	dxh.EnsureCanary(t)
 
-	out, err := runSAG(t, ctx, "credential", "list")
+	transcript := string(dxh.ActiveCanaryTranscript)
+	canary := dxh.ActiveCanaryParts
+
+	if !strings.Contains(transcript, dxh.CanaryPrompt) {
+		t.Fatalf("DXAC09: transcript does not contain prompt %q", dxh.CanaryPrompt)
+	}
+
+	for _, part := range []string{canary.Password, canary.Host, canary.User, canary.Database} {
+		if strings.Contains(transcript, part) {
+			t.Fatalf("DXAC09: transcript contains canary part; transcript must not echo the value")
+		}
+	}
+
+	if canary.Host != "host.containers.internal" {
+		t.Fatalf("DXAC09: canary host = %q; want %q", canary.Host, "host.containers.internal")
+	}
+
+	const finalLine = "resource canary created; SAG restarted; run sag resource test canary"
+	if !strings.Contains(transcript, finalLine) {
+		t.Fatalf("DXAC09: transcript does not contain PRD 7.5 final line %q", finalLine)
+	}
+
+	out, err := runSAG(t, ctx, "resource", "test", "canary")
 	if err != nil {
-		t.Fatalf("DXAC09: credential list: %v\n%s", err, out)
+		t.Fatalf("DXAC09: sag resource test canary: %v", err)
 	}
-	if !strings.Contains(string(out), "canary") {
-		t.Fatalf("DXAC09: credential list does not contain canary:\n%s", out)
-	}
+	_ = out
 }
