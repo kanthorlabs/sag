@@ -2,6 +2,7 @@ package image
 
 import (
 	"context"
+	"errors"
 
 	"github.com/kanthorlabs/sag/internal/deploy"
 	"github.com/kanthorlabs/sag/internal/podman"
@@ -25,7 +26,11 @@ func Ensure(ctx context.Context, pm podman.Command, ref string, out stepline.Wri
 		out.Line(stepline.StatusOK, "image", ref)
 		return false, nil
 	}
-	if _, ok := err.(*podman.RunError); !ok {
+	var runErr *podman.RunError
+	if !errors.As(err, &runErr) {
+		return false, err
+	}
+	if runErr.ExitCode != 1 {
 		return false, err
 	}
 

@@ -5,6 +5,17 @@ package testhook
 import "testing"
 
 func TestProductHooksReturnZeroValues(t *testing.T) {
+	t.Setenv("SAG_TEST_PINS", "some-pins")
+	t.Setenv("SAG_TEST_IMAGE", "localhost/sag:fake")
+	t.Setenv("SAG_TEST_CERT_DAYS", "20")
+	t.Setenv("SAG_TEST_ABSENT", "1")
+	t.Setenv("SAG_TEST_STOP_BEFORE_INSTALL", "1")
+	t.Setenv("SAG_TEST_REGISTRY", "localhost:5000")
+	t.Setenv("SAG_TEST_FAIL_CRED_CREATE", "1")
+	t.Setenv("SAG_TEST_FAIL_CRED_DELETE", "1")
+	t.Setenv("SAG_TEST_FAIL_CERT_RENEWAL", "1")
+	t.Setenv("SAG_TEST_FAIL_TLS_CA_CREATE", "1")
+
 	if Pins() != "" {
 		t.Fatalf("Pins() = %q; want empty", Pins())
 	}

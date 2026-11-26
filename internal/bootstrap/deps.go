@@ -111,20 +111,30 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 	}
 }
 
+const healthzClientTimeout = 5 * time.Second
+
+func newHealthzClient(caData []byte) (*http.Client, error) {
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caData) {
+		return nil, fmt.Errorf("bootstrap: no valid CA certificate")
+	}
+	return &http.Client{
+		Timeout: healthzClientTimeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool},
+		},
+	}, nil
+}
+
 func defaultCheckHealthz(ctx context.Context, cfgDir string) error {
 	caPath := filepath.Join(cfgDir, "ca.pem")
 	caData, err := os.ReadFile(caPath)
 	if err != nil {
 		return err
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caData) {
+	client, err := newHealthzClient(caData)
+	if err != nil {
 		return fmt.Errorf("bootstrap: no valid CA certificate in %s", caPath)
-	}
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: pool},
-		},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://localhost:8443/healthz", nil)
 	if err != nil {
@@ -278,6 +288,8 @@ func (d Deps) stepSAGYAML(_ context.Context, s *State) error {
 	}
 	if changed {
 		s.Changed = true
+		s.Out.Line(stepline.StatusInstall, "sag-yaml", "")
+		return nil
 	}
 	s.Out.Line(stepline.StatusOK, "sag-yaml", "")
 	return nil
@@ -344,7 +356,7 @@ func (d Deps) planOnce(_ context.Context, s *State) error {
 	if storedAutostart == "" {
 		storedAutostart = fresh.Autostart
 	}
-	autostart, err := d.ResolveYesNo(s.Asker, s.Flags.Autostart, storedAutostart, "Start SAG at login?", "--autostart")
+	autostart, err := d.ResolveYesNo(s.Asker, s.Flags.Autostart, storedAutostart, "Start SAG at login? [y/N] ", "--autostart")
 	if err != nil {
 		return err
 	}

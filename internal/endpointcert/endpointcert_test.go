@@ -53,6 +53,54 @@ func secretsPresent() func([]string, []byte) ([]byte, error) {
 	}
 }
 
+type statefulFake struct {
+	calls   []fakeCall
+	secrets map[string]bool
+}
+
+func newStatefulFake(initialSecrets ...string) *statefulFake {
+	sf := &statefulFake{secrets: make(map[string]bool)}
+	for _, s := range initialSecrets {
+		sf.secrets[s] = true
+	}
+	return sf
+}
+
+func (sf *statefulFake) Run(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+	var buf []byte
+	if stdin != nil {
+		buf, _ = io.ReadAll(stdin)
+	}
+	sf.calls = append(sf.calls, fakeCall{args: args, stdin: buf})
+	if len(args) >= 2 && args[0] == "secret" {
+		switch args[1] {
+		case "inspect":
+			if len(args) >= 3 && sf.secrets[args[2]] {
+				return []byte(`[{"ID":"abc"}]`), nil
+			}
+			return nil, &podman.RunError{ExitCode: 125, Stderr: "no such secret"}
+		case "rm":
+			if len(args) >= 3 {
+				delete(sf.secrets, args[2])
+			}
+			return nil, nil
+		case "create":
+			if len(args) >= 3 {
+				sf.secrets[args[2]] = true
+			}
+			return nil, nil
+		}
+	}
+	return nil, nil
+}
+
+func runEnsureStateful(t *testing.T, sf *statefulFake, cfg endpointcert.Config, now time.Time) (bool, error) {
+	t.Helper()
+	var buf bytes.Buffer
+	out := stepline.New(&buf)
+	return endpointcert.Ensure(context.Background(), sf, cfg, now, out)
+}
+
 func newNow() time.Time {
 	return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 }
@@ -206,63 +254,107 @@ func TestTailscaleNameAdded(t *testing.T) {
 }
 
 func TestSequenceOrder(t *testing.T) {
-	dir := t.TempDir()
+	t.Run("secrets_absent", func(t *testing.T) {
+		dir := t.TempDir()
 
-	type snapshot struct {
-		call           string
-		caPemNewExists bool
-		caPemExists    bool
-	}
-	var snapshots []snapshot
-
-	fr := &fake{fn: func(args []string, stdin []byte) ([]byte, error) {
-		_, errNew := os.Stat(filepath.Join(dir, "ca.pem.new"))
-		_, errPem := os.Stat(filepath.Join(dir, "ca.pem"))
-		snapshots = append(snapshots, snapshot{
-			call:           strings.Join(args, " "),
-			caPemNewExists: errNew == nil,
-			caPemExists:    errPem == nil,
-		})
-		if len(args) >= 2 && args[0] == "secret" && args[1] == "inspect" {
-			return nil, &podman.RunError{ExitCode: 125, Stderr: "no such secret"}
+		type snapshot struct {
+			call           string
+			caPemNewExists bool
+			caPemExists    bool
 		}
-		return nil, nil
-	}}
-	cfg := endpointcert.Config{CfgDir: dir}
-	_, err := runEnsure(t, fr, cfg, newNow())
-	if err != nil {
-		t.Fatal(err)
-	}
+		var snapshots []snapshot
 
-	for _, s := range snapshots {
-		if strings.Contains(s.call, "secret rm") || strings.Contains(s.call, "secret create") {
-			if !s.caPemNewExists {
-				t.Errorf("ca.pem.new must exist before secret rm/create; at call %q", s.call)
+		fr := &fake{fn: func(args []string, stdin []byte) ([]byte, error) {
+			_, errNew := os.Stat(filepath.Join(dir, "ca.pem.new"))
+			_, errPem := os.Stat(filepath.Join(dir, "ca.pem"))
+			snapshots = append(snapshots, snapshot{
+				call:           strings.Join(args, " "),
+				caPemNewExists: errNew == nil,
+				caPemExists:    errPem == nil,
+			})
+			if len(args) >= 2 && args[0] == "secret" && args[1] == "inspect" {
+				return nil, &podman.RunError{ExitCode: 125, Stderr: "no such secret"}
+			}
+			return nil, nil
+		}}
+		cfg := endpointcert.Config{CfgDir: dir}
+		_, err := runEnsure(t, fr, cfg, newNow())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, s := range snapshots {
+			if strings.Contains(s.call, "secret rm") || strings.Contains(s.call, "secret create") {
+				if !s.caPemNewExists {
+					t.Errorf("ca.pem.new must exist before secret rm/create; at call %q", s.call)
+				}
 			}
 		}
-	}
-	_, errNew := os.Stat(filepath.Join(dir, "ca.pem.new"))
-	if errNew == nil {
-		t.Fatal("ca.pem.new must be removed after sequence completes")
-	}
-	_, errPem := os.Stat(filepath.Join(dir, "ca.pem"))
-	if errPem != nil {
-		t.Fatal("ca.pem must exist after sequence completes")
-	}
+		_, errNew := os.Stat(filepath.Join(dir, "ca.pem.new"))
+		if errNew == nil {
+			t.Fatal("ca.pem.new must be removed after sequence completes")
+		}
+		_, errPem := os.Stat(filepath.Join(dir, "ca.pem"))
+		if errPem != nil {
+			t.Fatal("ca.pem must exist after sequence completes")
+		}
+	})
+
+	t.Run("secrets_present_rm_before_create", func(t *testing.T) {
+		dir := t.TempDir()
+		sf := newStatefulFake("sag-tls-cert", "sag-tls-key")
+		cfg := endpointcert.Config{CfgDir: dir}
+		if _, err := runEnsureStateful(t, sf, cfg, newNow()); err != nil {
+			t.Fatal(err)
+		}
+
+		rmIdx, createIdx := -1, -1
+		for i, c := range sf.calls {
+			if len(c.args) >= 2 && c.args[0] == "secret" && c.args[1] == "rm" && rmIdx < 0 {
+				rmIdx = i
+			}
+			if len(c.args) >= 2 && c.args[0] == "secret" && c.args[1] == "create" && createIdx < 0 {
+				createIdx = i
+			}
+		}
+		if rmIdx < 0 {
+			t.Fatal("secret rm was never called")
+		}
+		if createIdx < 0 {
+			t.Fatal("secret create was never called")
+		}
+		if rmIdx >= createIdx {
+			t.Fatalf("secret rm (at %d) did not come before secret create (at %d)", rmIdx, createIdx)
+		}
+	})
 }
 
 func TestTriggers(t *testing.T) {
 	now := newNow()
 
+	buildValidState := func(t *testing.T) (dir string, caPEM []byte) {
+		t.Helper()
+		d := t.TempDir()
+		sf := newStatefulFake()
+		if _, err := runEnsureStateful(t, sf, endpointcert.Config{CfgDir: d}, now); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		pem, err := os.ReadFile(filepath.Join(d, "ca.pem"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d, pem
+	}
+
 	t.Run("cert_absent", func(t *testing.T) {
-		dir := t.TempDir()
-		fr := &fake{fn: func(args []string, _ []byte) ([]byte, error) {
-			if len(args) >= 3 && args[0] == "secret" && args[1] == "inspect" && args[2] == "sag-tls-cert" {
-				return nil, &podman.RunError{ExitCode: 125, Stderr: "no such secret"}
-			}
-			return nil, nil
-		}}
-		changed, err := runEnsure(t, fr, endpointcert.Config{CfgDir: dir}, now)
+		dir, caPEM := buildValidState(t)
+		dir2 := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir2, "ca.pem"), caPEM, 0644); err != nil {
+			t.Fatal(err)
+		}
+		_ = dir
+		sf := newStatefulFake("sag-tls-key")
+		changed, err := runEnsureStateful(t, sf, endpointcert.Config{CfgDir: dir2}, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -272,14 +364,14 @@ func TestTriggers(t *testing.T) {
 	})
 
 	t.Run("key_absent", func(t *testing.T) {
-		dir := t.TempDir()
-		fr := &fake{fn: func(args []string, _ []byte) ([]byte, error) {
-			if len(args) >= 3 && args[0] == "secret" && args[1] == "inspect" && args[2] == "sag-tls-key" {
-				return nil, &podman.RunError{ExitCode: 125, Stderr: "no such secret"}
-			}
-			return nil, nil
-		}}
-		changed, err := runEnsure(t, fr, endpointcert.Config{CfgDir: dir}, now)
+		dir, caPEM := buildValidState(t)
+		dir2 := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir2, "ca.pem"), caPEM, 0644); err != nil {
+			t.Fatal(err)
+		}
+		_ = dir
+		sf := newStatefulFake("sag-tls-cert")
+		changed, err := runEnsureStateful(t, sf, endpointcert.Config{CfgDir: dir2}, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,12 +393,16 @@ func TestTriggers(t *testing.T) {
 	})
 
 	t.Run("ca_pem_new_exists", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "ca.pem.new"), []byte("stale"), 0644); err != nil {
+		_, caPEM := buildValidState(t)
+		dir2 := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir2, "ca.pem"), caPEM, 0644); err != nil {
 			t.Fatal(err)
 		}
-		fr := &fake{fn: secretsPresent()}
-		changed, err := runEnsure(t, fr, endpointcert.Config{CfgDir: dir}, now)
+		if err := os.WriteFile(filepath.Join(dir2, "ca.pem.new"), []byte("stale"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		sf := newStatefulFake("sag-tls-cert", "sag-tls-key")
+		changed, err := runEnsureStateful(t, sf, endpointcert.Config{CfgDir: dir2}, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -388,8 +484,8 @@ func TestRenewalWithFakeClock(t *testing.T) {
 			t.Fatal(err)
 		}
 		under30 := ca.NotAfter.Add(-30*24*time.Hour + time.Second)
-		fr3 := &fake{fn: secretsAbsent()}
-		changed, err := runEnsure(t, fr3, endpointcert.Config{CfgDir: dir3}, under30)
+		sf := newStatefulFake("sag-tls-cert", "sag-tls-key")
+		changed, err := runEnsureStateful(t, sf, endpointcert.Config{CfgDir: dir3}, under30)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -482,5 +578,55 @@ func TestKeyNeverInArgsOrFile(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("Tailscale IP not in cert SANs")
+	}
+}
+
+func TestCertValidity397DaysAndNotBefore(t *testing.T) {
+	dir := t.TempDir()
+	now := newNow()
+	fr := &fake{fn: secretsAbsent()}
+	if _, err := runEnsure(t, fr, endpointcert.Config{CfgDir: dir}, now); err != nil {
+		t.Fatal(err)
+	}
+
+	caPEM, err := os.ReadFile(filepath.Join(dir, "ca.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := parseCertFromPEM(caPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantDays := 397
+	gotDays := int(ca.NotAfter.Sub(ca.NotBefore).Hours() / 24)
+	if gotDays != wantDays {
+		t.Fatalf("cert validity = %d days; want %d", gotDays, wantDays)
+	}
+
+	if !ca.NotBefore.Before(now) {
+		t.Fatalf("NotBefore %v is not before now %v; want NotBefore in the past", ca.NotBefore, now)
+	}
+}
+
+func TestCAPemMode0644(t *testing.T) {
+	dir := t.TempDir()
+	newPath := filepath.Join(dir, "ca.pem.new")
+	if err := os.WriteFile(newPath, []byte("placeholder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fake{fn: secretsAbsent()}
+	cfg := endpointcert.Config{CfgDir: dir}
+	if _, err := runEnsure(t, fr, cfg, newNow()); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(filepath.Join(dir, "ca.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("ca.pem mode = %04o; want 0644", info.Mode().Perm())
 	}
 }

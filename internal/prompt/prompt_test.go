@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"strings"
@@ -19,6 +20,12 @@ func (f *fakeTerminal) Close() error                { return nil }
 func fakeAsker(input string) Asker {
 	return Asker{Open: func() (io.ReadWriteCloser, error) {
 		return &fakeTerminal{r: strings.NewReader(input), w: io.Discard}, nil
+	}}
+}
+
+func capturingAsker(input string, out *bytes.Buffer) Asker {
+	return Asker{Open: func() (io.ReadWriteCloser, error) {
+		return &fakeTerminal{r: strings.NewReader(input), w: out}, nil
 	}}
 }
 
@@ -138,5 +145,17 @@ func TestFlagEmptyStoredEmpty(t *testing.T) {
 	}
 	if got != "yes" {
 		t.Fatalf("ResolveYesNo = %q; want yes", got)
+	}
+}
+
+func TestQuestionWrittenToTerminal(t *testing.T) {
+	var out bytes.Buffer
+	a := capturingAsker("y\n", &out)
+	_, err := a.YesNo("Start SAG at login? [y/N] ")
+	if err != nil {
+		t.Fatalf("YesNo: %v", err)
+	}
+	if out.String() != "Start SAG at login? [y/N] " {
+		t.Fatalf("terminal output = %q; want %q", out.String(), "Start SAG at login? [y/N] ")
 	}
 }

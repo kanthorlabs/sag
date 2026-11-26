@@ -25,6 +25,8 @@ func (f *fake) Run(_ context.Context, _ io.Reader, args ...string) ([]byte, erro
 }
 
 func TestPullOnlyWhenAbsent(t *testing.T) {
+	const ref = "docker.io/example/test:v1"
+
 	t.Run("absent", func(t *testing.T) {
 		fr := &fake{fn: func(args []string) ([]byte, error) {
 			if len(args) >= 2 && args[0] == "image" && args[1] == "exists" {
@@ -33,21 +35,26 @@ func TestPullOnlyWhenAbsent(t *testing.T) {
 			return nil, nil
 		}}
 		out := stepline.New(io.Discard)
-		changed, err := image.Ensure(context.Background(), fr, "docker.io/example/test:v1", out)
+		changed, err := image.Ensure(context.Background(), fr, ref, out)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !changed {
 			t.Fatal("expected changed=true when image is absent")
 		}
-		var pulled bool
+		var pullRef string
 		for _, c := range fr.calls {
 			if len(c.args) >= 1 && c.args[0] == "pull" {
-				pulled = true
+				if len(c.args) >= 2 {
+					pullRef = c.args[1]
+				}
 			}
 		}
-		if !pulled {
+		if pullRef == "" {
 			t.Fatal("expected pull call when image is absent")
+		}
+		if pullRef != ref {
+			t.Fatalf("pull ref = %q; want %q", pullRef, ref)
 		}
 	})
 
@@ -56,7 +63,7 @@ func TestPullOnlyWhenAbsent(t *testing.T) {
 			return nil, nil
 		}}
 		out := stepline.New(io.Discard)
-		changed, err := image.Ensure(context.Background(), fr, "docker.io/example/test:v1", out)
+		changed, err := image.Ensure(context.Background(), fr, ref, out)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,6 +73,25 @@ func TestPullOnlyWhenAbsent(t *testing.T) {
 		for _, c := range fr.calls {
 			if len(c.args) >= 1 && c.args[0] == "pull" {
 				t.Fatalf("unexpected pull call: %v", c.args)
+			}
+		}
+	})
+
+	t.Run("podman_error_exit125_no_pull", func(t *testing.T) {
+		fr := &fake{fn: func(args []string) ([]byte, error) {
+			if len(args) >= 2 && args[0] == "image" && args[1] == "exists" {
+				return nil, &podman.RunError{ExitCode: 125, Stderr: "Error: socket not found"}
+			}
+			return nil, nil
+		}}
+		out := stepline.New(io.Discard)
+		_, err := image.Ensure(context.Background(), fr, ref, out)
+		if err == nil {
+			t.Fatal("expected error when image exists exits 125")
+		}
+		for _, c := range fr.calls {
+			if len(c.args) >= 1 && c.args[0] == "pull" {
+				t.Fatalf("pull called on exit 125: %v", c.args)
 			}
 		}
 	})

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -97,7 +98,35 @@ func baseDeps(dir string) Deps {
 }
 
 func TestStepOrder(t *testing.T) {
-	deps := Deps{Out: stepline.New(io.Discard), Print: io.Discard}
+	dir := t.TempDir()
+	deps := baseDeps(dir)
+
+	var ranSteps []string
+	deps.ImageEnsure = func(ctx context.Context, pm podman.Command, ref string, w stepline.Writer) (bool, error) {
+		ranSteps = append(ranSteps, "image")
+		return false, nil
+	}
+	deps.MasterKey = func(ctx context.Context, pm podman.Command, w stepline.Writer) (bool, error) {
+		ranSteps = append(ranSteps, "master-key")
+		return false, nil
+	}
+	deps.CertEnsure = func(ctx context.Context, pm podman.Command, cfg endpointcert.Config, now time.Time, w stepline.Writer) (bool, error) {
+		ranSteps = append(ranSteps, "cert")
+		return false, nil
+	}
+	deps.SAGYAMLCreate = func(cfgDir string) (bool, error) {
+		ranSteps = append(ranSteps, "sag-yaml")
+		return false, nil
+	}
+	deps.ApplyAutostart = func(ctx context.Context, cfg service.Config, enable bool, w stepline.Writer) (bool, error) {
+		ranSteps = append(ranSteps, "autostart")
+		return false, nil
+	}
+
+	if err := Run(context.Background(), Flags{Autostart: "yes"}, deps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
 	built := deps.BuildSteps()
 	if len(built) != len(Steps) {
 		t.Fatalf("BuildSteps() len = %d; want %d", len(built), len(Steps))
@@ -106,6 +135,17 @@ func TestStepOrder(t *testing.T) {
 		if built[i].Name != s.Name {
 			t.Fatalf("BuildSteps()[%d].Name = %q; want %q", i, built[i].Name, s.Name)
 		}
+	}
+
+	wantSubOrder := []string{"image", "master-key", "cert", "sag-yaml", "autostart"}
+	j := 0
+	for _, got := range ranSteps {
+		if j < len(wantSubOrder) && got == wantSubOrder[j] {
+			j++
+		}
+	}
+	if j != len(wantSubOrder) {
+		t.Fatalf("step sub-order: ran %v; want %v in order", ranSteps, wantSubOrder)
 	}
 }
 
@@ -264,4 +304,140 @@ func TestSaveAnswersPreservesExistingKeys(t *testing.T) {
 		t.Fatal("saved.PodmanPath is empty; want a path")
 	}
 	_ = cfgDir
+}
+
+func TestSAGConfigMode0644(t *testing.T) {
+	dir := t.TempDir()
+	oldUmask := syscall.Umask(0o077)
+	defer syscall.Umask(oldUmask)
+
+	created, err := createSAGConfig(dir)
+	if err != nil {
+		t.Fatalf("createSAGConfig: %v", err)
+	}
+	if !created {
+		t.Fatal("createSAGConfig: want created=true")
+	}
+
+	info, err := os.Stat(filepath.Join(dir, "sag.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("sag.yaml mode = %04o; want 0644", info.Mode().Perm())
+	}
+}
+
+func TestCheckHealthzClientTimeout(t *testing.T) {
+	if healthzClientTimeout != 5*time.Second {
+		t.Fatalf("healthzClientTimeout = %v; want 5s", healthzClientTimeout)
+	}
+}
+
+func TestStep12RunsHealthzWhenRunningAndUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	deps := baseDeps(dir)
+
+	healthzCalled := false
+	startCalled := false
+	deps.ServiceRunning = func(_ context.Context, _ service.Config) (bool, error) { return true, nil }
+	deps.CheckHealthz = func(_ context.Context, _ string) error {
+		healthzCalled = true
+		return nil
+	}
+	deps.ServiceStart = func(_ context.Context, _ service.Config, _ stepline.Writer) error {
+		startCalled = true
+		return nil
+	}
+
+	if err := Run(context.Background(), Flags{Autostart: "yes"}, deps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !healthzCalled {
+		t.Fatal("CheckHealthz not called when running=true and no changes")
+	}
+	if startCalled {
+		t.Fatal("ServiceStart called when running=true and no changes")
+	}
+}
+
+func TestStep12RunsStartWhenChanged(t *testing.T) {
+	dir := t.TempDir()
+	deps := baseDeps(dir)
+
+	deps.ServiceRunning = func(_ context.Context, _ service.Config) (bool, error) { return true, nil }
+	deps.MasterKey = func(_ context.Context, _ podman.Command, _ stepline.Writer) (bool, error) {
+		return true, nil
+	}
+	healthzCalled := false
+	startCalled := false
+	deps.CheckHealthz = func(_ context.Context, _ string) error {
+		healthzCalled = true
+		return nil
+	}
+	deps.ServiceStart = func(_ context.Context, _ service.Config, _ stepline.Writer) error {
+		startCalled = true
+		return nil
+	}
+
+	if err := Run(context.Background(), Flags{Autostart: "yes"}, deps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !startCalled {
+		t.Fatal("ServiceStart not called when changed=true")
+	}
+	if healthzCalled {
+		t.Fatal("CheckHealthz called when changed=true")
+	}
+}
+
+func TestUID0Refused(t *testing.T) {
+	deps := Deps{
+		GOOS:   func() string { return "darwin" },
+		GOARCH: func() string { return "arm64" },
+		OpenFile: func(path string) error {
+			return os.ErrNotExist
+		},
+		UID:     func() string { return "0" },
+		Home:    func() string { return "/root" },
+		SAGPath: func() (string, error) { return "/usr/local/bin/sag", nil },
+		Out:     stepline.New(io.Discard),
+		Print:   io.Discard,
+	}
+	steps := deps.BuildSteps()
+	s := &State{Out: deps.Out}
+	err := steps[0].Run(context.Background(), s)
+	if err == nil {
+		t.Fatal("step platform-check: want error for UID 0, got nil")
+	}
+	if err.Error() != "bootstrap: refused to run as UID 0" {
+		t.Fatalf("error = %q; want UID 0 refusal message", err.Error())
+	}
+}
+
+func TestContainerRefused(t *testing.T) {
+	deps := Deps{
+		GOOS:   func() string { return "darwin" },
+		GOARCH: func() string { return "arm64" },
+		OpenFile: func(path string) error {
+			if path == "/run/.containerenv" {
+				return nil
+			}
+			return os.ErrNotExist
+		},
+		UID:     func() string { return "501" },
+		Home:    func() string { return "/home/user" },
+		SAGPath: func() (string, error) { return "/usr/local/bin/sag", nil },
+		Out:     stepline.New(io.Discard),
+		Print:   io.Discard,
+	}
+	steps := deps.BuildSteps()
+	s := &State{Out: deps.Out}
+	err := steps[0].Run(context.Background(), s)
+	if err == nil {
+		t.Fatal("step platform-check: want error inside container, got nil")
+	}
+	if err.Error() != "bootstrap: refused to run inside a container" {
+		t.Fatalf("error = %q; want container refusal message", err.Error())
+	}
 }
