@@ -5,12 +5,11 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/kanthorlabs/sag/internal/deploy"
 	"github.com/kanthorlabs/sag/internal/hoststate"
+	"github.com/kanthorlabs/sag/internal/image"
 	"github.com/kanthorlabs/sag/internal/podman"
 	"github.com/kanthorlabs/sag/internal/service"
 	"github.com/kanthorlabs/sag/internal/stepline"
-	"github.com/kanthorlabs/sag/internal/testhook"
 )
 
 var (
@@ -80,27 +79,15 @@ func defaultBuildCfg() (service.Config, func(), error) {
 		return service.Config{}, noop, err
 	}
 
-	image := testhook.Image()
-	if image == "" {
-		image = imageRef()
-	}
-
 	cfg := service.Config{
 		Podman:  podman.Runner{Path: podmanPath},
 		CfgDir:  p.Cfg,
 		UID:     strconv.Itoa(os.Getuid()),
 		Home:    home,
 		BinPath: binPath,
-		Image:   image,
+		Image:   image.Reference(),
 	}
 	return cfg, release, nil
 }
 
 func noop() {}
-
-func imageRef() string {
-	if deploy.ImageDigest != "" {
-		return "docker.io/kanthorlabs/sag@" + deploy.ImageDigest
-	}
-	return "docker.io/kanthorlabs/sag:main"
-}

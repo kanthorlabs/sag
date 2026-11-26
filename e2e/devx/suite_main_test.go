@@ -43,32 +43,34 @@ func TestDevxMain(t *testing.T) {
 	cleanup := dxh.SuiteEntry(t, r, pcfg, tcfg, markerFile)
 	defer cleanup()
 
+	tagImage := func() error { return dxh.GroupSetupImage(ctx, r) }
+
 	groupDir := t.TempDir()
 	binDir := t.TempDir()
 
-	dxh.RunGroup(t, ctx, r, tcfg, "harness", nil, func(t *testing.T) {
+	dxh.RunGroup(t, ctx, r, tcfg, "harness", tagImage, func(t *testing.T) {
 		t.Run("DX_Harness_Skeleton", func(t *testing.T) {
 			testHarnessSkeleton(t, ctx, groupDir, binDir)
 		})
 	})
 
-	dxh.RunGroup(t, ctx, r, tcfg, "base", nil, func(t *testing.T) {
+	dxh.RunGroup(t, ctx, r, tcfg, "base", tagImage, func(t *testing.T) {
 		t.Run("DXAC01_Bootstrap", func(t *testing.T) { DXAC01_Bootstrap(t, ctx) })
 		t.Run("DXAC02_ContainerAndCert", func(t *testing.T) { DXAC02_ContainerAndCert(t, ctx) })
 	})
 
-	dxh.RunGroup(t, ctx, r, tcfg, "noterm", nil, func(t *testing.T) {
+	dxh.RunGroup(t, ctx, r, tcfg, "noterm", tagImage, func(t *testing.T) {
 		t.Run("DXAC04_BootstrapNoTerminal", func(t *testing.T) {
 			testDXAC04BootstrapNoTerminal(t, ctx, groupDir, binDir)
 		})
 	})
 
-	dxh.RunGroup(t, ctx, r, tcfg, "guards", nil, func(t *testing.T) {
+	dxh.RunGroup(t, ctx, r, tcfg, "guards", tagImage, func(t *testing.T) {
 		testDXAC33_ProductBinary(t, ctx, groupDir, binDir)
 		testDXAC36_HostGuards(t, ctx, groupDir, binDir)
 	})
 
-	dxh.RunGroup(t, ctx, r, tcfg, "service", nil, func(t *testing.T) {
+	dxh.RunGroup(t, ctx, r, tcfg, "service", tagImage, func(t *testing.T) {
 		t.Run("DXAC27_Autostart", func(t *testing.T) { DXAC27_Autostart(t, ctx) })
 		t.Run("DXAC28_ServiceStopStart", func(t *testing.T) { DXAC28_ServiceStopStart(t, ctx) })
 	})
