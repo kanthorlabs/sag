@@ -27,10 +27,12 @@ func TestDevxMain(t *testing.T) {
 		CfgDir: cfgDir(home),
 	}
 	pcfg := dxh.PreconditionConfig{
-		CfgDir:            cfgDir(home),
-		PortHeld:          func() bool { return isPortHeld("127.0.0.1:8443") },
-		CfgExists:         func() bool { return pathExists(cfgDir(home)) },
-		LaunchAgentExists: func() bool { return pathExists(filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist")) },
+		CfgDir:    cfgDir(home),
+		PortHeld:  func() bool { return isPortHeld("127.0.0.1:8443") },
+		CfgExists: func() bool { return pathExists(cfgDir(home)) },
+		LaunchAgentExists: func() bool {
+			return pathExists(filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist"))
+		},
 	}
 	markerFile := filepath.Join("..", "..", ".dev", "local", "devx-run-active")
 
