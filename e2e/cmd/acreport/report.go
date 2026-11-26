@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ const (
 	reportSchema   = 1
 	noResultReason = "no result (timeout or crash)"
 	skipMessage    = "excluded by AC_SKIP"
+	runMessage     = "not selected by -run"
 )
 
 var phaseGroups = []string{"parallel", "sequential"}
@@ -79,6 +81,10 @@ type report struct {
 }
 
 func buildReport(layer int, runs []majorRun, table []e2e.ACRow, skip []string, info buildInfo) report {
+	return buildRunReport(layer, runs, table, skip, nil, info)
+}
+
+func buildRunReport(layer int, runs []majorRun, table []e2e.ACRow, skip []string, runFilter *regexp.Regexp, info buildInfo) report {
 	runs = slices.SortedFunc(slices.Values(runs), func(a, b majorRun) int { return a.Major - b.Major })
 	r := report{
 		Schema:       reportSchema,
@@ -96,15 +102,24 @@ func buildReport(layer int, runs []majorRun, table []e2e.ACRow, skip []string, i
 	for _, mr := range runs {
 		r.PGMajors = append(r.PGMajors, mr.Major)
 	}
+	selected := 0
 	for _, row := range table {
 		ac := mergeMajors(row, runs)
-		if slices.Contains(skip, row.ID) {
+		switch {
+		case slices.Contains(skip, row.ID):
 			ac = excluded(ac)
+		case runFilter != nil && !runFilter.MatchString(row.Test):
+			ac = notSelected(ac)
+		case runFilter != nil:
+			selected++
 		}
 		r.ACs = append(r.ACs, ac)
-		if ac.Layer <= layer && ac.Status != statusPass && ac.Status != statusExcluded && ac.ID != ciAC {
+		if ac.Layer <= layer && ac.Status != statusPass && ac.Status != statusExcluded && ac.Status != statusNotRun && ac.ID != ciAC {
 			r.Gate.Failing = append(r.Gate.Failing, ac.Test)
 		}
+	}
+	if runFilter != nil && selected == 0 {
+		r.Gate.Failing = append(r.Gate.Failing, "no AC matched -run "+runFilter.String())
 	}
 	acNames := map[string]bool{}
 	for _, row := range table {
@@ -116,7 +131,7 @@ func buildReport(layer int, runs []majorRun, table []e2e.ACRow, skip []string, i
 		for _, name := range otherFailures(mr.Run, acNames) {
 			others[name] = true
 		}
-		if _, _, ok := findAC(mr.Run, requiredSubtest); !ok {
+		if _, _, ok := findAC(mr.Run, requiredSubtest); !ok && runFilter == nil {
 			others[requiredSubtest] = true
 		}
 	}
@@ -167,6 +182,15 @@ func excluded(ac acResult) acResult {
 	ac.Message = skipMessage
 	for major := range ac.ByMajor {
 		ac.ByMajor[major] = statusExcluded
+	}
+	return ac
+}
+
+func notSelected(ac acResult) acResult {
+	ac.Status = statusNotRun
+	ac.Message = runMessage
+	for major := range ac.ByMajor {
+		ac.ByMajor[major] = statusNotRun
 	}
 	return ac
 }

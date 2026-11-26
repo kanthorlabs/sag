@@ -67,12 +67,22 @@ func run(args []string, stderr io.Writer, probe func() buildInfo) int {
 	flags.Var(&inputs, "in", "go test -json events file at <dir>/pg<major>/<file>; repeat for each major")
 	out := flags.String("out", "", "output directory for "+jsonFileName+" and "+mdFileName)
 	skip := flags.String("skip", "", "AC IDs that the gate excludes, separated by comma or space")
+	runPattern := flags.String("run", "", "AC test name pattern; the gate checks only matching ACs")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	if err := checkArgs(*layer, inputs, *out, flags.NArg()); err != nil {
 		fmt.Fprintf(stderr, "acreport: %v\n", err)
 		return 2
+	}
+	var runFilter *regexp.Regexp
+	if *runPattern != "" {
+		re, err := regexp.Compile(*runPattern)
+		if err != nil {
+			fmt.Fprintf(stderr, "acreport: -run: %v\n", err)
+			return 2
+		}
+		runFilter = re
 	}
 	runs, err := readRuns(inputs)
 	if err != nil {
@@ -83,7 +93,7 @@ func run(args []string, stderr io.Writer, probe func() buildInfo) int {
 	for _, id := range unknownIDs(skipped, e2e.ACTable) {
 		fmt.Fprintf(stderr, "acreport: warning: -skip %s is not an AC ID\n", id)
 	}
-	r := buildReport(*layer, runs, e2e.ACTable, skipped, probe())
+	r := buildRunReport(*layer, runs, e2e.ACTable, skipped, runFilter, probe())
 	if err := writeReport(*out, r); err != nil {
 		fmt.Fprintf(stderr, "acreport: %v\n", err)
 		return 2

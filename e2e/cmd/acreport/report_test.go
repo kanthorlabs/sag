@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -442,5 +443,40 @@ func TestRunSkipFlag(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), "-skip AC04 ") {
 		t.Errorf("stderr = %q, want no warning for AC04", stderr.String())
+	}
+}
+
+func TestRunFilterGatesOnlySelectedACs(t *testing.T) {
+	run := parsed(t,
+		[]event{{Action: "run", Test: "TestE2E"}, {Action: "run", Test: "TestE2E/parallel"}},
+		finished("TestE2E/parallel/AC01_ConfigCheckRejects", "pass", 1),
+		finished("TestE2E/parallel", "pass", 1),
+		finished("TestE2E", "pass", 1),
+	)
+	r := buildRunReport(6, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, nil, regexp.MustCompile("AC01_"), buildInfo{})
+	if !r.Gate.Passed {
+		t.Fatalf("gate failing = %v, want pass", r.Gate.Failing)
+	}
+	if got := find(t, r, "AC02"); got.Status != statusNotRun || got.Message != runMessage {
+		t.Errorf("AC02 = %+v, want %s", got, statusNotRun)
+	}
+}
+
+func TestRunFilterFailsSelectedFailure(t *testing.T) {
+	run := parsed(t,
+		[]event{{Action: "run", Test: "TestE2E"}, {Action: "run", Test: "TestE2E/parallel"}},
+		finished("TestE2E/parallel/AC01_ConfigCheckRejects", "fail", 1, "    ac01_test.go:1: boom\n"),
+	)
+	r := buildRunReport(6, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, nil, regexp.MustCompile("AC01_"), buildInfo{})
+	if r.Gate.Passed || !slices.Contains(r.Gate.Failing, "TestE2E/parallel/AC01_ConfigCheckRejects") {
+		t.Errorf("gate failing = %v, want AC01", r.Gate.Failing)
+	}
+}
+
+func TestRunFilterFailsWhenNothingMatches(t *testing.T) {
+	run := parsed(t, []event{{Action: "run", Test: "TestE2E"}})
+	r := buildRunReport(6, []majorRun{{Major: 17, Run: run}}, e2e.ACTable, nil, regexp.MustCompile("NoSuchAC"), buildInfo{})
+	if r.Gate.Passed {
+		t.Error("gate passed with no matching AC")
 	}
 }
