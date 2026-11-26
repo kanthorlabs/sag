@@ -3,8 +3,10 @@ package dxh
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type TeardownConfig struct {
@@ -49,8 +51,11 @@ func Teardown(ctx context.Context, r Runner, cfg TeardownConfig) error {
 		errs = append(errs, fmt.Sprintf("podman rmi: %s", err))
 	}
 	if cfg.CfgDir != "" {
+		_, cfgStatErr := os.Stat(cfg.CfgDir)
 		if _, err := r.Output(ctx, "rm", "-rf", cfg.CfgDir); err != nil {
 			errs = append(errs, fmt.Sprintf("rm cfg: %s", err))
+		} else if cfgStatErr == nil {
+			time.Sleep(6 * time.Second)
 		}
 	}
 
