@@ -1,105 +1,108 @@
-# Layer 10: macOS development machine
+# Layer 10: Linux port
 
 | Item | Value |
 |---|---|
-| Goal | The dev-machine criteria prove the macOS paths, the real harness formats, and the real `tailscale serve`. The machine state of Ulrich is the same after the group. |
-| ACs | DX-AC34, DX-AC35, DX-AC38, DX-AC47, DX-AC48, DX-AC52 (all `Dev machine`) |
-| PRD-devx sections | 5.3 (macOS), 5.5 (macOS), 5.8, 6 (macOS), 15, 17.1 (macOS development machine), 18 R20, R24, R28 |
-| Gate | `D10.4`: README section 6 with gate step 5 |
-| Agents at once | 3. Start order: `D10.1`, `D10.2`, `D10.3` |
-| Wall-clock | `D10.0` 2 h + parallel phase 3 h + `D10.4` 4 h = 9 h |
+| Phase | B |
+| Goal | `sag bootstrap` and `sag service` work on the ruled Linux platform. Each criterion with the run `A, B` or `B` passes on the Debian machine in its phase B form. |
+| ACs | DX-AC5. The phase B clauses of README section 8.1. The phase B run of each criterion with the run `A, B`. |
+| PRD-devx sections | 1, 1.4, 3, 5.3 (Linux install), 5.4 (Linux answers), 5.5 (Linux), 5.8 (operator step), 6 (Linux), 8 (secret list), 15 (Linux steps), 17.1 (phase B), 19 step 10 |
+| Gate | `D10.4`: README section 6.2 |
+| Blocked by | Access to the Debian machine. The ruling of the Debian version and the Linux platform scope. The PRD-devx revision that records the ruling. |
+| Agents at once | 3. Start order: `D10.2`, `D10.1`, `D10.3` |
+| Wall-clock | `D10.0` 2 h + parallel phase 5 h + `D10.4` 8 h = 15 h |
 
-The shared-machine constraints of README section 2.1 apply to each task of this layer. An agent writes and unit-tests the group. Only Ulrich runs it on the machine.
+Agents edit code in their worktrees on the macOS development machine. They run each verify command that names the Debian machine through the access that Ulrich gives.
 
 ## File ownership
 
 | Task | Owns |
 |---|---|
-| `D10.0` | `e2e/devx/dxh/devmachine.go` (precondition check, snapshot, restore check, version record), `e2e/devx/dxh/devmachine_test.go`, `Makefile` (`e2e-devx-mac` body) |
-| `D10.1` | `e2e/devx/dxac34_test.go`, `dxac35_test.go`, `dxac38_test.go` |
-| `D10.2` | `e2e/devx/dxac47_test.go`, `dxac48_test.go`, `e2e/devx/dxh/realharness.go` |
-| `D10.3` | `e2e/devx/dxac52_test.go`, `e2e/devx/dxh/tailscale.go` |
-| `D10.4` | Every layer-10 file after `D10.1` to `D10.3` merge. `docs/reviews/devx-layer-10.md`. |
+| `D10.0` | `deploy/pins` (Linux line), `internal/bootstrap/platform.go` (list of accepted platforms only), the signatures of each `_linux.go` file below, `e2e/devx/suite_install_test.go`, `docs/reviews/devx-layer-10.md` (machine record) |
+| `D10.1` | `internal/bootstrap/platform.go` (after `D10.0`), `internal/bootstrap/platform_test.go`, `internal/deps/*_linux.go`, `internal/deps/apt_test.go`, `e2e/devx/dxac05_test.go`, `e2e/devx/dxac08_test.go`, `e2e/devx/testdata/pins/*` |
+| `D10.2` | `internal/service/*_linux.go`, `internal/service/linux_test.go`, `e2e/devx/dxh/journal.go`, `e2e/devx/dxh/journal_test.go`, `e2e/devx/dxh/teardown.go`, `e2e/devx/dxac01_test.go`, `dxac02_test.go`, `dxac10_test.go`, `dxac27_test.go`, `dxac40_test.go` |
+| `D10.3` | `internal/portcheck/*_linux.go`, `internal/portcheck/ss_test.go`, `internal/tailscale/*_linux.go`, `internal/tailscale/operator_test.go`, `e2e/devx/dxac36_test.go`, `dxac41_test.go`, `dxac50_test.go`, `dxac53_test.go` |
+| `D10.4` | Every layer-10 file after `D10.1` to `D10.3` merge. Each file that a Linux defect fix needs; the review file lists it. `docs/reviews/devx-layer-10.md`. |
 
-## D10.0 Contract and group runner
+## D10.0 Contract and machine record
 
-- Goal: Freeze the dev-machine group runner. It refuses to start on an unsafe machine state and restores the files of Ulrich.
+- Goal: Apply the ruling of Ulrich. Freeze the Linux call points. Record the Debian machine facts.
 - Owns: see the ownership table.
-- Reads: README section 2; PRD-devx 15, 17.1.
-- Depends on: `D9.4`.
+- Reads: PRD-devx 1, 1.4, 3, 8, 17.1, 19 step 10; README section 2.2.
+- Depends on: `D9.6`, access to the Debian machine, and the PRD-devx revision of the ruling.
 - Content:
-  - Precondition check before any change: exactly one Podman machine, `podman-machine-default`, in state running. No container `sag`. Port 8443 free. On a failure, exit 1 with the failed check.
-  - Snapshot to a directory with mode 0700 under `.dev/local/devx-mac/`: `~/.claude.json`, `~/.claude/settings.json`, `~/.pi/agent/mcp.json`, the shell profile, and `tailscale serve status --json`.
-  - After the group: PRD-devx 15 teardown, then restore each file, then the compare of README section 2.1.
-  - Version record for the `env` block: `sw_vers -productVersion`, `podman --version`, `claude --version`, `pi --version`, `tailscale version`.
-  - The runner masks the Tailscale IP in each output line with `<tailscale IP>`.
-  - Remove the snapshot directory after a successful compare. It can hold a JWT of Ulrich.
-- Tests first: `devmachine_test.go` with fake commands: `TestRefusesSecondMachine`, `TestRefusesStoppedMachine`, `TestRefusesContainerSag`, `TestRefusesPortHeld`, `TestCompareMcpServersOnly`, `TestMasksTailscaleIP`, `TestNoPodmanMachineCommandRuns`.
+  - `deploy/pins`: the Linux line of the PRD-devx revision of the ruling.
+  - `platform.go`: add the ruled Linux platforms to the list of accepted platforms. `D10.1` adds the distribution check.
+  - Signatures of the Linux files: apt install, user Quadlet service, `ss` parse, operator step, user journal read.
+  - `suite_install_test.go`: `TestDevxInstall` with the group `install`.
+  - Machine record in `docs/reviews/devx-layer-10.md`: OS version, Podman version from apt, linger state, `sudo -n` result for the test user.
+  - Confirm that `podman container inspect` lists the secrets of a container (PRD-devx 8). Confirm that `apt-get install -y podman` installs `uidmap`. Record both results.
+- Tests first: none. The contract has no logic.
 - ACs: none.
-- Verify: `go test -count=1 ./e2e/devx/dxh/...`. Expected: `ok`.
-- Done when: no code path of the runner calls `podman machine init`, `start`, `stop`, `rm`, or a Podman uninstall.
+- Verify: `make contract-check && GOOS=linux CGO_ENABLED=0 go vet ./...`. Expected: exit 0.
+- Done when: `D10.1` to `D10.3` compile against the signatures, and the machine record exists.
 
-## D10.1 macOS bootstrap, credential, and pkg check
+## D10.1 Linux install
 
-- Goal: Prove bootstrap, the LaunchAgent, the credential commands, and the pkg checksum on macOS.
+- Goal: Accept the ruled Linux platform in bootstrap step 1. Apply the dependency rule of PRD-devx 5.3 with `apt`.
 - Owns: see the ownership table.
-- Reads: PRD-devx 3, 5.3, 5.5, 6, 7 to 9, 17.1.
+- Reads: PRD-devx 3, 5.3, 5.4, 17.1.
 - Depends on: `D10.0`.
 - Method:
-  - DX-AC34: `bootstrap --autostart yes --agent-setup claude-code=no --agent-setup pi=no` with the installed Podman. Check `launchctl print`. After `sag service stop`, `launchctl kickstart -k` gives `/healthz` 200 within 30 s.
-  - DX-AC35: a PostgreSQL container on a free host port. `credential create`, `list`, and `delete` as DX-AC9, DX-AC17, and DX-AC20.
-  - DX-AC38: `SAG_TEST_ABSENT=podman` and `SAG_TEST_STOP_BEFORE_INSTALL`. The test never reaches `installer`.
-- Tests first: none beyond `D10.0`. The criteria are e2e only.
-- e2e: `DXAC34_MacBootstrap`, `DXAC35_MacCredential`, `DXAC38_MacPkgChecksum` in group `mac`.
-- ACs: DX-AC34, DX-AC35, DX-AC38.
-- Verify: `go vet -tags devxe2e ./e2e/devx/...`. Expected: exit 0.
-- Done when: each test runs only inside the `D10.0` runner.
+  - Step 1 reads `ID` of `/etc/os-release` and accepts only the ruled distribution. Each other distribution gets `unsupported platform <os>/<arch>`.
+  - Parse `apt-cache policy podman`. Remove the epoch and the Debian suffix. Compare with the pin in the plan.
+  - Run `sudo apt-get install -y podman`. Check `newuidmap`. Without a terminal, call `sudo -n`. A refusal by `sudo` gives exit 3.
+  - The install prompt of PRD-devx 5.4 names the apt candidate and the pin.
+  - Test pins: the `release` item for `linux/*` and the apt package `hello`. Add the `apt` clause to DX-AC8.
+  - DX-AC5: `apt-get remove podman` keeps the rootless store. Prove that the image stays after the install.
+- Tests first: `platform_test.go`: `TestRuledLinuxAccepted`, `TestOtherDistributionExit1`; `apt_test.go`: `TestAptVersionParse` (`4.9.3+ds1-1ubuntu0.1` gives `4.9.3`), `TestEpochRemoved`, `TestNoCandidateFailsInPlan`, `TestOlderCandidateFailsInPlan`, `TestNewuidmapMissingExit1`, `TestSudoNonInteractive`.
+- e2e: `DXAC05_PodmanAptInstall` in the suite `Install`. The `apt` clause of `DXAC08_VersionRule`.
+- ACs: DX-AC5. Phase B clause of DX-AC8.
+- Verify: `GOOS=linux CGO_ENABLED=0 go vet ./internal/deps/... ./internal/bootstrap/...`, then on the Debian machine `go test -count=1 ./internal/deps/... ./internal/bootstrap/... && make e2e-devx SUITE=Install LAYER=10 PHASE=B && make e2e-devx SUITE=Pins LAYER=10 PHASE=B`. Expected: exit 0, then `ok`, then exit 0.
+- Done when: bootstrap never changes an installed version on Linux.
 
-## D10.2 Real harnesses
+## D10.2 Linux service and start at login
 
-- Goal: Prove the real Claude Code 2.1.332 and pi 1.6.1 formats, the deny rules, and the pi guard.
+- Goal: Start and stop SAG through the user Quadlet file and the systemd user manager.
 - Owns: see the ownership table.
-- Reads: PRD-devx 12, 17 rows DX-AC47 and DX-AC48, R24, R25.
-- Depends on: `D10.0`.
+- Reads: PRD-devx 5.5, 6, 9.3 step 7, 13, 15.
+- Depends on: `D10.0`. Verify after `D10.1`, because bootstrap step 1 must accept Linux.
 - Method:
-  - Check the harness versions first. Another version fails the criterion with `prerequisite missing`.
-  - DX-AC47: `claude mcp list` from a shell without `NODE_EXTRA_CA_CERTS`. `claude -p --output-format json --allowedTools "Bash(sag:*)"` for a prompt that asks for `sag credential delete x`. Expect a match in `permission_denials`. Resource `x` does not exist.
-  - DX-AC48: `pi mcp list --json` from a new login shell. `pi --mode json` for a prompt that asks for `podman secret rm x`. Expect a tool result with a reason that starts with `sag-guard:`.
-  - The test prints no JWT and no harness configuration content.
-- Tests first: `realharness_test.go`: `TestVersionGate`, `TestOutputHasNoJWT`.
-- e2e: `DXAC47_RealClaudeCode`, `DXAC48_RealPi` in group `mac`.
-- ACs: DX-AC47, DX-AC48.
-- Verify: `go test -count=1 ./e2e/devx/dxh/... -run 'VersionGate|OutputHasNoJWT' && go vet -tags devxe2e ./e2e/devx/...`. Expected: `ok`, then exit 0.
-- Done when: each test changes only the files of the `D10.0` snapshot list.
+  - Write `~/.config/containers/systemd/sag.container` from `deploy.Quadlet`. Run `systemctl --user daemon-reload`, then `systemctl --user restart sag`. Stop with `systemctl --user stop sag`.
+  - `--autostart yes` adds `[Install] WantedBy=default.target`. `--autostart no` has no `[Install]` section. Bootstrap does not enable linger.
+  - `dxh/teardown.go` adds the Linux steps of PRD-devx 15: remove the Quadlet file, then `systemctl --user daemon-reload`.
+  - `dxh/journal.go` reads the user journal for DX-AC10 and DX-AC40.
+  - Add the phase B clauses of DX-AC1, DX-AC2, DX-AC10, DX-AC27, and DX-AC40.
+- Tests first: `linux_test.go` with a fake runner: `TestLinuxStartOrder`, `TestQuadletAutostartNo`, `TestQuadletAutostartYes`, `TestStopUsesSystemctl`; `journal_test.go`: `TestJournalUserScope`.
+- e2e: the phase B clauses of `DXAC01_Bootstrap`, `DXAC02_ContainerAndCert`, `DXAC10_CanaryNoLeak`, `DXAC27_Autostart`, `DXAC40_JWTNoLeak`.
+- ACs: phase B clauses of DX-AC1, DX-AC2, DX-AC10, DX-AC27, DX-AC40.
+- Verify: `GOOS=linux CGO_ENABLED=0 go vet ./internal/service/... ./e2e/devx/dxh/...`, then on the Debian machine `go test -count=1 ./internal/service/... ./e2e/devx/dxh/... && make e2e-devx SUITE=Main RUN='DXAC0[12]_|DXAC10_|DXAC2[78]_|DXAC40_' LAYER=10 PHASE=B`. Expected: exit 0, then `ok`, then exit 0.
+- Done when: the teardown leaves no Quadlet file and no unit `sag.service`.
 
-## D10.3 Real Tailscale serve
+## D10.3 Linux port check, operator step, UID 0, bash profile
 
-- Goal: Prove the real `tailscale serve --tcp` forward on macOS and its removal.
+- Goal: Name a port holder with `ss`. Add the Tailscale operator step. Prove the other phase B clauses.
 - Owns: see the ownership table.
-- Reads: PRD-devx 5.8, 15, 17 row DX-AC52.
-- Depends on: `D10.0`.
+- Reads: PRD-devx 5.4, 5.8 (operator step), 6, 12.2, 17.
+- Depends on: `D10.0`. Verify after `D10.1`, `D10.2`.
 - Method:
-  - Precondition: Tailscale up and no TCP 8443 entry in `tailscale serve status --json`. Else the criterion fails with `prerequisite missing` and changes nothing.
-  - `curl --cacert <cfg>/ca.pem https://<tailscale IP>:8443/healthz` returns 200. `lsof -nP -iTCP:8443 -sTCP:LISTEN` shows no `*:8443`.
-  - After `tailscale serve --tcp 8443 off`, the status has no TCP 8443 entry and the `curl` fails.
-  - Read the address at run time. Write it to no file, log line, or report.
-- Tests first: `tailscale_test.go` in `dxh`: `TestNoAddressInOutput`.
-- e2e: `DXAC52_MacTailscale` in group `mac`.
-- ACs: DX-AC52.
-- Verify: `go test -count=1 ./e2e/devx/dxh/... -run TestNoAddressInOutput`. Expected: `ok`.
-- Done when: the serve status after the group equals the saved status.
+  - `ss -ltnp` names the process on TCP port 8443. The `podman ps` check comes first.
+  - Operator condition: `OperatorUser` of `tailscale debug prefs` is the current user. Else, with a terminal, ask the prompt of PRD-devx 5.4. With approval, step 13 runs `sudo tailscale set --operator=<user>` before the serve rule. Without a terminal or approval, write `skip tailscale operator not set; loopback only`.
+  - The fake `tailscale` reports the operator. No test runs the real `tailscale` on Linux.
+  - DX-AC36: each host command as UID 0 exits 1, through `sudo -n`.
+  - DX-AC41: `SHELL=/bin/bash` writes `~/.bashrc`. The test copies the file, removes the two lines at the end, and compares.
+  - Add the phase B clauses of DX-AC36, DX-AC41, DX-AC50, and DX-AC53.
+- Tests first: `ss_test.go`: `TestSSParse`, `TestSSRootlessport`; `operator_test.go`: `TestOperatorPrompt`, `TestOperatorNoTerminalSkips`, `TestOperatorSetBeforeServe`.
+- e2e: the phase B clauses of `DXAC36_HostGuards`, `DXAC41_PiSetup`, `DXAC50_TailscaleFake`, `DXAC53_PortHolder`.
+- ACs: phase B clauses of DX-AC36, DX-AC41, DX-AC50, DX-AC53.
+- Verify: `GOOS=linux CGO_ENABLED=0 go vet ./internal/portcheck/... ./internal/tailscale/...`, then on the Debian machine `go test -count=1 ./internal/portcheck/... ./internal/tailscale/... && make e2e-devx SUITE=Main RUN='DXAC36_|DXAC41_|DXAC5[03]_' LAYER=10 PHASE=B`. Expected: exit 0, then `ok`, then exit 0.
+- Done when: a port conflict on Linux changes no file, secret, or container.
 
-## D10.4 Integration and gate
+## D10.4 Integration and phase B gate
 
-- Goal: Run the dev-machine group, merge its report with CI, and close the layer 10 gate.
+- Goal: Prove each phase B criterion on the Debian machine and close devx v1.
 - Owns: see the ownership table.
 - Depends on: `D10.1` to `D10.3`.
-- Steps:
-  1. Run README section 6 steps 1 to 4. Set the devx gate layer of `ci.yml` to 10.
-  2. Ask Ulrich to run `make dev-down`, then `make e2e-devx-mac` from a terminal outside Claude Code.
-  3. Read `e2e/report/devx-mac/ac-report.json`. Check that it holds no IP address, no JWT, and no credential value.
-  4. Run `acreport merge-devx` with the CI report and the dev-machine report.
-  5. Run the review and the tag steps of README section 6. Append the `env` block to the review file.
-- ACs: DX-AC34, DX-AC35, DX-AC38, DX-AC47, DX-AC48, DX-AC52.
-- Verify: the merged report. Expected: each DX-AC of layers 2 to 10 `PASS`. The restore check of the group passes.
-- Done when: the tag `sag-devx-10` exists.
+- Steps: README section 6.2. Fix each Linux defect of a criterion with the run `A, B` in this task. After a fix, run the phase A gate commands of the affected suites on the macOS development machine again.
+- ACs: DX-AC5, and each criterion with the run `A, B` in its phase B form.
+- Verify: on the Debian machine, `make test && make e2e LAYER=6 PG=17 && make e2e-devx SUITE=Main LAYER=10 PHASE=B && make e2e-devx SUITE=Pins LAYER=10 PHASE=B && make e2e-devx SUITE=Install LAYER=10 PHASE=B && make e2e-devx-unit LAYER=10 PHASE=B`. Expected: exit 0. The devx report shows each DX-AC with the run `A, B` or `B` `PASS`.
+- Done when: the tag `sag-devx-10` exists. The merge of `feat/devx` into `main` is a decision of Ulrich.
