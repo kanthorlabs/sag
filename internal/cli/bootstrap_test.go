@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kanthorlabs/sag/internal/bootstrap"
+	"github.com/kanthorlabs/sag/internal/deps"
 	"github.com/kanthorlabs/sag/internal/prompt"
 )
 
@@ -81,6 +82,48 @@ func TestBootstrapFlags(t *testing.T) {
 		code := bootstrapCmd(nil, std)
 		if code != ExitFailure {
 			t.Fatalf("bootstrapCmd() with error = %d; want %d", code, ExitFailure)
+		}
+	})
+
+	t.Run("InstallRefusal gives exit 3", func(t *testing.T) {
+		runBootstrap = func(ctx context.Context, flags bootstrap.Flags, std IO) error {
+			return &deps.InstallRefusal{Name: "testpkg", Version: "1.0.0"}
+		}
+		defer func() { runBootstrap = saved }()
+		std, errOut := bootstrapTestIO()
+		code := bootstrapCmd(nil, std)
+		if code != ExitRefusal {
+			t.Fatalf("bootstrapCmd() with InstallRefusal = %d; want %d", code, ExitRefusal)
+		}
+		if !strings.Contains(errOut.String(), "testpkg") {
+			t.Fatalf("stderr = %q; want testpkg in message", errOut.String())
+		}
+	})
+
+	t.Run("SudoRefusal gives exit 3", func(t *testing.T) {
+		runBootstrap = func(ctx context.Context, flags bootstrap.Flags, std IO) error {
+			return &deps.SudoRefusal{}
+		}
+		defer func() { runBootstrap = saved }()
+		std, errOut := bootstrapTestIO()
+		code := bootstrapCmd(nil, std)
+		if code != ExitRefusal {
+			t.Fatalf("bootstrapCmd() with SudoRefusal = %d; want %d", code, ExitRefusal)
+		}
+		if !strings.Contains(errOut.String(), "sudo") {
+			t.Fatalf("stderr = %q; want sudo in message", errOut.String())
+		}
+	})
+
+	t.Run("OlderError gives exit 1", func(t *testing.T) {
+		runBootstrap = func(ctx context.Context, flags bootstrap.Flags, std IO) error {
+			return &deps.OlderError{Name: "testpkg", Installed: "4.0.0", Pin: "5.0.0"}
+		}
+		defer func() { runBootstrap = saved }()
+		std, _ := bootstrapTestIO()
+		code := bootstrapCmd(nil, std)
+		if code != ExitFailure {
+			t.Fatalf("bootstrapCmd() with OlderError = %d; want %d", code, ExitFailure)
 		}
 	})
 

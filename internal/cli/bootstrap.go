@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kanthorlabs/sag/internal/bootstrap"
+	"github.com/kanthorlabs/sag/internal/deps"
 	"github.com/kanthorlabs/sag/internal/prompt"
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
@@ -33,6 +34,16 @@ func bootstrapCmd(args []string, std IO) int {
 	}
 	var refusal *prompt.RefusalError
 	if errors.As(err, &refusal) {
+		fmt.Fprintf(std.Err, "sag: %v\n", err)
+		return ExitRefusal
+	}
+	var installRefusal *deps.InstallRefusal
+	if errors.As(err, &installRefusal) {
+		fmt.Fprintf(std.Err, "sag: %v\n", err)
+		return ExitRefusal
+	}
+	var sudoRefusal *deps.SudoRefusal
+	if errors.As(err, &sudoRefusal) {
 		fmt.Fprintf(std.Err, "sag: %v\n", err)
 		return ExitRefusal
 	}
