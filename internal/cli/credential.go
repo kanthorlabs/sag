@@ -213,6 +213,7 @@ func credentialList(args []string, std IO) int {
 
 	opts := credential.ListOptions{
 		SAGYaml: filepath.Join(cfg.CfgDir, "sag.yaml"),
+		CAPem:   filepath.Join(cfg.CfgDir, "ca.pem"),
 		Backend: secretpodman.New(runner),
 		Podman:  runner,
 		Stderr:  std.Err,
@@ -270,6 +271,7 @@ func credentialInspect(args []string, std IO) int {
 
 	opts := credential.InspectOptions{
 		SAGYaml: filepath.Join(cfg.CfgDir, "sag.yaml"),
+		CAPem:   filepath.Join(cfg.CfgDir, "ca.pem"),
 		Backend: secretpodman.New(runner),
 		Podman:  runner,
 		Stderr:  std.Err,

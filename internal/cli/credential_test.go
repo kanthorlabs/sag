@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -157,5 +158,28 @@ func TestCredentialCreateBadTLSExitsUsage(t *testing.T) {
 	code := credentialCreate([]string{"mydb", "--kind", "postgres", "--tls", "badmode"}, std)
 	if code != ExitUsage {
 		t.Fatalf("credentialCreate (bad --tls) = %d; want %d", code, ExitUsage)
+	}
+}
+
+func TestCredentialListAndInspectPassCAPem(t *testing.T) {
+	withFakeCfg(t, fakeRunnerCfg())
+	var listCA, inspectCA string
+	oldList, oldInspect := runCredentialList, runCredentialInspect
+	runCredentialList = func(_ context.Context, o credential.ListOptions) ([]credential.Entry, error) {
+		listCA = o.CAPem
+		return nil, nil
+	}
+	runCredentialInspect = func(_ context.Context, _ string, o credential.InspectOptions) (credential.Entry, error) {
+		inspectCA = o.CAPem
+		return credential.Entry{Name: "mydb"}, nil
+	}
+	t.Cleanup(func() { runCredentialList, runCredentialInspect = oldList, oldInspect })
+
+	std := IO{In: strings.NewReader(""), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, IsTerminal: func(any) bool { return false }, Mode: ModeHost}
+	credentialList(nil, std)
+	credentialInspect([]string{"mydb"}, std)
+	want := filepath.Join("/tmp/fakecfg", "ca.pem")
+	if listCA != want || inspectCA != want {
+		t.Fatalf("CAPem list=%q inspect=%q; want %q", listCA, inspectCA, want)
 	}
 }

@@ -19,7 +19,7 @@ const (
 	canaryPGAgent      = "pi"
 	canaryPGContainer  = "sag-canary-pg"
 	canaryPGSecretName = "canary-pg-password"
-	canaryPGImage      = "docker.io/library/postgres:16-alpine"
+	canaryPGImage      = "docker.io/library/postgres:17.12-bookworm"
 	canaryPGPort       = "5432/tcp"
 	canaryReadyTimeout = 90 * time.Second
 )
@@ -55,6 +55,10 @@ func EnsureCanary(t *testing.T) {
 
 func defaultCanaryCreate(ctx context.Context, r Runner, t *testing.T) error {
 	t.Helper()
+
+	if err := removeCanaryLeftovers(ctx, r); err != nil {
+		return err
+	}
 
 	password, err := randomCanaryPassword()
 	if err != nil {
@@ -207,4 +211,21 @@ func canaryExistsInConfig(sagYAML string) bool {
 		return false
 	}
 	return strings.Contains(string(data), canaryResourceName+":")
+}
+
+func removeCanaryLeftovers(ctx context.Context, r Runner) error {
+	if _, err := r.Output(ctx, "podman", "rm", "--force", "--ignore", canaryPGContainer); err != nil {
+		return fmt.Errorf("remove leftover %s: %w", canaryPGContainer, err)
+	}
+	out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "name=^"+canaryPGSecretName+"$", "--format", "{{.Name}}")
+	if err != nil {
+		return fmt.Errorf("list leftover %s: %w", canaryPGSecretName, err)
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return nil
+	}
+	if _, err := r.Output(ctx, "podman", "secret", "rm", canaryPGSecretName); err != nil {
+		return fmt.Errorf("remove leftover %s: %w", canaryPGSecretName, err)
+	}
+	return nil
 }

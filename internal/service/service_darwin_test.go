@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kanthorlabs/sag/internal/podman"
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
@@ -407,5 +408,85 @@ func TestLinuxUnsupported(t *testing.T) {
 	}
 	if err2 := CheckPlatform("darwin", "arm64"); err2 != nil {
 		t.Fatalf("CheckPlatform(darwin, arm64) = %v; want nil", err2)
+	}
+}
+
+type countingSSH struct {
+	fakeRunner
+	failures int
+	sshCalls int
+	order    []string
+}
+
+func (c *countingSSH) Run(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+	key := strings.Join(args, " ")
+	if strings.HasPrefix(key, "machine ssh -- test -f ") {
+		c.sshCalls++
+		c.order = append(c.order, "ssh")
+		if c.sshCalls <= c.failures {
+			return nil, fmt.Errorf("exit status 1")
+		}
+		return nil, nil
+	}
+	if len(args) > 0 && args[0] == "run" {
+		c.order = append(c.order, "run")
+	}
+	return c.fakeRunner.Run(ctx, stdin, args...)
+}
+
+func TestWaitMachineSeesRetriesUntilVisible(t *testing.T) {
+	c := &countingSSH{fakeRunner: *newFake(), failures: 2}
+	if err := waitMachineSees(context.Background(), c, "/x/sag.yaml", time.Second, time.Millisecond); err != nil {
+		t.Fatalf("waitMachineSees: %v", err)
+	}
+	if c.sshCalls != 3 {
+		t.Fatalf("ssh calls = %d; want 3", c.sshCalls)
+	}
+}
+
+func TestWaitMachineSeesTimesOut(t *testing.T) {
+	c := &countingSSH{fakeRunner: *newFake(), failures: 1 << 30}
+	err := waitMachineSees(context.Background(), c, "/x/sag.yaml", 20*time.Millisecond, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "/x/sag.yaml") {
+		t.Fatalf("waitMachineSees: err = %v; want a timeout that names the path", err)
+	}
+}
+
+func TestStartWaitsForConfigBeforeRun(t *testing.T) {
+	dir := t.TempDir()
+	writeSAGYAML(t, dir)
+	c := &countingSSH{fakeRunner: *newFake(), failures: 1}
+	c.outputs["machine list --format json"] = []byte(`[{"Name":"podman-machine-default","Running":true}]`)
+	d := testDeps(nil)
+	d.configVisible = func(ctx context.Context, pm podman.Command, path string) error {
+		return waitMachineSees(ctx, pm, path, time.Second, time.Millisecond)
+	}
+	var sb strings.Builder
+	if err := start(context.Background(), Config{CfgDir: dir, Podman: c, Image: "img"}, d, writerOf(&sb)); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	want := []string{"ssh", "ssh", "run"}
+	if strings.Join(c.order, ",") != strings.Join(want, ",") {
+		t.Fatalf("order = %v; want %v", c.order, want)
+	}
+}
+
+func TestStartStopsWhenConfigInvisible(t *testing.T) {
+	dir := t.TempDir()
+	writeSAGYAML(t, dir)
+	c := &countingSSH{fakeRunner: *newFake(), failures: 1 << 30}
+	c.outputs["machine list --format json"] = []byte(`[{"Name":"podman-machine-default","Running":true}]`)
+	d := testDeps(nil)
+	d.configVisible = func(ctx context.Context, pm podman.Command, path string) error {
+		return waitMachineSees(ctx, pm, path, 20*time.Millisecond, time.Millisecond)
+	}
+	var sb strings.Builder
+	if err := start(context.Background(), Config{CfgDir: dir, Podman: c, Image: "img"}, d, writerOf(&sb)); err == nil {
+		t.Fatal("start: want error when the machine does not see sag.yaml")
+	}
+	for _, o := range c.order {
+		if o == "run" {
+			t.Fatal("start ran podman run although the machine does not see sag.yaml")
+		}
 	}
 }

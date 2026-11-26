@@ -29,12 +29,13 @@ const (
 )
 
 type deps struct {
-	launchctlRun func(ctx context.Context, args ...string) ([]byte, error)
-	healthzCheck func(ctx context.Context, caPath string) error
-	logTail      func(ctx context.Context, n int) ([]byte, error)
-	portCheck    func(ctx context.Context, pm podman.Command, out stepline.Writer) error
-	interval     time.Duration
-	timeout      time.Duration
+	launchctlRun  func(ctx context.Context, args ...string) ([]byte, error)
+	healthzCheck  func(ctx context.Context, caPath string) error
+	logTail       func(ctx context.Context, n int) ([]byte, error)
+	portCheck     func(ctx context.Context, pm podman.Command, out stepline.Writer) error
+	configVisible func(ctx context.Context, pm podman.Command, path string) error
+	interval      time.Duration
+	timeout       time.Duration
 }
 
 func defaultDeps(cfg Config) deps {
@@ -43,8 +44,11 @@ func defaultDeps(cfg Config) deps {
 		healthzCheck: realHealthzCheck,
 		logTail:      makeLogTail(cfg),
 		portCheck:    checkPort,
-		interval:     time.Second,
-		timeout:      healthzDeadline,
+		configVisible: func(ctx context.Context, pm podman.Command, path string) error {
+			return waitMachineSees(ctx, pm, path, machineSyncTimeout, machineSyncInterval)
+		},
+		interval: time.Second,
+		timeout:  healthzDeadline,
 	}
 }
 
@@ -136,6 +140,12 @@ func start(ctx context.Context, cfg Config, d deps, out stepline.Writer) error {
 		return fmt.Errorf("load sag.yaml: %w", err)
 	}
 
+	if d.configVisible != nil {
+		if err := d.configVisible(ctx, cfg.Podman, filepath.Join(cfg.CfgDir, "sag.yaml")); err != nil {
+			return err
+		}
+	}
+
 	runArgs := deploy.RunArgs(sagCfg, deploy.RunOpts{
 		Image:         cfg.Image,
 		ConfigSource:  filepath.Join(cfg.CfgDir, "sag.yaml"),
@@ -161,6 +171,28 @@ func start(ctx context.Context, cfg Config, d deps, out stepline.Writer) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(d.interval):
+		}
+	}
+}
+
+const (
+	machineSyncTimeout  = 15 * time.Second
+	machineSyncInterval = 250 * time.Millisecond
+)
+
+func waitMachineSees(ctx context.Context, pm podman.Command, path string, timeout, interval time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := pm.Run(ctx, nil, "machine", "ssh", "--", "test", "-f", path); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("podman machine does not see %s after %s", path, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(interval):
 		}
 	}
 }
