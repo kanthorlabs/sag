@@ -69,11 +69,17 @@ func defaultCanaryCreate(ctx context.Context, r Runner, t *testing.T) error {
 		return err
 	}
 
-	if err := startCanaryPG(ctx, r); err != nil {
+	suffix, err := randomCanaryPassword()
+	if err != nil {
+		return fmt.Errorf("generate name suffix: %w", err)
+	}
+	user, database := "cu_"+suffix[:12], "cd_"+suffix[:12]
+
+	if err := startCanaryPG(ctx, r, user, database); err != nil {
 		return err
 	}
 
-	if err := waitCanaryPGReady(ctx, r); err != nil {
+	if err := waitCanaryPGReady(ctx, r, user); err != nil {
 		return err
 	}
 
@@ -82,7 +88,7 @@ func defaultCanaryCreate(ctx context.Context, r Runner, t *testing.T) error {
 		return err
 	}
 
-	dsn := buildCanaryDSN(password, port)
+	dsn := buildCanaryDSN(user, password, port, database)
 
 	parts, err := parseCanaryDSN(dsn)
 	if err != nil {
@@ -116,7 +122,7 @@ func createCanaryPGSecret(ctx context.Context, password string) error {
 	return nil
 }
 
-func startCanaryPG(ctx context.Context, r Runner) error {
+func startCanaryPG(ctx context.Context, r Runner, user, database string) error {
 	_, err := r.Output(ctx,
 		"podman", "run", "--detach",
 		"--label", "sag.devx-e2e=1",
@@ -124,15 +130,17 @@ func startCanaryPG(ctx context.Context, r Runner) error {
 		"--publish", "127.0.0.1::5432",
 		"--secret", canaryPGSecretName,
 		"--env", "POSTGRES_PASSWORD_FILE=/run/secrets/"+canaryPGSecretName,
+		"--env", "POSTGRES_USER="+user,
+		"--env", "POSTGRES_DB="+database,
 		canaryPGImage,
 	)
 	return err
 }
 
-func waitCanaryPGReady(ctx context.Context, r Runner) error {
+func waitCanaryPGReady(ctx context.Context, r Runner, user string) error {
 	deadline := time.Now().Add(canaryReadyTimeout)
 	for {
-		if _, err := r.Output(ctx, "podman", "exec", canaryPGContainer, "pg_isready", "-U", "postgres"); err == nil {
+		if _, err := r.Output(ctx, "podman", "exec", canaryPGContainer, "pg_isready", "-U", user, "-h", "127.0.0.1"); err == nil {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -154,8 +162,8 @@ func canaryPGHostPort(ctx context.Context, r Runner) (string, error) {
 	return "", fmt.Errorf("unexpected port output: %q", line)
 }
 
-func buildCanaryDSN(password, port string) string {
-	return fmt.Sprintf("postgresql://postgres:%s@host.containers.internal:%s/postgres", password, port)
+func buildCanaryDSN(user, password, port, database string) string {
+	return fmt.Sprintf("postgresql://%s:%s@host.containers.internal:%s/%s", user, password, port, database)
 }
 
 func parseCanaryDSN(dsn string) (CanaryParts, error) {

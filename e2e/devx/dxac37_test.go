@@ -36,7 +36,7 @@ func DXAC37_CreateTLSCA(t *testing.T, ctx context.Context) {
 		pgPasswordSecret = "sag-pg37-password"
 		pgCertSecret     = "sag-pg37-cert"
 		pgKeySecret      = "sag-pg37-key"
-		pgImage          = "docker.io/library/postgres:16-alpine"
+		pgImage          = "docker.io/library/postgres:17.12-bookworm"
 		hostName37       = "host.containers.internal"
 		secretDir        = "/run/secrets/"
 	)
@@ -83,7 +83,7 @@ func DXAC37_CreateTLSCA(t *testing.T, ctx context.Context) {
 		"--publish", "127.0.0.1::5432",
 		"--secret", pgPasswordSecret,
 		"--secret", pgCertSecret,
-		"--secret", pgKeySecret,
+		"--secret", pgKeySecret+",uid=999,gid=999,mode=0600",
 		"--env", "POSTGRES_PASSWORD_FILE="+secretDir+pgPasswordSecret,
 		pgImage,
 		"-c", "ssl=on",
