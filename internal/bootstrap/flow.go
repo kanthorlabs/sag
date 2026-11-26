@@ -19,9 +19,11 @@ import (
 	"github.com/kanthorlabs/sag/internal/image"
 	"github.com/kanthorlabs/sag/internal/masterkey"
 	"github.com/kanthorlabs/sag/internal/podman"
+	"github.com/kanthorlabs/sag/internal/portcheck"
 	"github.com/kanthorlabs/sag/internal/prompt"
 	"github.com/kanthorlabs/sag/internal/service"
 	"github.com/kanthorlabs/sag/internal/stepline"
+	"github.com/kanthorlabs/sag/internal/tailscale"
 )
 
 type Deps struct {
@@ -90,8 +92,8 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 		FindPodman:   hoststate.FindPodman,
 
 		PlanDeps:      defaultPlanDeps(hoststate.FindPodman),
-		PlanTailscale: defaultPlanTailscale,
-		PlanPort:      defaultPlanPort,
+		PlanTailscale: defaultPlanTailscale(tailscale.LookupCommand, tailscale.Detect),
+		PlanPort:      defaultPlanPort(portcheck.Check),
 
 		ResolveYesNo: prompt.ResolveYesNo,
 		Asker:        asker,

@@ -54,3 +54,7 @@ func FailCertRenewal() bool {
 func FailTLSCACreate() bool {
 	return os.Getenv("SAG_TEST_FAIL_TLS_CA_CREATE") == "1"
 }
+
+func RequireHTTPS() bool {
+	return false
+}

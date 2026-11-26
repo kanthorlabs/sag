@@ -25,7 +25,7 @@ func DXAC06_InstallApproval(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC06: test binary: %v", err)
 	}
 
-	testPins := "testpkg 0.1.0 darwin/arm64 release https://example.com/fake.pkg abc123placeholder\n"
+	testPins := "testpkg 0.1.0 darwin/arm64 release https://example.com/fake.pkg abc1230000000000000000000000000000000000000000000000000000000000\n"
 	t.Setenv("SAG_TEST_ABSENT", "1")
 	t.Setenv("SAG_TEST_PINS", testPins)
 
@@ -84,7 +84,7 @@ func DXAC06_InstallApproval(t *testing.T, ctx context.Context) {
 	if code != 3 {
 		t.Fatalf("DXAC06 wrong-version: exit code = %d; want 3\nstdout=%s\nstderr=%s", code, stdout, stderr)
 	}
-	wantWarnLine := "warn testpkg pre-approval testpkg@0.0.1 does not match pin 0.1.0; ignored"
+	wantWarnLine := "warn testpkg pre-approval 0.0.1 does not match pin 0.1.0; ignored"
 	if !strings.Contains(stdout, wantWarnLine) {
 		t.Fatalf("DXAC06 wrong-version: stdout = %q; want line %q", stdout, wantWarnLine)
 	}

@@ -41,6 +41,28 @@ func fileHash(t *testing.T, path string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+func TestEqualWritesOk(t *testing.T) {
+	var buf strings.Builder
+	d := deps.Deps{
+		PodmanVersion: func(_ context.Context, _ string) (string, error) {
+			return "5.0.0", nil
+		},
+		IsAbsent: func() bool { return false },
+		Out:      newOut(&buf),
+	}
+
+	plan, err := d.Make(context.Background(), []pins.Item{testItem("5.0.0")}, "/usr/bin/podman", nil)
+	if err != nil {
+		t.Fatalf("Make: %v", err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("plan.Items = %+v; want one item", plan.Items)
+	}
+	if !strings.Contains(buf.String(), "ok testpkg 5.0.0") {
+		t.Fatalf("output = %q; want 'ok testpkg 5.0.0' line", buf.String())
+	}
+}
+
 func TestNewerWarns(t *testing.T) {
 	var buf strings.Builder
 	d := deps.Deps{
@@ -115,11 +137,29 @@ func TestPreApprovalOtherVersionIgnored(t *testing.T) {
 	if !errors.As(err, &refusal) {
 		t.Fatalf("Make err = %v; want InstallRefusal", err)
 	}
-	if !strings.Contains(buf.String(), "warn testpkg") {
-		t.Fatalf("output = %q; want 'warn testpkg' line for wrong version", buf.String())
+	wantWarn := "warn testpkg pre-approval 4.0.0 does not match pin 5.0.0; ignored"
+	if !strings.Contains(buf.String(), wantWarn) {
+		t.Fatalf("output = %q; want %q", buf.String(), wantWarn)
 	}
-	if !strings.Contains(buf.String(), "4.0.0") {
-		t.Fatalf("output = %q; want pre-approval version in warn", buf.String())
+}
+
+func TestPreApprovalExactMatchWinsOverMismatch(t *testing.T) {
+	var buf strings.Builder
+	d := deps.Deps{
+		IsAbsent:    func() bool { return true },
+		Out:         newOut(&buf),
+		HasTerminal: func() bool { return false },
+	}
+
+	plan, err := d.Make(context.Background(), []pins.Item{testItem("5.0.0")}, "", []string{"testpkg@4.0.0", "testpkg@5.0.0"})
+	if err != nil {
+		t.Fatalf("Make: %v", err)
+	}
+	if len(plan.Items) != 1 || !plan.Items[0].Approve {
+		t.Fatalf("plan.Items = %+v; want one Approve=true item", plan.Items)
+	}
+	if strings.Contains(buf.String(), "warn") {
+		t.Fatalf("output = %q; want no warn when exact match exists", buf.String())
 	}
 }
 
@@ -195,6 +235,12 @@ func TestInstallRunsOnVerifiedPath(t *testing.T) {
 			installedPath = path
 			return nil
 		},
+		FindPodman: func(_ string) (string, error) {
+			return "/usr/bin/podman", nil
+		},
+		PodmanVersion: func(_ context.Context, _ string) (string, error) {
+			return "5.0.0", nil
+		},
 		MachineList: func(_ context.Context, _ string) ([]deps.MachineInfo, error) {
 			return []deps.MachineInfo{{Name: "default", Running: true}}, nil
 		},
@@ -242,6 +288,12 @@ func TestSudoNonInteractive(t *testing.T) {
 		Install: func(_ context.Context, _ string, noInteractive bool) error {
 			noInteractiveReceived = noInteractive
 			return nil
+		},
+		FindPodman: func(_ string) (string, error) {
+			return "/usr/bin/podman", nil
+		},
+		PodmanVersion: func(_ context.Context, _ string) (string, error) {
+			return "5.0.0", nil
 		},
 		MachineList: func(_ context.Context, _ string) ([]deps.MachineInfo, error) {
 			return []deps.MachineInfo{{Name: "default", Running: true}}, nil
@@ -337,5 +389,148 @@ func TestNoSecondMachine(t *testing.T) {
 	}
 	if !startCalled {
 		t.Fatal("Apply: machine start was not called for stopped machine; want start")
+	}
+}
+
+func TestInstallLineAfterChecksum(t *testing.T) {
+	content := []byte("install line test")
+	h := sha256.Sum256(content)
+	correctHash := hex.EncodeToString(h[:])
+
+	var buf strings.Builder
+	var installLineBefore bool
+	out := newOut(&buf)
+
+	d := deps.Deps{
+		IsAbsent: func() bool { return true },
+		Out:      out,
+		Download: func(_ context.Context, _, tmpDir string) (string, error) {
+			dst := filepath.Join(tmpDir, "pkg.pkg")
+			if err := os.WriteFile(dst, content, 0o600); err != nil {
+				return "", err
+			}
+			if strings.Contains(buf.String(), "install testpkg") {
+				installLineBefore = true
+			}
+			return dst, nil
+		},
+		SHA256: func(path string) (string, error) {
+			return fileHash(t, path), nil
+		},
+		StopBeforeInstall: func() bool { return true },
+		HasTerminal:       func() bool { return false },
+		Print:             io.Discard,
+	}
+
+	item := pins.Item{
+		Name: "testpkg", Version: "5.0.0", Platform: "darwin/arm64",
+		Source: "release", Locator: "https://example.com/pkg.pkg", SHA256: correctHash,
+	}
+	plan := deps.Plan{Items: []deps.PlanItem{{Pin: item, Absent: true, Approve: true}}}
+
+	if _, err := d.Apply(context.Background(), plan); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if installLineBefore {
+		t.Fatal("install line was written before checksum; want after checksum")
+	}
+	if !strings.Contains(buf.String(), "install testpkg 5.0.0") {
+		t.Fatalf("output = %q; want 'install testpkg 5.0.0' line", buf.String())
+	}
+}
+
+func TestVersionCheckFailsWhenInstalledOlder(t *testing.T) {
+	content := []byte("version check test")
+	h := sha256.Sum256(content)
+	correctHash := hex.EncodeToString(h[:])
+
+	d := deps.Deps{
+		IsAbsent: func() bool { return true },
+		Out:      newOut(io.Discard),
+		Download: func(_ context.Context, _, tmpDir string) (string, error) {
+			dst := filepath.Join(tmpDir, "pkg.pkg")
+			if err := os.WriteFile(dst, content, 0o600); err != nil {
+				return "", err
+			}
+			return dst, nil
+		},
+		SHA256: func(path string) (string, error) {
+			return fileHash(t, path), nil
+		},
+		StopBeforeInstall: func() bool { return false },
+		HasTerminal:       func() bool { return false },
+		Install:           func(_ context.Context, _ string, _ bool) error { return nil },
+		FindPodman:        func(_ string) (string, error) { return "/usr/bin/podman", nil },
+		PodmanVersion:     func(_ context.Context, _ string) (string, error) { return "4.0.0", nil },
+		MachineList: func(_ context.Context, _ string) ([]deps.MachineInfo, error) {
+			return []deps.MachineInfo{{Name: "default", Running: true}}, nil
+		},
+	}
+
+	item := pins.Item{
+		Name: "testpkg", Version: "5.0.0", Platform: "darwin/arm64",
+		Source: "release", Locator: "https://example.com/pkg.pkg", SHA256: correctHash,
+	}
+	plan := deps.Plan{Items: []deps.PlanItem{{Pin: item, Absent: true, Approve: true}}}
+
+	_, err := d.Apply(context.Background(), plan)
+	if err == nil {
+		t.Fatal("Apply: want error when installed version is older than pin, got nil")
+	}
+}
+
+func TestFindPodmanErrorAfterInstall(t *testing.T) {
+	content := []byte("install error test")
+	h := sha256.Sum256(content)
+	correctHash := hex.EncodeToString(h[:])
+
+	findErr := errors.New("podman not found after install")
+	d := deps.Deps{
+		IsAbsent: func() bool { return true },
+		Out:      newOut(io.Discard),
+		Download: func(_ context.Context, _, tmpDir string) (string, error) {
+			dst := filepath.Join(tmpDir, "pkg.pkg")
+			if err := os.WriteFile(dst, content, 0o600); err != nil {
+				return "", err
+			}
+			return dst, nil
+		},
+		SHA256:            func(path string) (string, error) { return fileHash(t, path), nil },
+		StopBeforeInstall: func() bool { return false },
+		HasTerminal:       func() bool { return false },
+		Install:           func(_ context.Context, _ string, _ bool) error { return nil },
+		FindPodman:        func(_ string) (string, error) { return "", findErr },
+		PodmanVersion:     func(_ context.Context, _ string) (string, error) { return "5.0.0", nil },
+	}
+
+	item := pins.Item{
+		Name: "testpkg", Version: "5.0.0", Platform: "darwin/arm64",
+		Source: "release", Locator: "https://example.com/pkg.pkg", SHA256: correctHash,
+	}
+	plan := deps.Plan{Items: []deps.PlanItem{{Pin: item, Absent: true, Approve: true}}}
+
+	_, err := d.Apply(context.Background(), plan)
+	if err == nil {
+		t.Fatal("Apply: want error when FindPodman fails after install, got nil")
+	}
+}
+
+func TestBrokenBinaryExits1(t *testing.T) {
+	brokenErr := errors.New("podman --version: exec failed")
+	var buf strings.Builder
+	d := deps.Deps{
+		PodmanVersion: func(_ context.Context, _ string) (string, error) {
+			return "", brokenErr
+		},
+		IsAbsent: func() bool { return false },
+		Out:      newOut(&buf),
+	}
+
+	_, err := d.Make(context.Background(), []pins.Item{testItem("5.0.0")}, "/usr/bin/podman", nil)
+	if err == nil {
+		t.Fatal("Make: want error for broken podman binary, got nil")
+	}
+	if !strings.Contains(err.Error(), "--version") {
+		t.Fatalf("Make err = %q; want --version in error", err.Error())
 	}
 }
