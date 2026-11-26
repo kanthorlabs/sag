@@ -77,15 +77,23 @@ func TestRunArgsBusybox(t *testing.T) {
 	}
 }
 
-func TestProductFlagsExcludeTestOnlyFlags(t *testing.T) {
+func TestProductFlagsExcludeLogFlags(t *testing.T) {
 	p := ContainerFlags.Product
 	product := strings.Join(append(p.SecurityArgs(), p.Publish(ListenPort), p.ConfigVolume("c"), p.StateVolume("s"), p.Secret("a", "b", "")), " ")
-	for _, flag := range TestOnlyFlags {
+	for _, flag := range ContainerFlags.LogFlags.Args() {
 		if strings.Contains(product, flag) {
-			t.Errorf("product flags hold the test-only flag %q: %s", flag, product)
+			t.Errorf("product flags hold the log flag %q: %s", flag, product)
 		}
 	}
 	if got := p.Publish(ListenPort); got != "127.0.0.1:8443:8443" {
 		t.Errorf("Publish(8443) = %q; want 127.0.0.1:8443:8443", got)
+	}
+}
+
+func TestLogFlagsArgs(t *testing.T) {
+	args := ContainerFlags.LogFlags.Args()
+	want := []string{"--log-driver", "k8s-file", "--log-opt", "max-size=10mb"}
+	if !slices.Equal(args, want) {
+		t.Errorf("LogFlags.Args() = %v, want %v", args, want)
 	}
 }

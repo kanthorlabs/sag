@@ -15,8 +15,6 @@ const (
 
 var ContainerFlags = deploy.DefaultFlags
 
-var TestOnlyFlags []string
-
 func SecretFlag(source, target, mode string) string {
 	return ContainerFlags.Product.Secret(source, target, mode)
 }
