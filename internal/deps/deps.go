@@ -88,17 +88,21 @@ func (d Deps) Make(ctx context.Context, items []pins.Item, podmanPath string, au
 		if !absent {
 			version, err := d.PodmanVersion(ctx, podmanPath)
 			if err != nil {
-				absent = true
-			} else {
-				cmp := compareVersions(version, item.Version)
-				switch {
-				case cmp < 0:
-					d.Out.Line(stepline.StatusFail, item.Name, "installed "+version+", pin "+item.Version)
-					return Plan{}, &OlderError{Name: item.Name, Installed: version, Pin: item.Version}
-				case cmp > 0:
-					pi.Newer = true
-					d.Out.Line(stepline.StatusWarn, item.Name, "installed "+version+", pin "+item.Version)
-				}
+				return Plan{}, fmt.Errorf("deps: %s --version: %w", item.Name, err)
+			}
+			cmp, err := compareVersions(version, item.Version)
+			if err != nil {
+				return Plan{}, fmt.Errorf("deps: version parse: %w", err)
+			}
+			switch {
+			case cmp < 0:
+				d.Out.Line(stepline.StatusFail, item.Name, "installed "+version+", pin "+item.Version)
+				return Plan{}, &OlderError{Name: item.Name, Installed: version, Pin: item.Version}
+			case cmp == 0:
+				d.Out.Line(stepline.StatusOK, item.Name, version)
+			case cmp > 0:
+				pi.Newer = true
+				d.Out.Line(stepline.StatusWarn, item.Name, "installed "+version+", pin "+item.Version)
 			}
 		}
 
@@ -138,7 +142,6 @@ func (d Deps) Apply(ctx context.Context, plan Plan) (string, error) {
 		if !pi.Absent || !pi.Approve {
 			continue
 		}
-		d.Out.Line(stepline.StatusInstall, pi.Pin.Name, pi.Pin.Version)
 
 		tmpDir, err := os.MkdirTemp("", "sag-deps-*")
 		if err != nil {
@@ -161,6 +164,8 @@ func (d Deps) Apply(ctx context.Context, plan Plan) (string, error) {
 			return "", fmt.Errorf("deps: checksum mismatch for %s: got %s, want %s", pi.Pin.Name, got, pi.Pin.SHA256)
 		}
 
+		d.Out.Line(stepline.StatusInstall, pi.Pin.Name, pi.Pin.Version)
+
 		if d.StopBeforeInstall != nil && d.StopBeforeInstall() {
 			if d.Print != nil {
 				fmt.Fprintln(d.Print, pkgPath)
@@ -177,6 +182,17 @@ func (d Deps) Apply(ctx context.Context, plan Plan) (string, error) {
 			p, err := d.FindPodman("")
 			if err == nil {
 				newPodmanPath = p
+			}
+		}
+
+		if newPodmanPath != "" && d.PodmanVersion != nil {
+			ver, verErr := d.PodmanVersion(ctx, newPodmanPath)
+			if verErr != nil {
+				return newPodmanPath, fmt.Errorf("deps: %s version after install: %w", pi.Pin.Name, verErr)
+			}
+			cmp, cmpErr := compareVersions(ver, pi.Pin.Version)
+			if cmpErr != nil || cmp < 0 {
+				return newPodmanPath, fmt.Errorf("deps: installed %s %s is older than pin %s", pi.Pin.Name, ver, pi.Pin.Version)
 			}
 		}
 	}
@@ -214,7 +230,16 @@ func (d Deps) Apply(ctx context.Context, plan Plan) (string, error) {
 	return newPodmanPath, nil
 }
 
-func compareVersions(a, b string) int {
+func stripVersionSuffix(v string) string {
+	if i := strings.IndexAny(v, "-+~"); i >= 0 {
+		return v[:i]
+	}
+	return v
+}
+
+func compareVersions(a, b string) (int, error) {
+	a = stripVersionSuffix(a)
+	b = stripVersionSuffix(b)
 	aParts := strings.Split(a, ".")
 	bParts := strings.Split(b, ".")
 	n := len(aParts)
@@ -224,19 +249,27 @@ func compareVersions(a, b string) int {
 	for i := 0; i < n; i++ {
 		var av, bv int
 		if i < len(aParts) {
-			av, _ = strconv.Atoi(aParts[i])
+			v, err := strconv.Atoi(aParts[i])
+			if err != nil {
+				return 0, fmt.Errorf("deps: invalid version part %q in %q", aParts[i], a)
+			}
+			av = v
 		}
 		if i < len(bParts) {
-			bv, _ = strconv.Atoi(bParts[i])
+			v, err := strconv.Atoi(bParts[i])
+			if err != nil {
+				return 0, fmt.Errorf("deps: invalid version part %q in %q", bParts[i], b)
+			}
+			bv = v
 		}
 		if av < bv {
-			return -1
+			return -1, nil
 		}
 		if av > bv {
-			return 1
+			return 1, nil
 		}
 	}
-	return 0
+	return 0, nil
 }
 
 func checkAutoApprove(autoApprove []string, item pins.Item) (approved bool, warnMsg string) {
@@ -245,9 +278,11 @@ func checkAutoApprove(autoApprove []string, item pins.Item) (approved bool, warn
 		if aa == target {
 			return true, ""
 		}
-		name, _, _ := strings.Cut(aa, "@")
+	}
+	for _, aa := range autoApprove {
+		name, ver, _ := strings.Cut(aa, "@")
 		if name == item.Name {
-			return false, "pre-approval " + aa + " does not match pin " + item.Version + "; ignored"
+			return false, "pre-approval " + ver + " does not match pin " + item.Version + "; ignored"
 		}
 	}
 	return false, ""

@@ -2,6 +2,8 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 
 	deployfiles "github.com/kanthorlabs/sag/deploy"
@@ -16,15 +18,26 @@ func (d Deps) stepSelectPins(_ context.Context, s *State) error {
 	if content == "" {
 		content = string(deployfiles.Pins)
 	}
+	requireHTTPS := testhook.RequireHTTPS()
 	var items []pins.Item
 	for _, line := range strings.Split(content, "\n") {
 		item, err := pins.ParseLine(line)
 		if err != nil {
-			continue
+			var skipErr *pins.SkipError
+			if errors.As(err, &skipErr) {
+				continue
+			}
+			return fmt.Errorf("bootstrap: pins: %w", err)
+		}
+		if err := pins.ValidateItem(item, requireHTTPS); err != nil {
+			return fmt.Errorf("bootstrap: %w", err)
 		}
 		items = append(items, item)
 	}
 	s.Pins = pins.SelectPlatform(items, d.GOOS(), d.GOARCH())
+	if len(s.Pins) == 0 && len(items) > 0 {
+		return fmt.Errorf("bootstrap: no pins for platform %s/%s", d.GOOS(), d.GOARCH())
+	}
 	return nil
 }
 

@@ -4,6 +4,7 @@ package portcheck
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -99,5 +100,37 @@ func TestGvproxyNotAHolderWhenPodmanPublishes(t *testing.T) {
 	}
 	if lsofCalled {
 		t.Fatal("lsof was called when podman ps found the holder")
+	}
+}
+
+func TestEmptyPodmanPathUsesLsof(t *testing.T) {
+	lsofOut := "COMMAND  PID\nsomeproc 123\n"
+	h, err := check(context.Background(),
+		nil,
+		func(_ context.Context) ([]byte, error) { return []byte(lsofOut), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Kind != HolderProcess {
+		t.Fatalf("Kind = %v; want HolderProcess", h.Kind)
+	}
+	if h.Name != "someproc" {
+		t.Fatalf("Name = %q; want %q", h.Name, "someproc")
+	}
+}
+
+func TestPodmanPsErrorUsesLsof(t *testing.T) {
+	lsofOut := "COMMAND  PID\nsomeproc 123\n"
+	h, err := check(context.Background(),
+		func(_ context.Context) ([]byte, error) { return nil, errors.New("podman ps failed") },
+		func(_ context.Context) ([]byte, error) { return []byte(lsofOut), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Kind != HolderProcess {
+		t.Fatalf("Kind = %v; want HolderProcess", h.Kind)
+	}
+	if h.Name != "someproc" {
+		t.Fatalf("Name = %q; want %q", h.Name, "someproc")
 	}
 }

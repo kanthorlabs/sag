@@ -41,3 +41,7 @@ func FailCertRenewal() bool {
 func FailTLSCACreate() bool {
 	return false
 }
+
+func RequireHTTPS() bool {
+	return true
+}

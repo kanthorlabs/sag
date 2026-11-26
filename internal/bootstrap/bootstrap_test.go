@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -16,14 +17,22 @@ import (
 	"github.com/kanthorlabs/sag/internal/endpointcert"
 	"github.com/kanthorlabs/sag/internal/hoststate"
 	"github.com/kanthorlabs/sag/internal/podman"
+	"github.com/kanthorlabs/sag/internal/portcheck"
 	"github.com/kanthorlabs/sag/internal/prompt"
 	"github.com/kanthorlabs/sag/internal/service"
 	"github.com/kanthorlabs/sag/internal/stepline"
+	"github.com/kanthorlabs/sag/internal/tailscale"
 )
 
 type nopPodman struct{}
 
 func (nopPodman) Run(_ context.Context, _ io.Reader, _ ...string) ([]byte, error) {
+	return nil, nil
+}
+
+type fakeCmd struct{}
+
+func (fakeCmd) Output(_ context.Context, _ ...string) ([]byte, error) {
 	return nil, nil
 }
 
@@ -452,6 +461,106 @@ func TestContainerRefused(t *testing.T) {
 	}
 	if err.Error() != "bootstrap: refused to run inside a container" {
 		t.Fatalf("error = %q; want container refusal message", err.Error())
+	}
+}
+
+func TestPlanTailscaleSkipDownKeepsAddress(t *testing.T) {
+	s := &State{
+		TailscaleState: tailscale.State{Address: "100.64.0.1"},
+		Out:            stepline.New(io.Discard),
+	}
+	plan := defaultPlanTailscale(
+		func() (tailscale.Command, bool) { return fakeCmd{}, true },
+		func(_ context.Context, _ tailscale.Command) (tailscale.State, error) {
+			return tailscale.State{SkipReason: tailscale.SkipDown}, nil
+		},
+	)
+	if err := plan(context.Background(), s); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if s.TailscaleState.Address != "100.64.0.1" {
+		t.Fatalf("Address = %q after SkipDown; want preserved %q", s.TailscaleState.Address, "100.64.0.1")
+	}
+	if s.TailscaleState.SkipReason != tailscale.SkipDown {
+		t.Fatalf("SkipReason = %q; want SkipDown", s.TailscaleState.SkipReason)
+	}
+}
+
+func TestPlanTailscaleOtherSkipClearsAddress(t *testing.T) {
+	s := &State{
+		TailscaleState: tailscale.State{Address: "100.64.0.1"},
+		Out:            stepline.New(io.Discard),
+	}
+	plan := defaultPlanTailscale(
+		func() (tailscale.Command, bool) { return fakeCmd{}, true },
+		func(_ context.Context, _ tailscale.Command) (tailscale.State, error) {
+			return tailscale.State{SkipReason: tailscale.SkipAddressInvalid}, nil
+		},
+	)
+	if err := plan(context.Background(), s); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if s.TailscaleState.Address != "" {
+		t.Fatalf("Address = %q after non-down skip; want cleared", s.TailscaleState.Address)
+	}
+}
+
+func TestPlanPortOneOkLineForTwoCalls(t *testing.T) {
+	var buf bytes.Buffer
+	s := &State{Out: stepline.New(&buf)}
+	plan := defaultPlanPort(func(_ context.Context, _ string) (portcheck.Holder, error) {
+		return portcheck.Holder{Kind: portcheck.HolderSAG, Name: "sag"}, nil
+	})
+
+	if err := plan(context.Background(), s); err != nil {
+		t.Fatalf("first plan: %v", err)
+	}
+	if err := plan(context.Background(), s); err != nil {
+		t.Fatalf("second plan: %v", err)
+	}
+
+	out := buf.String()
+	count := strings.Count(out, "ok port-8443")
+	if count != 1 {
+		t.Fatalf("ok port-8443 appears %d times; want exactly 1\noutput: %s", count, out)
+	}
+}
+
+func TestPlanPortContainerConflict(t *testing.T) {
+	var buf bytes.Buffer
+	s := &State{Out: stepline.New(&buf)}
+	plan := defaultPlanPort(func(_ context.Context, _ string) (portcheck.Holder, error) {
+		return portcheck.Holder{Kind: portcheck.HolderContainer, Name: "other"}, nil
+	})
+
+	err := plan(context.Background(), s)
+	if err == nil {
+		t.Fatal("plan: want error for container conflict, got nil")
+	}
+	if !strings.Contains(buf.String(), "fail port") {
+		t.Fatalf("output = %q; want 'fail port' line", buf.String())
+	}
+	if !strings.Contains(buf.String(), "container other") {
+		t.Fatalf("output = %q; want container name", buf.String())
+	}
+}
+
+func TestPlanPortProcessConflict(t *testing.T) {
+	var buf bytes.Buffer
+	s := &State{Out: stepline.New(&buf)}
+	plan := defaultPlanPort(func(_ context.Context, _ string) (portcheck.Holder, error) {
+		return portcheck.Holder{Kind: portcheck.HolderProcess, Name: "httpd"}, nil
+	})
+
+	err := plan(context.Background(), s)
+	if err == nil {
+		t.Fatal("plan: want error for process conflict, got nil")
+	}
+	if !strings.Contains(buf.String(), "fail port") {
+		t.Fatalf("output = %q; want 'fail port' line", buf.String())
+	}
+	if !strings.Contains(buf.String(), "httpd") {
+		t.Fatalf("output = %q; want process name", buf.String())
 	}
 }
 

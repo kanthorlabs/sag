@@ -59,16 +59,12 @@ func parseLsof(data []byte) (Holder, error) {
 }
 
 func check(ctx context.Context, podmanPS, lsof func(context.Context) ([]byte, error)) (Holder, error) {
-	psOut, err := podmanPS(ctx)
-	if err != nil {
-		return Holder{}, err
-	}
-	h, err := parsePodmanPS(psOut)
-	if err != nil {
-		return Holder{}, err
-	}
-	if h.Kind != HolderNone {
-		return h, nil
+	if podmanPS != nil {
+		if psOut, psErr := podmanPS(ctx); psErr == nil {
+			if h, parseErr := parsePodmanPS(psOut); parseErr == nil && h.Kind != HolderNone {
+				return h, nil
+			}
+		}
 	}
 	lsofOut, err := lsof(ctx)
 	if err != nil {
@@ -99,5 +95,9 @@ func realLsof(ctx context.Context) ([]byte, error) {
 }
 
 func Check(ctx context.Context, podmanPath string) (Holder, error) {
-	return check(ctx, realPodmanPS(podmanPath), realLsof)
+	var psFunc func(context.Context) ([]byte, error)
+	if podmanPath != "" {
+		psFunc = realPodmanPS(podmanPath)
+	}
+	return check(ctx, psFunc, realLsof)
 }
