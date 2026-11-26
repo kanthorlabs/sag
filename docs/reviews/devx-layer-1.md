@@ -166,3 +166,54 @@ No change to plan files. Recording for the layer 2 contract owner to handle.
 `devx-pulled.txt` is absent. `dxh` pulled no new images during the layer 1 gate run. The Main suite at layer 1 uses `localhost/sag:devx-e2e` (built) and no pulled images. Absent file is correct.
 
 Both images comply with the teardown and Q36 rules. No defect.
+
+---
+
+## D1.4 Resolution
+
+All `action:YES` findings applied. `S19`–`S21` are `action:NO` and not changed.
+
+### Commits
+
+| Commit | Findings |
+|--------|----------|
+| `d102120` | B1 B2 S2 S3 S4 S5 — RunError, SecretList names, error mapping, fromRunner, sorted labels, pinned busybox |
+| `22db8b0` | B8 B9 S9 — RunArgs --replace --restart, SecretMounts master-key-first, deploy tests |
+| `9a813ee` | S8 — remove TestOnlyFlags, add LogFlags.Args(), harness test |
+| `da73047` | B3 B4 B5 S17 — gate rule (all tests at layer≤N must pass), -run filter, env block from sw_vers/podman version, slices.Compact, absent-commit error |
+| `2a76a10` | S1 S16 — plan docs daemon line to D8.2, Makefile build_image label arg trap exit-130 lock path |
+| `410e11e` | S14 — ChildEnv returns error for empty groupDir or failed MkdirAll |
+| `153a514` | S15 — remove t.Parallel() from testHarnessSkeleton |
+| `8c12252` | S18 — TTY Redact method, Expect redacts secrets/JWTs in error text |
+| `0d90822` | S13 — enumerate all secrets, inspect label before each rm (podman secret ls --filter label= not supported on 5.5.x) |
+| `95216fd` | S12 — podman image ls --filter reference=, anchored ^name$ filter, remove Home/UID fields |
+| `f5dabc7` | B6 — list-before-remove for exact-name objects, gui/<uid>/net.kanthorlabs.sag bootout, plist/logs/cfg/aws-credentials removal, re-read state on recovery |
+| `a8c4c22` | S10 — exact call-order assert for Teardown, both image names in fake, LaunchAgent/volume/image/label branches |
+| `e27db15` | B7 — frame.go SuiteEntry RunGroup childEnv, runner gains groupDir/binDir, StartTTY uses childEnv, skeleton wired through frame, CLAUDE_CONFIG_DIR assertion |
+
+### Gate: `make test`
+
+```
+go test -count=1 ./...   → all ok (30 packages)
+make contract-check      → ok
+```
+
+### `podman system df` (before gate run)
+
+```
+TYPE           TOTAL       ACTIVE      SIZE        RECLAIMABLE
+Images         78          4           9.473GB     8.625GB (91%)
+Containers     5           5           7.309MB     0B (0%)
+Local Volumes  6           2           712.4MB     296.7MB (42%)
+```
+
+### `podman system df` (after gate run — same session, no e2e run)
+
+```
+TYPE           TOTAL       ACTIVE      SIZE        RECLAIMABLE
+Images         78          4           9.473GB     8.625GB (91%)
+Containers     5           5           7.309MB     0B (0%)
+Local Volumes  6           2           712.4MB     296.7MB (42%)
+```
+
+Disk free: 102 GiB (threshold 10 GiB — pass).
