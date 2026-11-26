@@ -10,8 +10,6 @@ import (
 const minFreeGiB = 10
 
 type PreconditionConfig struct {
-	Home              string
-	UID               string
 	CfgDir            string
 	PortHeld          func() bool
 	CfgExists         func() bool
@@ -23,7 +21,7 @@ func CheckPreconditions(ctx context.Context, r Runner, cfg PreconditionConfig) e
 	if err := checkMachine(ctx, r); err != nil {
 		return err
 	}
-	if err := checkFreeSpace(ctx, r); err != nil {
+	if err := CheckFreeSpace(ctx, r); err != nil {
 		return err
 	}
 	if err := checkContainers(ctx, r); err != nil {
@@ -45,10 +43,6 @@ func CheckPreconditions(ctx context.Context, r Runner, cfg PreconditionConfig) e
 		return fmt.Errorf("precondition: LaunchAgent plist exists")
 	}
 	return nil
-}
-
-func checkFreeSpace(ctx context.Context, r Runner) error {
-	return CheckFreeSpace(ctx, r)
 }
 
 func CheckFreeSpace(ctx context.Context, r Runner) error {
@@ -121,8 +115,11 @@ func checkVolumeAndImage(ctx context.Context, r Runner) error {
 	if err == nil {
 		return fmt.Errorf("precondition: volume sag-state exists")
 	}
-	_, err = r.Output(ctx, "podman", "image", "inspect", "docker.io/kanthorlabs/sag")
-	if err == nil {
+	out, err := r.Output(ctx, "podman", "image", "ls", "--filter", "reference=docker.io/kanthorlabs/sag", "--format", "{{.Repository}}:{{.Tag}}")
+	if err != nil {
+		return fmt.Errorf("precondition: image ls: %w", err)
+	}
+	if strings.TrimSpace(string(out)) != "" {
 		return fmt.Errorf("precondition: image docker.io/kanthorlabs/sag exists")
 	}
 	return nil
@@ -130,7 +127,7 @@ func checkVolumeAndImage(ctx context.Context, r Runner) error {
 
 func checkSecrets(ctx context.Context, r Runner) error {
 	for _, name := range []string{"sag-master-key", "sag-tls-cert", "sag-tls-key", "sag-aws-credentials"} {
-		out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "name="+name, "--format", "{{.Name}}")
+		out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "name=^"+name+"$", "--format", "{{.Name}}")
 		if err != nil {
 			return fmt.Errorf("precondition: secret ls %s: %w", name, err)
 		}

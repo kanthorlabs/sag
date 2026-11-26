@@ -17,11 +17,11 @@ func goodMachineRunner() *fakeRunner {
 	r.set("podman ps -a --filter name=^sag-dev$ --format {{.Names}}", nil, nil)
 	r.set("podman ps -a --filter name=^sag-dev-pg$ --format {{.Names}}", nil, nil)
 	r.set("podman volume inspect sag-state", nil, errors.New("no such volume"))
-	r.set("podman image inspect docker.io/kanthorlabs/sag", nil, errors.New("no such image"))
-	r.set("podman secret ls --filter name=sag-master-key --format {{.Name}}", nil, nil)
-	r.set("podman secret ls --filter name=sag-tls-cert --format {{.Name}}", nil, nil)
-	r.set("podman secret ls --filter name=sag-tls-key --format {{.Name}}", nil, nil)
-	r.set("podman secret ls --filter name=sag-aws-credentials --format {{.Name}}", nil, nil)
+	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-master-key$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-tls-cert$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-tls-key$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-aws-credentials$ --format {{.Name}}", nil, nil)
 	r.set("podman secret ls --format {{.Name}}", nil, nil)
 	return r
 }
@@ -30,7 +30,7 @@ func TestRefusesSecondMachine(t *testing.T) {
 	r := newFake()
 	r.set("podman machine list --format {{.Name}} {{.Running}}", []byte("podman-machine-default true\npodman-machine-other true\n"), nil)
 
-	cfg := dxh.PreconditionConfig{Home: "/home/u", UID: "1000", CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for two machines")
@@ -44,7 +44,7 @@ func TestRefusesStoppedMachine(t *testing.T) {
 	r := newFake()
 	r.set("podman machine list --format {{.Name}} {{.Running}}", []byte("podman-machine-default false\n"), nil)
 
-	cfg := dxh.PreconditionConfig{Home: "/home/u", UID: "1000", CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for stopped machine")
@@ -59,7 +59,7 @@ func TestRefusesLowDisk(t *testing.T) {
 	r.set("podman machine list --format {{.Name}} {{.Running}}", []byte("podman-machine-default true\n"), nil)
 	r.set("podman machine ssh podman-machine-default df -Pk /var", []byte("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/vda1 102400000 1024000 5000000 95% /var\n"), nil)
 
-	cfg := dxh.PreconditionConfig{Home: "/home/u", UID: "1000", CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for low disk")
@@ -73,7 +73,7 @@ func TestRefusesContainerSag(t *testing.T) {
 	r := goodMachineRunner()
 	r.set("podman ps -a --filter name=^sag$ --format {{.Names}}", []byte("sag\n"), nil)
 
-	cfg := dxh.PreconditionConfig{Home: "/home/u", UID: "1000", CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for container sag")
@@ -87,7 +87,7 @@ func TestRefusesDevContainers(t *testing.T) {
 	r := goodMachineRunner()
 	r.set("podman ps -a --filter name=^sag-dev$ --format {{.Names}}", []byte("sag-dev\n"), nil)
 
-	cfg := dxh.PreconditionConfig{Home: "/home/u", UID: "1000", CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for sag-dev container")
@@ -97,8 +97,6 @@ func TestRefusesDevContainers(t *testing.T) {
 func TestRefusesPortHeld(t *testing.T) {
 	r := goodMachineRunner()
 	cfg := dxh.PreconditionConfig{
-		Home:     "/home/u",
-		UID:      "1000",
 		CfgDir:   "/home/u/.config/sag",
 		PortHeld: func() bool { return true },
 	}
@@ -114,8 +112,6 @@ func TestRefusesPortHeld(t *testing.T) {
 func TestRefusesCfgOrLaunchAgent(t *testing.T) {
 	r := goodMachineRunner()
 	cfg := dxh.PreconditionConfig{
-		Home:      "/home/u",
-		UID:       "1000",
 		CfgDir:    "/home/u/.config/sag",
 		CfgExists: func() bool { return true },
 	}
@@ -130,9 +126,9 @@ func TestRefusesCfgOrLaunchAgent(t *testing.T) {
 
 func TestRefusesSAGSecretsOrVolume(t *testing.T) {
 	r := goodMachineRunner()
-	r.set("podman secret ls --filter name=sag-master-key --format {{.Name}}", []byte("sag-master-key\n"), nil)
+	r.set("podman secret ls --filter name=^sag-master-key$ --format {{.Name}}", []byte("sag-master-key\n"), nil)
 
-	cfg := dxh.PreconditionConfig{Home: "/home/u", UID: "1000", CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for sag-master-key secret")
@@ -155,16 +151,16 @@ func TestMarkerRunsTeardownOnce(t *testing.T) {
 		r.set("podman ps -a --filter name=^sag-dev$ --format {{.Names}}", nil, nil)
 		r.set("podman ps -a --filter name=^sag-dev-pg$ --format {{.Names}}", nil, nil)
 		r.set("podman volume inspect sag-state", nil, errors.New("no such volume"))
-		r.set("podman image inspect docker.io/kanthorlabs/sag", nil, errors.New("no such image"))
-		r.set("podman secret ls --filter name=sag-master-key --format {{.Name}}", nil, nil)
-		r.set("podman secret ls --filter name=sag-tls-cert --format {{.Name}}", nil, nil)
-		r.set("podman secret ls --filter name=sag-tls-key --format {{.Name}}", nil, nil)
-		r.set("podman secret ls --filter name=sag-aws-credentials --format {{.Name}}", nil, nil)
+		r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", nil, nil)
+		r.set("podman secret ls --filter name=^sag-master-key$ --format {{.Name}}", nil, nil)
+		r.set("podman secret ls --filter name=^sag-tls-cert$ --format {{.Name}}", nil, nil)
+		r.set("podman secret ls --filter name=^sag-tls-key$ --format {{.Name}}", nil, nil)
+		r.set("podman secret ls --filter name=^sag-aws-credentials$ --format {{.Name}}", nil, nil)
 		r.set("podman secret ls --format {{.Name}}", nil, nil)
 		return nil
 	}
 
-	cfg := dxh.PreconditionConfig{Home: "/home/u", UID: "1000", CfgDir: "/home/u/.config/sag", Marker: true}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", Marker: true}
 	err := dxh.CheckPreconditionsWithRecovery(context.Background(), r, cfg, teardown)
 	if err != nil {
 		t.Fatalf("expected no error after recovery: %v", err)
@@ -186,7 +182,7 @@ func TestNoMarkerChangesNothing(t *testing.T) {
 		return nil
 	}
 
-	cfg := dxh.PreconditionConfig{Home: "/home/u", UID: "1000", CfgDir: "/home/u/.config/sag", Marker: false}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", Marker: false}
 	err := dxh.CheckPreconditionsWithRecovery(context.Background(), r, cfg, teardown)
 	if err == nil {
 		t.Fatal("expected error without marker")
@@ -221,8 +217,6 @@ func TestRecoveryReadsStateAgain(t *testing.T) {
 
 	held := true
 	cfg := dxh.PreconditionConfig{
-		Home:     "/home/u",
-		UID:      "1000",
 		CfgDir:   "/home/u/.config/sag",
 		Marker:   true,
 		PortHeld: func() bool { return held },
