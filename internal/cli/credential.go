@@ -9,14 +9,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/credential"
+	"github.com/kanthorlabs/sag/internal/hoststate"
+	sagimage "github.com/kanthorlabs/sag/internal/image"
 	"github.com/kanthorlabs/sag/internal/podman"
 	"github.com/kanthorlabs/sag/internal/prompt"
 	"github.com/kanthorlabs/sag/internal/secret"
 	secretpodman "github.com/kanthorlabs/sag/internal/secret/podman"
+	"github.com/kanthorlabs/sag/internal/service"
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
@@ -25,7 +30,42 @@ const credentialCreateUsage = "usage: sag credential create <name> --kind <kind>
 var (
 	runCredentialList    = credential.List
 	runCredentialInspect = credential.Inspect
+	buildCfgNoLockFn     = defaultBuildCfgNoLock
+	openTTY              = func() (*os.File, error) {
+		return os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	}
 )
+
+func defaultBuildCfgNoLock() (service.Config, func(), error) {
+	p, err := hoststate.ResolvePaths()
+	if err != nil {
+		return service.Config{}, noop, err
+	}
+	answers, err := hoststate.LoadAnswers(p)
+	if err != nil {
+		return service.Config{}, noop, err
+	}
+	podmanPath, err := hoststate.FindPodman(answers.PodmanPath)
+	if err != nil {
+		return service.Config{}, noop, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return service.Config{}, noop, err
+	}
+	binPath, err := os.Executable()
+	if err != nil {
+		return service.Config{}, noop, err
+	}
+	return service.Config{
+		Podman:  podman.Runner{Path: podmanPath},
+		CfgDir:  p.Cfg,
+		UID:     strconv.Itoa(os.Getuid()),
+		Home:    home,
+		BinPath: binPath,
+		Image:   sagimage.Reference(),
+	}, noop, nil
+}
 
 func credentialCreate(args []string, std IO) int {
 	opts, ok := parseCredentialCreateFlags(args, std)
@@ -61,7 +101,14 @@ func credentialCreate(args []string, std IO) int {
 			return err
 		}
 		_, err = runner.Run(ctx, strings.NewReader(string(payload)), "exec", "-i", "sag", "sag", "credential", "check", "--kind", kind, "--tls", string(tls))
-		return err
+		if err != nil {
+			var re *podman.RunError
+			if errors.As(err, &re) && re.Stderr != "" {
+				return errors.New(re.Stderr)
+			}
+			return err
+		}
+		return nil
 	}
 	opts.ContainerRun = func(ctx context.Context) (bool, error) {
 		out, err := runner.Run(ctx, nil, "container", "inspect", "--format", "{{.State.Running}}", "sag")
@@ -73,9 +120,7 @@ func credentialCreate(args []string, std IO) int {
 	opts.ServiceStart = func(ctx context.Context, out io.Writer) error {
 		return startFn(ctx, cfg, stepline.New(out))
 	}
-	opts.OpenTTY = func() (*os.File, error) {
-		return os.OpenFile("/dev/tty", os.O_RDWR, 0)
-	}
+	opts.OpenTTY = openTTY
 	opts.StdinReader = std.In
 	opts.IsStdinTerm = std.IsTerminal(std.In)
 	opts.Out = std.Out
@@ -113,7 +158,7 @@ func parseCredentialCreateFlags(args []string, std IO) (credential.CreateOptions
 	fs.StringVar(&description, "description", "", "human-readable description")
 
 	var tls string
-	fs.StringVar(&tls, "tls", string(core.TLSDisable), "TLS mode: disable|verify-full|insecure-skip-verify")
+	fs.StringVar(&tls, "tls", string(core.TLSVerifyFull), "TLS mode: disable|verify-full|insecure-skip-verify")
 
 	var tlsCAPath string
 	fs.StringVar(&tlsCAPath, "tls-ca", "", "path to PEM CA certificate")
@@ -200,7 +245,7 @@ func credentialList(args []string, std IO) int {
 		return ExitUsage
 	}
 
-	cfg, release, err := buildCfgFn()
+	cfg, release, err := buildCfgNoLockFn()
 	if err != nil {
 		return fail(std, err)
 	}
@@ -233,8 +278,11 @@ func credentialList(args []string, std IO) int {
 		return ExitOK
 	}
 
-	for _, e := range entries {
-		fmt.Fprintf(std.Out, "%s kind=%s tls=%s agents=%s\n", e.Name, e.Kind, e.TLS, strings.Join(e.Agents, ","))
+	for i, e := range entries {
+		if i > 0 {
+			fmt.Fprintln(std.Out)
+		}
+		printEntryText(std.Out, e, false)
 	}
 	return ExitOK
 }
@@ -258,7 +306,7 @@ func credentialInspect(args []string, std IO) int {
 		return ExitUsage
 	}
 
-	cfg, release, err := buildCfgFn()
+	cfg, release, err := buildCfgNoLockFn()
 	if err != nil {
 		return fail(std, err)
 	}
@@ -271,7 +319,6 @@ func credentialInspect(args []string, std IO) int {
 
 	opts := credential.InspectOptions{
 		SAGYaml: filepath.Join(cfg.CfgDir, "sag.yaml"),
-		CAPem:   filepath.Join(cfg.CfgDir, "ca.pem"),
 		Backend: secretpodman.New(runner),
 		Podman:  runner,
 		Stderr:  std.Err,
@@ -279,7 +326,7 @@ func credentialInspect(args []string, std IO) int {
 
 	entry, err := runCredentialInspect(context.Background(), name, opts)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, credential.ErrResourceNotFound) {
 			fmt.Fprintf(std.Err, "sag: resource %s not found\n", name)
 			return ExitFailure
 		}
@@ -295,8 +342,45 @@ func credentialInspect(args []string, std IO) int {
 		return ExitOK
 	}
 
-	fmt.Fprintf(std.Out, "name: %s\nkind: %s\ntls: %s\nagents: %s\n", entry.Name, entry.Kind, entry.TLS, strings.Join(entry.Agents, ", "))
+	printEntryText(std.Out, entry, true)
 	return ExitOK
+}
+
+func printEntryText(w io.Writer, e credential.Entry, inspect bool) {
+	fmt.Fprintf(w, "name: %s\n", e.Name)
+	fmt.Fprintf(w, "kind: %s\n", e.Kind)
+	fmt.Fprintf(w, "description: %s\n", e.Description)
+	fmt.Fprintf(w, "tls: %s\n", e.TLS)
+	fmt.Fprintf(w, "agents: %s\n", strings.Join(e.Agents, ","))
+	for i, s := range e.Secrets {
+		prefix := fmt.Sprintf("secrets[%d]", i)
+		fmt.Fprintf(w, "%s.name: %s\n", prefix, s.Name)
+		fmt.Fprintf(w, "%s.backend: %s\n", prefix, s.Backend)
+		fmt.Fprintf(w, "%s.role: %s\n", prefix, s.Role)
+		if s.Exists == nil {
+			fmt.Fprintf(w, "%s.exists: null\n", prefix)
+		} else {
+			fmt.Fprintf(w, "%s.exists: %v\n", prefix, *s.Exists)
+		}
+		fmt.Fprintf(w, "%s.owned: %v\n", prefix, s.Owned)
+		if s.CreatedAt == nil {
+			fmt.Fprintf(w, "%s.created_at: null\n", prefix)
+		} else {
+			fmt.Fprintf(w, "%s.created_at: %s\n", prefix, s.CreatedAt.UTC().Format(time.RFC3339))
+		}
+		if s.Mounted == nil {
+			fmt.Fprintf(w, "%s.mounted: null\n", prefix)
+		} else {
+			fmt.Fprintf(w, "%s.mounted: %v\n", prefix, *s.Mounted)
+		}
+	}
+	if inspect {
+		if e.ContainerRunning == nil {
+			fmt.Fprintf(w, "container_running: null\n")
+		} else {
+			fmt.Fprintf(w, "container_running: %v\n", *e.ContainerRunning)
+		}
+	}
 }
 
 func credentialDelete(args []string, std IO) int {

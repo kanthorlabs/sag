@@ -44,8 +44,11 @@ func validateDescription(desc string) error {
 	return nil
 }
 
-func validateTLSCAPem(pem []byte) error {
-	if len(pem) > 0 && !hasCertificate(pem) {
+func validateTLSCAPem(data []byte) error {
+	if data == nil {
+		return nil
+	}
+	if !hasCertificate(data) {
 		return errors.New("--tls-ca: no valid PEM certificate found")
 	}
 	return nil
@@ -81,8 +84,11 @@ func readStdin(r io.Reader, isTerminal bool) (secret.Credential, error) {
 	if bytes.ContainsRune(raw, 0) {
 		return secret.Credential{}, errors.New("--stdin: NUL byte in input")
 	}
-	raw = bytes.TrimSuffix(raw, []byte("\r\n"))
-	raw = bytes.TrimSuffix(raw, []byte("\n"))
+	if bytes.HasSuffix(raw, []byte("\r\n")) {
+		raw = raw[:len(raw)-2]
+	} else if bytes.HasSuffix(raw, []byte("\n")) {
+		raw = raw[:len(raw)-1]
+	}
 	if bytes.ContainsRune(raw, '\n') {
 		return secret.Credential{}, errors.New("--stdin: inner line break in input")
 	}
