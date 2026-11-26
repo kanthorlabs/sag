@@ -10,15 +10,18 @@ import (
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
 
+const testRunToken = "dxh-unit-test-token"
+
 func holdRunLock(t *testing.T, devDir string) {
 	t.Helper()
 	lock := filepath.Join(devDir, "claims", "devx-e2e.lock")
 	if err := os.MkdirAll(lock, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(lock, "owner"), []byte(fmt.Sprintf("%d test", os.Getpid())), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(lock, "owner"), []byte(fmt.Sprintf("%d %s", os.Getpid(), testRunToken)), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("DEVX_RUN_TOKEN", testRunToken)
 }
 
 func TestSuiteEntryCreatesAndRemovesMarker(t *testing.T) {

@@ -40,6 +40,9 @@ func testDXAC36_HostGuards(t *testing.T, ctx context.Context, groupDir, binDir s
 			if exitErr.ExitCode() != 2 {
 				t.Errorf("%v: exit %d; want 2", args[1:], exitErr.ExitCode())
 			}
+			if !strings.Contains(string(exitErr.Stderr), "runs only in the container") {
+				t.Errorf("%v: stderr %q does not say 'runs only in the container'", args[1:], exitErr.Stderr)
+			}
 		}
 
 		home := os.Getenv("HOME")

@@ -19,7 +19,14 @@ import (
 
 func DXAC01_Bootstrap(t *testing.T, ctx context.Context) {
 	t.Helper()
-	dxh.EnsureBootstrapped(t)
+
+	out, err := runSAG(t, ctx, "bootstrap",
+		"--autostart", "yes",
+		"--agent-setup", "claude-code=no",
+		"--agent-setup", "pi=no")
+	if err != nil {
+		t.Fatalf("bootstrap --autostart yes: %v\n%s", err, out)
+	}
 
 	home := os.Getenv("HOME")
 	cfgDir := dxh.CfgDir(home)
@@ -31,9 +38,9 @@ func DXAC01_Bootstrap(t *testing.T, ctx context.Context) {
 
 	r := dxh.NewRunner()
 	uid := fmt.Sprintf("%d", os.Getuid())
-	out, err := r.Output(ctx, "launchctl", "print", "gui/"+uid+"/net.kanthorlabs.sag")
-	if err != nil {
-		t.Fatalf("launchctl print gui/%s/net.kanthorlabs.sag: %v\n%s", uid, err, out)
+	lOut, lErr := r.Output(ctx, "launchctl", "print", "gui/"+uid+"/net.kanthorlabs.sag")
+	if lErr != nil {
+		t.Fatalf("launchctl print gui/%s/net.kanthorlabs.sag: %v\n%s", uid, lErr, lOut)
 	}
 }
 

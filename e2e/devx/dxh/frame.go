@@ -22,6 +22,10 @@ func SuiteEntry(t *testing.T, r Runner, pcfg PreconditionConfig, tcfg TeardownCo
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		t.Fatalf("suite entry: XDG_CONFIG_HOME=%q is set; unset it before running e2e-devx", xdg)
+	}
+
 	if err := CheckRunLock(filepath.Dir(filepath.Dir(markerFile))); err != nil {
 		t.Fatalf("suite entry: %v", err)
 	}
@@ -60,6 +64,6 @@ func RunGroup(t *testing.T, ctx context.Context, r Runner, tcfg TeardownConfig, 
 	}
 	t.Run(name, subtests)
 	if err := Teardown(ctx, r, tcfg); err != nil {
-		t.Logf("group %s post-teardown: %v", name, err)
+		t.Errorf("group %s post-teardown: %v", name, err)
 	}
 }

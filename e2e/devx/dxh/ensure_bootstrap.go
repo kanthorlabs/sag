@@ -11,20 +11,20 @@ import (
 )
 
 var (
-	ensureBootstrapCheckFn = defaultBootstrapCheck
-	ensureBootstrapRunFn   = defaultBootstrapRun
+	newRunnerFn          = func() Runner { return NewRunner() }
+	ensureBootstrapRunFn = defaultBootstrapRun
 )
 
 func EnsureBootstrapped(t *testing.T) {
 	t.Helper()
-	r := NewRunner()
+	r := newRunnerFn()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	home := os.Getenv("HOME")
 	cfgDir := CfgDir(home)
 
-	if ensureBootstrapCheckFn(ctx, r, cfgDir) {
+	if defaultBootstrapCheck(ctx, r, cfgDir) {
 		return
 	}
 
@@ -34,9 +34,6 @@ func EnsureBootstrapped(t *testing.T) {
 }
 
 func CfgDir(home string) string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "sag")
-	}
 	return filepath.Join(home, ".config", "sag")
 }
 

@@ -109,9 +109,35 @@ func TestTeardownNeverCallsCredentialDelete(t *testing.T) {
 
 func TestTeardownKeepsDevxImage(t *testing.T) {
 	r, cfg := newCleanTeardownFake("/home/u", "1000", "/home/u/.config/sag")
-	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", []byte("docker.io/kanthorlabs/sag:main\nlocalhost/sag:e2e\nlocalhost/sag:devx-e2e\n"), nil)
+	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", []byte("docker.io/kanthorlabs/sag:main\ndocker.io/kanthorlabs/sag:v1\n"), nil)
 	r.set("podman rmi docker.io/kanthorlabs/sag:main", nil, nil)
-	r.set("podman rmi localhost/sag:e2e", nil, nil)
+	r.set("podman rmi docker.io/kanthorlabs/sag:v1", nil, nil)
+
+	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	mainRemoved := false
+	v1Removed := false
+	for _, call := range r.calls {
+		if slices.Contains(call, "rmi") && slices.Contains(call, "docker.io/kanthorlabs/sag:main") {
+			mainRemoved = true
+		}
+		if slices.Contains(call, "rmi") && slices.Contains(call, "docker.io/kanthorlabs/sag:v1") {
+			v1Removed = true
+		}
+	}
+	if !mainRemoved {
+		t.Error("teardown did not remove docker.io/kanthorlabs/sag:main")
+	}
+	if !v1Removed {
+		t.Error("teardown did not remove docker.io/kanthorlabs/sag:v1")
+	}
+}
+
+func TestTeardownSkipsImagesWithoutPrefix(t *testing.T) {
+	r, cfg := newCleanTeardownFake("/home/u", "1000", "/home/u/.config/sag")
+	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", []byte("localhost/sag:devx-e2e\nlocalhost/sag:other\n"), nil)
 
 	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
 		t.Fatal(err)
@@ -119,18 +145,9 @@ func TestTeardownKeepsDevxImage(t *testing.T) {
 
 	for _, call := range r.calls {
 		joined := strings.Join(call, " ")
-		if strings.Contains(joined, "localhost/sag:devx-e2e") && (strings.Contains(joined, "rmi") || strings.Contains(joined, "rm ")) {
-			t.Errorf("teardown removed devx-e2e image: %v", call)
+		if strings.Contains(joined, "rmi") && strings.Contains(joined, "localhost/sag") {
+			t.Errorf("teardown removed localhost/sag image without prefix guard: %v", call)
 		}
-	}
-	e2eRemoved := false
-	for _, call := range r.calls {
-		if slices.Contains(call, "rmi") && slices.Contains(call, "localhost/sag:e2e") {
-			e2eRemoved = true
-		}
-	}
-	if !e2eRemoved {
-		t.Error("teardown did not remove localhost/sag:e2e")
 	}
 }
 

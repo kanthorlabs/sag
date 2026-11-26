@@ -176,7 +176,7 @@ func removeSAGImages(ctx context.Context, r Runner) error {
 		return err
 	}
 	for _, ref := range parseLines(out) {
-		if ref == "localhost/sag:devx-e2e" {
+		if !strings.HasPrefix(ref, "docker.io/kanthorlabs/sag:") && !strings.HasPrefix(ref, "docker.io/kanthorlabs/sag@") {
 			continue
 		}
 		if _, err := r.Output(ctx, "podman", "rmi", ref); err != nil {
