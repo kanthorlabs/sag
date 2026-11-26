@@ -18,3 +18,11 @@ func SharedDevDir() (string, error) {
 	}
 	return filepath.Join(filepath.Dir(common), ".dev"), nil
 }
+
+func TestBinary() (string, error) {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
+	}
+	return filepath.Join(strings.TrimSpace(string(out)), "bin", "sag-devxtest"), nil
+}

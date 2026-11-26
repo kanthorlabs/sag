@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -19,12 +18,10 @@ func testDXAC04BootstrapNoTerminal(t *testing.T, ctx context.Context, groupDir, 
 	home := os.Getenv("HOME")
 	cfg := cfgDir(home)
 
-	devDir, err := dxh.SharedDevDir()
+	sagBin, err := dxh.TestBinary()
 	if err != nil {
-		t.Fatalf("DXAC04: shared dev dir: %v", err)
+		t.Fatalf("DXAC04: test binary: %v", err)
 	}
-	repoRoot := filepath.Dir(devDir)
-	sagBin := filepath.Join(repoRoot, "bin", "sag-devxtest")
 
 	env, err := dxh.ChildEnv(os.Environ(), groupDir)
 	if err != nil {

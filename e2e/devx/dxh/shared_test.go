@@ -21,3 +21,18 @@ func TestSharedDevDirIsMainRepository(t *testing.T) {
 		t.Fatalf("parent of %q has no .git directory; a worktree has a .git file", dir)
 	}
 }
+
+func TestTestBinaryIsInThisWorktree(t *testing.T) {
+	bin, err := dxh.TestBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(wd)))
+	if want := filepath.Join(root, "bin", "sag-devxtest"); bin != want {
+		t.Fatalf("TestBinary = %q, want %q", bin, want)
+	}
+}
