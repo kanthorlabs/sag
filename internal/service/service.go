@@ -1,8 +1,12 @@
 package service
 
+import "github.com/kanthorlabs/sag/internal/podman"
+
 type Config struct {
-	PodmanPath string
-	CfgDir     string
-	UID        string
-	BinPath    string
+	Podman  podman.Command
+	CfgDir  string
+	UID     string
+	Home    string
+	BinPath string
+	Image   string
 }
