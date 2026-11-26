@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,9 @@ func DXAC03_BootstrapIdempotent(t *testing.T, ctx context.Context) {
 		t.Fatalf("write sag.yaml: %v", err)
 	}
 
+	if err := waitLaunchAgentIdle(ctx, strconv.Itoa(os.Getuid())); err != nil {
+		t.Fatalf("wait launch agent idle: %v", err)
+	}
 	if out, err := runSAG(t, ctx, "service", "stop"); err != nil {
 		t.Fatalf("service stop: %v\n%s", err, out)
 	}

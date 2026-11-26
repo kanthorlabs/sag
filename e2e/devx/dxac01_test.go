@@ -95,6 +95,25 @@ func launchAgentShows(ctx context.Context, uid string) bool {
 	return err == nil
 }
 
+func waitLaunchAgentIdle(ctx context.Context, uid string) error {
+	r := dxh.NewRunner()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		out, err := r.Output(ctx, "launchctl", "print", "gui/"+uid+"/net.kanthorlabs.sag")
+		if err != nil || strings.Contains(string(out), "state = not running") {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("launch agent not idle after 30s")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
 func plistExists(home string) bool {
 	p := filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist")
 	_, err := os.Stat(p)
