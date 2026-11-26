@@ -40,8 +40,8 @@ func DXAC12_ConnectionCheck(t *testing.T, ctx context.Context) {
 			"--tls", "disable",
 			"--stdin",
 		)
-		if code == 0 {
-			t.Fatalf("DXAC12: create with closed port: exit 0; want non-zero; output: %s", combined)
+		if code != 1 {
+			t.Fatalf("DXAC12: create with closed port: exit %d; want 1; output: %s", code, combined)
 		}
 		if secretExists(ctx, t, "sag-res-"+name+".conn") {
 			t.Fatalf("DXAC12: secret sag-res-%s.conn exists after failed create", name)
