@@ -19,6 +19,7 @@ func TestCompareVersions(t *testing.T) {
 		{"4.9.3+ds1", "4.9.3", 0, false},
 		{"5.0.0.alpha", "5.0.0", 0, true},
 		{"5.alpha.0", "5.0.0", 0, true},
+		{"6.x.0", "5.0.0", 0, true},
 	}
 	for _, tc := range tests {
 		got, err := compareVersions(tc.a, tc.b)

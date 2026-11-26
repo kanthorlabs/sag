@@ -537,11 +537,9 @@ func TestPlanPortContainerConflict(t *testing.T) {
 	if err == nil {
 		t.Fatal("plan: want error for container conflict, got nil")
 	}
-	if !strings.Contains(buf.String(), "fail port") {
-		t.Fatalf("output = %q; want 'fail port' line", buf.String())
-	}
-	if !strings.Contains(buf.String(), "container other") {
-		t.Fatalf("output = %q; want container name", buf.String())
+	wantLine := "fail port 8443 held by container other"
+	if !strings.Contains(buf.String(), wantLine) {
+		t.Fatalf("output = %q; want %q", buf.String(), wantLine)
 	}
 }
 
@@ -556,11 +554,49 @@ func TestPlanPortProcessConflict(t *testing.T) {
 	if err == nil {
 		t.Fatal("plan: want error for process conflict, got nil")
 	}
-	if !strings.Contains(buf.String(), "fail port") {
-		t.Fatalf("output = %q; want 'fail port' line", buf.String())
+	wantLine := "fail port 8443 held by httpd"
+	if !strings.Contains(buf.String(), wantLine) {
+		t.Fatalf("output = %q; want %q", buf.String(), wantLine)
 	}
-	if !strings.Contains(buf.String(), "httpd") {
-		t.Fatalf("output = %q; want process name", buf.String())
+}
+
+func TestPlanTailscaleOtherTargetConflict(t *testing.T) {
+	var buf bytes.Buffer
+	s := &State{Out: stepline.New(&buf)}
+	plan := defaultPlanTailscale(
+		func() (tailscale.Command, bool) { return fakeCmd{}, true },
+		func(_ context.Context, _ tailscale.Command) (tailscale.State, error) {
+			return tailscale.State{OtherTarget: true}, nil
+		},
+	)
+
+	err := plan(context.Background(), s)
+	if err == nil {
+		t.Fatal("plan: want error for OtherTarget, got nil")
+	}
+	wantLine := "fail tailscale TCP 8443 serves another target"
+	if !strings.Contains(buf.String(), wantLine) {
+		t.Fatalf("output = %q; want %q", buf.String(), wantLine)
+	}
+}
+
+func TestPlanTailscaleFunnelActiveConflict(t *testing.T) {
+	var buf bytes.Buffer
+	s := &State{Out: stepline.New(&buf)}
+	plan := defaultPlanTailscale(
+		func() (tailscale.Command, bool) { return fakeCmd{}, true },
+		func(_ context.Context, _ tailscale.Command) (tailscale.State, error) {
+			return tailscale.State{FunnelActive: true}, nil
+		},
+	)
+
+	err := plan(context.Background(), s)
+	if err == nil {
+		t.Fatal("plan: want error for FunnelActive, got nil")
+	}
+	wantLine := "fail tailscale funnel is on for port 8443"
+	if !strings.Contains(buf.String(), wantLine) {
+		t.Fatalf("output = %q; want %q", buf.String(), wantLine)
 	}
 }
 

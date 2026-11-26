@@ -479,6 +479,42 @@ func TestVersionCheckFailsWhenInstalledOlder(t *testing.T) {
 	}
 }
 
+func TestFindPodmanErrorAfterInstall(t *testing.T) {
+	content := []byte("install error test")
+	h := sha256.Sum256(content)
+	correctHash := hex.EncodeToString(h[:])
+
+	findErr := errors.New("podman not found after install")
+	d := deps.Deps{
+		IsAbsent: func() bool { return true },
+		Out:      newOut(io.Discard),
+		Download: func(_ context.Context, _, tmpDir string) (string, error) {
+			dst := filepath.Join(tmpDir, "pkg.pkg")
+			if err := os.WriteFile(dst, content, 0o600); err != nil {
+				return "", err
+			}
+			return dst, nil
+		},
+		SHA256:            func(path string) (string, error) { return fileHash(t, path), nil },
+		StopBeforeInstall: func() bool { return false },
+		HasTerminal:       func() bool { return false },
+		Install:           func(_ context.Context, _ string, _ bool) error { return nil },
+		FindPodman:        func(_ string) (string, error) { return "", findErr },
+		PodmanVersion:     func(_ context.Context, _ string) (string, error) { return "5.0.0", nil },
+	}
+
+	item := pins.Item{
+		Name: "testpkg", Version: "5.0.0", Platform: "darwin/arm64",
+		Source: "release", Locator: "https://example.com/pkg.pkg", SHA256: correctHash,
+	}
+	plan := deps.Plan{Items: []deps.PlanItem{{Pin: item, Absent: true, Approve: true}}}
+
+	_, err := d.Apply(context.Background(), plan)
+	if err == nil {
+		t.Fatal("Apply: want error when FindPodman fails after install, got nil")
+	}
+}
+
 func TestBrokenBinaryExits1(t *testing.T) {
 	brokenErr := errors.New("podman --version: exec failed")
 	var buf strings.Builder

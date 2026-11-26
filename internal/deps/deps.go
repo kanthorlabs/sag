@@ -180,12 +180,13 @@ func (d Deps) Apply(ctx context.Context, plan Plan) (string, error) {
 
 		if d.FindPodman != nil {
 			p, err := d.FindPodman("")
-			if err == nil {
-				newPodmanPath = p
+			if err != nil {
+				return newPodmanPath, fmt.Errorf("deps: find %s after install: %w", pi.Pin.Name, err)
 			}
+			newPodmanPath = p
 		}
 
-		if newPodmanPath != "" && d.PodmanVersion != nil {
+		if newPodmanPath != "" {
 			ver, verErr := d.PodmanVersion(ctx, newPodmanPath)
 			if verErr != nil {
 				return newPodmanPath, fmt.Errorf("deps: %s version after install: %w", pi.Pin.Name, verErr)
@@ -242,25 +243,35 @@ func compareVersions(a, b string) (int, error) {
 	b = stripVersionSuffix(b)
 	aParts := strings.Split(a, ".")
 	bParts := strings.Split(b, ".")
-	n := len(aParts)
-	if len(bParts) > n {
-		n = len(bParts)
+
+	aInts := make([]int, len(aParts))
+	for i, p := range aParts {
+		v, err := strconv.Atoi(p)
+		if err != nil {
+			return 0, fmt.Errorf("deps: invalid version part %q in %q", p, a)
+		}
+		aInts[i] = v
+	}
+	bInts := make([]int, len(bParts))
+	for i, p := range bParts {
+		v, err := strconv.Atoi(p)
+		if err != nil {
+			return 0, fmt.Errorf("deps: invalid version part %q in %q", p, b)
+		}
+		bInts[i] = v
+	}
+
+	n := len(aInts)
+	if len(bInts) > n {
+		n = len(bInts)
 	}
 	for i := 0; i < n; i++ {
-		var av, bv int
-		if i < len(aParts) {
-			v, err := strconv.Atoi(aParts[i])
-			if err != nil {
-				return 0, fmt.Errorf("deps: invalid version part %q in %q", aParts[i], a)
-			}
-			av = v
+		av, bv := 0, 0
+		if i < len(aInts) {
+			av = aInts[i]
 		}
-		if i < len(bParts) {
-			v, err := strconv.Atoi(bParts[i])
-			if err != nil {
-				return 0, fmt.Errorf("deps: invalid version part %q in %q", bParts[i], b)
-			}
-			bv = v
+		if i < len(bInts) {
+			bv = bInts[i]
 		}
 		if av < bv {
 			return -1, nil

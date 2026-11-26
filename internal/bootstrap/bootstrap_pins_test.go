@@ -46,6 +46,18 @@ func TestMalformedPinLineFailsBootstrap(t *testing.T) {
 	}
 }
 
+func TestCommentOnlyPinsFileFails(t *testing.T) {
+	t.Setenv("SAG_TEST_PINS", "# comment only\n")
+
+	_, err := runSelectPins(t, "darwin", "arm64")
+	if err == nil {
+		t.Fatal("select-pins with comment-only pins: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "darwin") {
+		t.Fatalf("error = %q; want platform name", err.Error())
+	}
+}
+
 func TestZeroPinsForPlatformFails(t *testing.T) {
 	t.Setenv("SAG_TEST_PINS", "podman 5.5.1 linux/* apt podman -\n")
 

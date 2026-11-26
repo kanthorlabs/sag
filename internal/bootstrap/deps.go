@@ -35,7 +35,7 @@ func (d Deps) stepSelectPins(_ context.Context, s *State) error {
 		items = append(items, item)
 	}
 	s.Pins = pins.SelectPlatform(items, d.GOOS(), d.GOARCH())
-	if len(s.Pins) == 0 && len(items) > 0 {
+	if len(s.Pins) == 0 {
 		return fmt.Errorf("bootstrap: no pins for platform %s/%s", d.GOOS(), d.GOARCH())
 	}
 	return nil
