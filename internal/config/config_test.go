@@ -325,7 +325,6 @@ func TestSchemaRejects(t *testing.T) {
 		"auth version 0":      {minimal + "auth:\n  version: 0\n", "auth.version"},
 		"lifetime 0":          {minimal + "auth:\n  token_lifetime: 0s\n", "auth.token_lifetime"},
 		"lifetime integer":    {minimal + "auth:\n  token_lifetime: 3600\n", "line 11: wrong type"},
-		"no resources":        {strings.SplitN(minimal, "resources:", 2)[0], "resources"},
 		"bad resource name":   {strings.Replace(minimal, "  main:", "  Main:", 1), "resources.<invalid name>: name must match"},
 		"long resource name":  {strings.Replace(minimal, "  main:", "  a"+strings.Repeat("b", 63)+":", 1), "resources"},
 		"kind absent":         {strings.Replace(minimal, "    kind: postgres\n", "", 1), "resources.main.kind"},
@@ -457,5 +456,36 @@ func TestAllowedOriginsRejected(t *testing.T) {
 				t.Fatalf("error holds the entry: %v", err)
 			}
 		})
+	}
+}
+
+func TestEmptyResourcesAccepted(t *testing.T) {
+	text := `version: 1
+server:
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+resources: {}
+`
+	cfg, err := Parse([]byte(text))
+	if err != nil {
+		t.Fatalf("Parse rejected empty resources: %v", err)
+	}
+	if len(cfg.Resources) != 0 {
+		t.Fatalf("want 0 resources, got %d", len(cfg.Resources))
+	}
+}
+
+func TestAbsentResourcesAccepted(t *testing.T) {
+	text := `version: 1
+server:
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+`
+	cfg, err := Parse([]byte(text))
+	if err != nil {
+		t.Fatalf("Parse rejected absent resources: %v", err)
+	}
+	if len(cfg.Resources) != 0 {
+		t.Fatalf("want 0 resources, got %d", len(cfg.Resources))
 	}
 }

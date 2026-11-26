@@ -208,9 +208,6 @@ func build(raw rawConfig, p *problems) *Config {
 		cfg.Defaults.RedactColumns = raw.Defaults.Redact.Columns
 	}
 
-	if len(raw.Resources) == 0 {
-		p.add("resources", "must hold at least one resource")
-	}
 	for _, name := range slices.Sorted(maps.Keys(raw.Resources)) {
 		cfg.Resources[name] = buildResource(name, raw.Resources[name], raw.Defaults.Limits, cfg.Defaults.RedactColumns, p)
 	}
