@@ -25,10 +25,13 @@ func TestChildEnvAllowList(t *testing.T) {
 		"ZDOTDIR=/should/not/pass",
 		"XDG_CONFIG_HOME=/should/not/pass",
 	}
-	env := dxh.ChildEnv(input, "")
+	env, err := dxh.ChildEnv(input, t.TempDir())
+	if err != nil {
+		t.Fatalf("ChildEnv: %v", err)
+	}
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
-		if key == "CLAUDE_CONFIG_DIR" || key == "PI_CODING_AGENT_DIR" || key == "NODE_EXTRA_CA_CERTS" || key == "SHELL" || strings.HasPrefix(key, "CLAUDE") || key == "ZDOTDIR" || key == "XDG_CONFIG_HOME" {
+		if key == "NODE_EXTRA_CA_CERTS" || key == "SHELL" || key == "ZDOTDIR" || key == "XDG_CONFIG_HOME" {
 			t.Errorf("forbidden variable passed through: %s", e)
 		}
 	}
@@ -40,10 +43,23 @@ func TestChildEnvAllowList(t *testing.T) {
 	}
 }
 
+func TestChildEnvEmptyGroupDirErrors(t *testing.T) {
+	_, err := dxh.ChildEnv(nil, "")
+	if err == nil {
+		t.Fatal("expected error for empty groupDir, got nil")
+	}
+}
+
 func TestHarnessDirsAreTestDirs(t *testing.T) {
 	input := []string{"HOME=/home/user"}
-	env1 := dxh.ChildEnv(input, t.TempDir())
-	env2 := dxh.ChildEnv(input, t.TempDir())
+	env1, err := dxh.ChildEnv(input, t.TempDir())
+	if err != nil {
+		t.Fatalf("ChildEnv: %v", err)
+	}
+	env2, err := dxh.ChildEnv(input, t.TempDir())
+	if err != nil {
+		t.Fatalf("ChildEnv: %v", err)
+	}
 
 	get := func(env []string, key string) string {
 		for _, e := range env {
