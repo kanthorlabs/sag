@@ -23,6 +23,7 @@ func TestRunArgs(t *testing.T) {
 	want := []string{
 		"run", "-d", "--name", "sag-e2e-x-sag", "--network", "sag-e2e-x",
 		"--log-driver", "k8s-file",
+		"--log-opt", "max-size=10mb",
 		"--read-only", "--read-only-tmpfs=false", "--cap-drop=all", "--security-opt=no-new-privileges", "--user", "65532:65532",
 		"-p", "127.0.0.1::8443",
 		"-v", "/tmp/sag.yaml:/etc/sag/sag.yaml:ro",
@@ -77,13 +78,14 @@ func TestRunArgsBusybox(t *testing.T) {
 }
 
 func TestProductFlagsExcludeTestOnlyFlags(t *testing.T) {
-	product := strings.Join(append(ContainerFlags.SecurityArgs(), ContainerFlags.Publish(ListenPort), ContainerFlags.ConfigVolume("c"), ContainerFlags.StateVolume("s"), ContainerFlags.Secret("a", "b", "")), " ")
+	p := ContainerFlags.Product
+	product := strings.Join(append(p.SecurityArgs(), p.Publish(ListenPort), p.ConfigVolume("c"), p.StateVolume("s"), p.Secret("a", "b", "")), " ")
 	for _, flag := range TestOnlyFlags {
 		if strings.Contains(product, flag) {
 			t.Errorf("product flags hold the test-only flag %q: %s", flag, product)
 		}
 	}
-	if got := ContainerFlags.Publish(ListenPort); got != "127.0.0.1:8443:8443" {
+	if got := p.Publish(ListenPort); got != "127.0.0.1:8443:8443" {
 		t.Errorf("Publish(8443) = %q; want 127.0.0.1:8443:8443", got)
 	}
 }

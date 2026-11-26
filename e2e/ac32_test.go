@@ -63,7 +63,7 @@ func runAC32(t *testing.T, env harness.Env) {
 	if !c.HostConfig.ReadonlyRootfs {
 		t.Error("ReadonlyRootfs = false; want true")
 	}
-	wantUser := strconv.Itoa(harness.ContainerFlags.UID) + ":" + strconv.Itoa(harness.ContainerFlags.GID)
+	wantUser := strconv.Itoa(harness.ContainerFlags.Product.UID) + ":" + strconv.Itoa(harness.ContainerFlags.Product.GID)
 	if c.Config.User != wantUser {
 		t.Errorf("Config.User = %q; want %q", c.Config.User, wantUser)
 	}
@@ -76,7 +76,7 @@ func runAC32(t *testing.T, env harness.Env) {
 	if want := []string{"no-new-privileges"}; !slices.Equal(c.HostConfig.SecurityOpt, want) {
 		t.Errorf("SecurityOpt = %q; want %q", c.HostConfig.SecurityOpt, want)
 	}
-	port := strconv.Itoa(harness.ContainerFlags.ContainerPort) + "/tcp"
+	port := strconv.Itoa(harness.ContainerFlags.Product.ContainerPort) + "/tcp"
 	bindings := c.NetworkSettings.Ports[port]
 	if len(bindings) == 0 {
 		t.Fatalf("Ports[%s] has no binding", port)
@@ -109,6 +109,6 @@ done`
 		t.Fatalf("probe exit = %d, stdout %q, stderr %q", res.ExitCode, res.Stdout, res.Stderr)
 	}
 	if out := strings.TrimSpace(res.Stdout); out != "" {
-		t.Errorf("UID %d writes or runs files outside the rule (only %s writable, no path permits execution):\n%s", harness.ContainerFlags.UID, harness.StateDir, out)
+		t.Errorf("UID %d writes or runs files outside the rule (only %s writable, no path permits execution):\n%s", harness.ContainerFlags.Product.UID, harness.StateDir, out)
 	}
 }

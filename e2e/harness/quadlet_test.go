@@ -71,7 +71,7 @@ func singleValue(t *testing.T, keys []quadletKey, key string) string {
 
 func TestQuadletMatchesHarnessFlags(t *testing.T) {
 	keys := readQuadlet(t)
-	f := ContainerFlags
+	f := ContainerFlags.Product
 
 	scalar := []struct {
 		key  string
@@ -99,18 +99,18 @@ func TestQuadletMatchesHarnessFlags(t *testing.T) {
 	if len(volumes) != 2 {
 		t.Fatalf("[Container] Volume lines = %q; want the config volume and the state volume", volumes)
 	}
-	var config, state []string
+	var cfgVols, stateVols []string
 	for _, v := range volumes {
 		source, rest, _ := strings.Cut(v, ":")
 		target, _, _ := strings.Cut(rest, ":")
 		switch target {
 		case f.ConfigTarget:
-			config = append(config, v)
+			cfgVols = append(cfgVols, v)
 			if want := f.ConfigVolume(source); v != want {
 				t.Errorf("config Volume = %q; want %q", v, want)
 			}
 		case f.StateTarget:
-			state = append(state, v)
+			stateVols = append(stateVols, v)
 			if want := f.StateVolume(source); v != want {
 				t.Errorf("state Volume = %q; want %q", v, want)
 			}
@@ -118,8 +118,8 @@ func TestQuadletMatchesHarnessFlags(t *testing.T) {
 			t.Errorf("Volume %q has target %q; want %s or %s", v, target, f.ConfigTarget, f.StateTarget)
 		}
 	}
-	if len(config) != 1 || len(state) != 1 {
-		t.Errorf("config volumes %q, state volumes %q; want one of each", config, state)
+	if len(cfgVols) != 1 || len(stateVols) != 1 {
+		t.Errorf("config volumes %q, state volumes %q; want one of each", cfgVols, stateVols)
 	}
 
 	for _, s := range containerValues(keys, "Secret") {
@@ -129,7 +129,7 @@ func TestQuadletMatchesHarnessFlags(t *testing.T) {
 		}
 	}
 
-	allowed := []string{"ContainerName", "Image", "Pull", "Exec", "ReadOnly", "ReadOnlyTmpfs", "User", "Group", "DropCapability", "NoNewPrivileges", "PublishPort", "Volume", "Secret"}
+	allowed := []string{"ContainerName", "Image", "Pull", "Exec", "ReadOnly", "ReadOnlyTmpfs", "User", "Group", "DropCapability", "NoNewPrivileges", "PublishPort", "LogDriver", "PodmanArgs", "Volume", "Secret"}
 	for _, k := range keys {
 		if k.Section != "Container" {
 			continue
@@ -195,11 +195,11 @@ func TestPublishPortLoopbackOrTailnet(t *testing.T) {
 		}
 	}
 
-	if !PublishHostAllowed(ContainerFlags.PublishHost) {
-		t.Errorf("ContainerFlags.PublishHost %q is not allowed", ContainerFlags.PublishHost)
+	if !PublishHostAllowed(ContainerFlags.Product.PublishHost) {
+		t.Errorf("ContainerFlags.Product.PublishHost %q is not allowed", ContainerFlags.Product.PublishHost)
 	}
 	for _, p := range containerValues(readQuadlet(t), "PublishPort") {
-		host, _, err := net.SplitHostPort(strings.TrimSuffix(p, ":"+strconv.Itoa(ContainerFlags.ContainerPort)))
+		host, _, err := net.SplitHostPort(strings.TrimSuffix(p, ":"+strconv.Itoa(ContainerFlags.Product.ContainerPort)))
 		if err != nil {
 			t.Fatalf("PublishPort %q: %v", p, err)
 		}
