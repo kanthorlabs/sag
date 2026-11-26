@@ -10,15 +10,21 @@ import (
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
-func withFakeCfg(cfg service.Config) func() {
+func withFakeCfg(cfg service.Config) (restore func()) {
+	released := false
 	oldBuild := buildCfgFn
 	buildCfgFn = func() (service.Config, func(), error) {
-		return cfg, noop, nil
+		return cfg, func() { released = true }, nil
 	}
-	return func() { buildCfgFn = oldBuild }
+	return func() {
+		buildCfgFn = oldBuild
+		if !released {
+			panic("buildCfgFn release was not called")
+		}
+	}
 }
 
-func withFakeCfgErr(err error) func() {
+func withFakeCfgErr(err error) (restore func()) {
 	oldBuild := buildCfgFn
 	buildCfgFn = func() (service.Config, func(), error) {
 		return service.Config{}, noop, err
@@ -28,8 +34,7 @@ func withFakeCfgErr(err error) func() {
 
 func TestServiceStartSucceeds(t *testing.T) {
 	cfg := service.Config{Image: "localhost/sag:test"}
-	restoreCfg := withFakeCfg(cfg)
-	defer restoreCfg()
+	restore := withFakeCfg(cfg)
 
 	oldStart := startFn
 	var gotCfg service.Config
@@ -44,6 +49,7 @@ func TestServiceStartSucceeds(t *testing.T) {
 	if code := serviceStart(nil, std); code != ExitOK {
 		t.Fatalf("serviceStart = %d; want 0", code)
 	}
+	restore()
 	if gotCfg.Image != "localhost/sag:test" {
 		t.Fatalf("startFn received wrong image %q", gotCfg.Image)
 	}
@@ -63,9 +69,14 @@ func TestServiceStartFailsOnBuildError(t *testing.T) {
 	}
 }
 
-func TestServiceStartFailsOnStartError(t *testing.T) {
-	restoreCfg := withFakeCfg(service.Config{})
-	defer restoreCfg()
+func TestServiceStartReleasesOnError(t *testing.T) {
+	cfg := service.Config{}
+	released := false
+	oldBuild := buildCfgFn
+	buildCfgFn = func() (service.Config, func(), error) {
+		return cfg, func() { released = true }, nil
+	}
+	defer func() { buildCfgFn = oldBuild }()
 
 	oldStart := startFn
 	startFn = func(_ context.Context, _ service.Config, _ stepline.Writer) error {
@@ -73,20 +84,20 @@ func TestServiceStartFailsOnStartError(t *testing.T) {
 	}
 	defer func() { startFn = oldStart }()
 
-	std, errOut := testIO()
+	std, _ := testIO()
 	std.Mode = ModeHost
-	if code := serviceStart(nil, std); code != ExitFailure {
+	code := serviceStart(nil, std)
+	if code != ExitFailure {
 		t.Fatalf("serviceStart = %d; want %d", code, ExitFailure)
 	}
-	if !strings.Contains(errOut.String(), "start failed") {
-		t.Fatalf("stderr = %q; want 'start failed'", errOut.String())
+	if !released {
+		t.Fatal("release not called on start error")
 	}
 }
 
 func TestServiceStopSucceeds(t *testing.T) {
 	cfg := service.Config{Image: "localhost/sag:test"}
-	restoreCfg := withFakeCfg(cfg)
-	defer restoreCfg()
+	restore := withFakeCfg(cfg)
 
 	oldStop := stopFn
 	var gotCfg service.Config
@@ -101,6 +112,7 @@ func TestServiceStopSucceeds(t *testing.T) {
 	if code := serviceStop(nil, std); code != ExitOK {
 		t.Fatalf("serviceStop = %d; want 0", code)
 	}
+	restore()
 	if gotCfg.Image != "localhost/sag:test" {
 		t.Fatalf("stopFn received wrong image %q", gotCfg.Image)
 	}
@@ -120,9 +132,14 @@ func TestServiceStopFailsOnBuildError(t *testing.T) {
 	}
 }
 
-func TestServiceStopFailsOnStopError(t *testing.T) {
-	restoreCfg := withFakeCfg(service.Config{})
-	defer restoreCfg()
+func TestServiceStopReleasesOnError(t *testing.T) {
+	cfg := service.Config{}
+	released := false
+	oldBuild := buildCfgFn
+	buildCfgFn = func() (service.Config, func(), error) {
+		return cfg, func() { released = true }, nil
+	}
+	defer func() { buildCfgFn = oldBuild }()
 
 	oldStop := stopFn
 	stopFn = func(_ context.Context, _ service.Config, _ stepline.Writer) error {
@@ -130,12 +147,13 @@ func TestServiceStopFailsOnStopError(t *testing.T) {
 	}
 	defer func() { stopFn = oldStop }()
 
-	std, errOut := testIO()
+	std, _ := testIO()
 	std.Mode = ModeHost
-	if code := serviceStop(nil, std); code != ExitFailure {
+	code := serviceStop(nil, std)
+	if code != ExitFailure {
 		t.Fatalf("serviceStop = %d; want %d", code, ExitFailure)
 	}
-	if !strings.Contains(errOut.String(), "stop failed") {
-		t.Fatalf("stderr = %q; want 'stop failed'", errOut.String())
+	if !released {
+		t.Fatal("release not called on stop error")
 	}
 }

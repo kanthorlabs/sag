@@ -3,12 +3,14 @@
 package devx_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,11 +109,14 @@ func healthzFails(ctx context.Context, caPath string) bool {
 }
 
 func sagBinForTest() (string, error) {
-	devDir, err := dxh.SharedDevDir()
-	if err != nil {
-		return "", err
+	if bin := os.Getenv("SAG_TEST_BIN"); bin != "" {
+		return bin, nil
 	}
-	return filepath.Join(filepath.Dir(devDir), "bin", "sag-devxtest"), nil
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
+	}
+	return filepath.Join(string(bytes.TrimSpace(out)), "bin", "sag-devxtest"), nil
 }
 
 func runSAG(ctx context.Context, args ...string) ([]byte, error) {
