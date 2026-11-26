@@ -37,6 +37,8 @@ type CanaryParts struct {
 
 var ActiveCanaryParts CanaryParts
 
+var ActiveCanaryTranscript []byte
+
 func SearchStrings(sources []string, needles []string) []string {
 	var found []string
 	for _, needle := range needles {
