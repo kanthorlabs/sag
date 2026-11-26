@@ -65,6 +65,9 @@ func peakHeapGrowth(fn func()) (peak, retained uint64) {
 func TestOversizedRowGivesFixedErrorInBoundedMemory(t *testing.T) {
 	pg := startPostgres(t)
 	res := productExecutor(t, pg)
+	if _, err := runQuery(t, res, "SELECT 1 AS n", memoryLimits); err != nil {
+		t.Fatalf("warm-up query: %v", err)
+	}
 	var err error
 	peak, _ := peakHeapGrowth(func() {
 		_, err = runQuery(t, res, "SELECT repeat('x', 20000000) AS v FROM generate_series(1, 20)", memoryLimits)
@@ -86,6 +89,9 @@ func TestOversizedRowGivesFixedErrorInBoundedMemory(t *testing.T) {
 func TestLargeCellsReadInBoundedMemory(t *testing.T) {
 	pg := startPostgres(t)
 	res := productExecutor(t, pg)
+	if _, err := runQuery(t, res, "SELECT 1 AS n", memoryLimits); err != nil {
+		t.Fatalf("warm-up query: %v", err)
+	}
 	var out core.Result
 	var err error
 	peak, retained := peakHeapGrowth(func() {
