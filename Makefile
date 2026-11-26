@@ -86,8 +86,8 @@ e2e-devx:
 		-run '^TestDevx$(SUITE)$$/.*$(if $(RUN),/($(RUN)))' \
 		./e2e/devx/ > $(REPORT)/devx-$(SUITE)/events.json; \
 	$(GO) run ./e2e/cmd/acreport -suite devx -layer $(LAYER) -phase $(PHASE) \
-		$(if $(RUN),-run '$(RUN)') \
-		-in $(REPORT)/devx-$(SUITE)/events.json -out $(REPORT)
+		$(if $(RUN),-run '$(RUN)' -in $(REPORT)/devx-$(SUITE)/events.json,$$(for f in $(REPORT)/devx-*/events.json; do printf -- '-in %s ' "$$f"; done)) \
+		-out $(REPORT)
 
 contract-check:
 	$(GO) build ./...
