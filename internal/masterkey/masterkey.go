@@ -17,7 +17,7 @@ func Ensure(ctx context.Context, pm podman.Command, out stepline.Writer) (change
 		out.Line(stepline.StatusOK, "master-key", "")
 		return false, nil
 	}
-	if _, ok := err.(*podman.RunError); !ok {
+	if !podman.SecretAbsent(err) {
 		return false, err
 	}
 

@@ -224,7 +224,7 @@ func TestSequenceOrder(t *testing.T) {
 			caPemExists:    errPem == nil,
 		})
 		if len(args) >= 2 && args[0] == "secret" && args[1] == "inspect" {
-			return nil, &podman.RunError{ExitCode: 1}
+			return nil, &podman.RunError{ExitCode: 125, Stderr: "no such secret"}
 		}
 		return nil, nil
 	}}
@@ -258,7 +258,7 @@ func TestTriggers(t *testing.T) {
 		dir := t.TempDir()
 		fr := &fake{fn: func(args []string, _ []byte) ([]byte, error) {
 			if len(args) >= 3 && args[0] == "secret" && args[1] == "inspect" && args[2] == "sag-tls-cert" {
-				return nil, &podman.RunError{ExitCode: 1}
+				return nil, &podman.RunError{ExitCode: 125, Stderr: "no such secret"}
 			}
 			return nil, nil
 		}}
@@ -275,7 +275,7 @@ func TestTriggers(t *testing.T) {
 		dir := t.TempDir()
 		fr := &fake{fn: func(args []string, _ []byte) ([]byte, error) {
 			if len(args) >= 3 && args[0] == "secret" && args[1] == "inspect" && args[2] == "sag-tls-key" {
-				return nil, &podman.RunError{ExitCode: 1}
+				return nil, &podman.RunError{ExitCode: 125, Stderr: "no such secret"}
 			}
 			return nil, nil
 		}}

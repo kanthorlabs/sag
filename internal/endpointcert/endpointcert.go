@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -17,6 +16,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/kanthorlabs/sag/internal/hoststate"
 	"github.com/kanthorlabs/sag/internal/podman"
 	"github.com/kanthorlabs/sag/internal/stepline"
 	"github.com/kanthorlabs/sag/internal/testhook"
@@ -67,7 +67,7 @@ func Ensure(ctx context.Context, pm podman.Command, cfg Config, now time.Time, o
 func needsRenewal(ctx context.Context, pm podman.Command, cfg Config, now time.Time) (bool, error) {
 	_, errCert := pm.Run(ctx, nil, "secret", "inspect", certSecretName)
 	_, errKey := pm.Run(ctx, nil, "secret", "inspect", keySecretName)
-	if isAbsent(errCert) || isAbsent(errKey) {
+	if podman.SecretAbsent(errCert) || podman.SecretAbsent(errKey) {
 		return true, nil
 	}
 	if errCert != nil {
@@ -108,17 +108,6 @@ func needsRenewal(ctx context.Context, pm podman.Command, cfg Config, now time.T
 	}
 
 	return false, nil
-}
-
-func isAbsent(err error) bool {
-	if err == nil {
-		return false
-	}
-	var re *podman.RunError
-	if errors.As(err, &re) {
-		return re.ExitCode != 0
-	}
-	return false
 }
 
 func runSequence(ctx context.Context, pm podman.Command, cfg Config, now time.Time, out stepline.Writer) error {
@@ -254,59 +243,27 @@ func parseCertFromPEM(data []byte) (*x509.Certificate, error) {
 	return x509.ParseCertificate(block.Bytes)
 }
 
+func answersPaths(cfgDir string) hoststate.Paths {
+	return hoststate.Paths{Cfg: cfgDir, AnswersJSON: filepath.Join(cfgDir, "answers.json")}
+}
+
 func readStoredTailscaleIP(cfgDir string) (string, error) {
-	path := filepath.Join(cfgDir, "answers.json")
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return "", nil
-	}
+	a, err := hoststate.LoadAnswers(answersPaths(cfgDir))
 	if err != nil {
 		return "", err
 	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return "", nil
-	}
-	v, ok := raw["tailscale_ip"]
-	if !ok {
-		return "", nil
-	}
-	var ip string
-	if err := json.Unmarshal(v, &ip); err != nil {
-		return "", nil
-	}
-	return ip, nil
+	return a.TailscaleIP, nil
 }
 
 func updateTailscaleIP(cfgDir, tailscaleIP string) error {
-	path := filepath.Join(cfgDir, "answers.json")
-	raw := make(map[string]json.RawMessage)
-	data, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, &raw); err != nil {
-			return err
-		}
-	}
-	if tailscaleIP != "" {
-		b, err := json.Marshal(tailscaleIP)
-		if err != nil {
-			return err
-		}
-		raw["tailscale_ip"] = b
-	} else {
-		delete(raw, "tailscale_ip")
-	}
-	if len(raw) == 0 {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return nil
-		}
-	}
-	out, err := json.Marshal(raw)
+	p := answersPaths(cfgDir)
+	a, err := hoststate.LoadAnswers(p)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, out, 0600)
+	if a.TailscaleIP == tailscaleIP {
+		return nil
+	}
+	a.TailscaleIP = tailscaleIP
+	return hoststate.SaveAnswers(p, a)
 }

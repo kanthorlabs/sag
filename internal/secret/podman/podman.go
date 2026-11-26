@@ -129,7 +129,7 @@ func isNotFoundError(err error) bool {
 	if !errors.As(err, &re) {
 		return false
 	}
-	return strings.Contains(re.Stderr, "no secret with name") || strings.Contains(re.Stderr, "no such secret")
+	return ipodman.SecretAbsent(re)
 }
 
 func isUnavailableError(err error) bool {

@@ -395,3 +395,21 @@ exit 0`
 func init() {
 	_ = fmt.Sprintf
 }
+
+func TestSecretAbsent(t *testing.T) {
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{&RunError{ExitCode: 125, Stderr: `Error: inspecting secret: no secret with name or id "x": no such secret`}, true},
+		{&RunError{ExitCode: 125, Stderr: "Error: unable to connect to Podman socket"}, false},
+		{&RunError{ExitCode: 1}, false},
+		{errors.New("other"), false},
+		{nil, false},
+	}
+	for _, c := range cases {
+		if got := SecretAbsent(c.err); got != c.want {
+			t.Errorf("SecretAbsent(%v) = %v, want %v", c.err, got, c.want)
+		}
+	}
+}

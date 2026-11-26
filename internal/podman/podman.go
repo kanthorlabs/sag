@@ -194,3 +194,11 @@ func (r rawContainerInfo) toContainerInfo() ContainerInfo {
 	name = strings.TrimPrefix(name, "/")
 	return ContainerInfo{ID: r.Id, Name: name, Secrets: secrets}
 }
+
+func SecretAbsent(err error) bool {
+	var re *RunError
+	if !errors.As(err, &re) {
+		return false
+	}
+	return strings.Contains(re.Stderr, "no secret with name") || strings.Contains(re.Stderr, "no such secret")
+}

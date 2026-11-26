@@ -41,7 +41,7 @@ func TestResumeAfterStep3(t *testing.T) {
 
 	fr2 := &fake{fn: func(args []string, _ []byte) ([]byte, error) {
 		if len(args) >= 2 && args[0] == "secret" && args[1] == "inspect" {
-			return nil, &podman.RunError{ExitCode: 1}
+			return nil, &podman.RunError{ExitCode: 125, Stderr: "no such secret"}
 		}
 		return nil, nil
 	}}

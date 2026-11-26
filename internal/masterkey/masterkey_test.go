@@ -84,3 +84,16 @@ func TestNeverReplaced(t *testing.T) {
 		}
 	}
 }
+
+func TestPodmanFailureCreatesNothing(t *testing.T) {
+	fr := &fake{fn: func(args []string, stdin []byte) ([]byte, error) {
+		return nil, &podman.RunError{ExitCode: 125, Stderr: "Error: unable to connect to Podman socket"}
+	}}
+	changed, err := masterkey.Ensure(context.Background(), fr, stepline.New(io.Discard))
+	if err == nil || changed {
+		t.Fatalf("Ensure = %v, %v; want an error and no change", changed, err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("calls = %v; want only the inspect call", fr.calls)
+	}
+}
