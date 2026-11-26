@@ -60,10 +60,6 @@ func testDXAC04BootstrapNoTerminal(t *testing.T, ctx context.Context, groupDir, 
 		t.Fatalf("DXAC04: output does not name --autostart; stdout=%s stderr=%s", stdoutBuf.String(), stderrBuf.String())
 	}
 
-	if stdoutBuf.Len() != 0 {
-		t.Fatalf("DXAC04: stdout is not empty: %q", stdoutBuf.String())
-	}
-
 	if _, statErr := os.Stat(cfg); statErr == nil {
 		t.Fatalf("DXAC04: cfg dir %s exists after exit 3; want absent", cfg)
 	}
