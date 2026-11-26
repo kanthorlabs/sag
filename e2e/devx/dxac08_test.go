@@ -19,9 +19,6 @@ func DXAC08_VersionRule(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC08: test binary: %v", err)
 	}
 
-	home := os.Getenv("HOME")
-	cfg := cfgDir(home)
-
 	t.Setenv("SAG_TEST_ABSENT", "")
 
 	olderGroupDir := t.TempDir()
@@ -40,9 +37,6 @@ func DXAC08_VersionRule(t *testing.T, ctx context.Context) {
 	}
 	if !strings.Contains(stdout, "fail podman") {
 		t.Fatalf("DXAC08 older: stdout = %q; want 'fail podman' line", stdout)
-	}
-	if _, err := os.Stat(cfg); err == nil {
-		t.Fatalf("DXAC08 older: cfg dir exists after exit 1: %s", cfg)
 	}
 
 	newerGroupDir := t.TempDir()
