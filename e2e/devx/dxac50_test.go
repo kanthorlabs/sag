@@ -15,7 +15,10 @@ import (
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
 
-const fakeTailscaleIP = "100.64.0.1"
+const (
+	fakeTailscaleIP    = "100.64.0.1"
+	fakeTailscaleIPAlt = "100.64.1.2"
+)
 
 func DXAC50_TailscaleFake(t *testing.T, ctx context.Context) {
 	t.Helper()
@@ -36,171 +39,234 @@ func DXAC50_TailscaleFake(t *testing.T, ctx context.Context) {
 	}
 
 	groupDir := t.TempDir()
+	binDir := t.TempDir()
 
-	t.Run("setup-command-absent", func(t *testing.T) {
-		binDir := t.TempDir()
-		if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
-			t.Fatalf("DXAC50: link podman: %v", err)
-		}
-		stdout, stderr, code := dxac50RunBootstrap(t, ctx, groupDir, binDir, sagBin)
-		if code != 0 {
-			t.Fatalf("DXAC50 setup: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
-		}
-		if !strings.Contains(stdout, "skip tailscale command absent; loopback only") {
-			t.Fatalf("DXAC50 setup: stdout missing skip line; got %q", stdout)
-		}
-	})
+	if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
+		t.Fatalf("DXAC50: link podman: %v", err)
+	}
 
-	t.Run("conflict-other-target", func(t *testing.T) {
-		binDir := t.TempDir()
-		if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
-			t.Fatalf("DXAC50: link podman: %v", err)
+	installFake := func(t *testing.T) {
+		t.Helper()
+		data, err := os.ReadFile(fakeBin)
+		if err != nil {
+			t.Fatalf("DXAC50: read fake binary: %v", err)
 		}
-		if err := dxh.AddRealProgramLink(binDir, "tailscale", fakeBin); err != nil {
-			t.Fatalf("DXAC50: link tailscale: %v", err)
+		if err := os.WriteFile(filepath.Join(binDir, "tailscale"), data, 0o755); err != nil {
+			t.Fatalf("DXAC50: install fake binary: %v", err)
 		}
-		dxac50WriteState(t, binDir, "ts_ip4", fakeTailscaleIP)
-		dxac50WriteState(t, binDir, "ts_serve_status", `{"TCP":{"8443":{"TCPForward":"other:9090"}}}`)
+	}
 
-		stdout, stderr, code := dxac50RunBootstrap(t, ctx, groupDir, binDir, sagBin)
-		if code != 1 {
-			t.Fatalf("DXAC50 conflict-other-target: exit %d; want 1\nstdout=%s\nstderr=%s", code, stdout, stderr)
-		}
-		if !strings.Contains(stdout, "fail tailscale TCP 8443 serves another target") {
-			t.Fatalf("DXAC50 conflict-other-target: stdout missing fail line; got %q", stdout)
-		}
-		if !strings.Contains(stderr, "sag: tailscale: TCP 8443 serves another target") {
-			t.Fatalf("DXAC50 conflict-other-target: stderr missing sag error; got %q", stderr)
-		}
-	})
+	removeFake := func() {
+		_ = os.Remove(filepath.Join(binDir, "tailscale"))
+	}
 
-	t.Run("conflict-funnel", func(t *testing.T) {
-		binDir := t.TempDir()
-		if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
-			t.Fatalf("DXAC50: link podman: %v", err)
+	cleanState := func() {
+		for _, f := range []string{"ts_ip4", "ts_serve_status", "ts_rule", "ts_args"} {
+			_ = os.Remove(filepath.Join(binDir, f))
 		}
-		if err := dxh.AddRealProgramLink(binDir, "tailscale", fakeBin); err != nil {
-			t.Fatalf("DXAC50: link tailscale: %v", err)
-		}
-		dxac50WriteState(t, binDir, "ts_ip4", fakeTailscaleIP)
-		dxac50WriteState(t, binDir, "ts_serve_status", `{"AllowFunnel":{"ts-node:8443":true}}`)
+	}
 
-		stdout, stderr, code := dxac50RunBootstrap(t, ctx, groupDir, binDir, sagBin)
-		if code != 1 {
-			t.Fatalf("DXAC50 conflict-funnel: exit %d; want 1\nstdout=%s\nstderr=%s", code, stdout, stderr)
+	writeState := func(t *testing.T, name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("DXAC50: write %s: %v", name, err)
 		}
-		if !strings.Contains(stdout, "fail tailscale funnel is on for port 8443") {
-			t.Fatalf("DXAC50 conflict-funnel: stdout missing fail line; got %q", stdout)
-		}
-		if !strings.Contains(stderr, "sag: tailscale: funnel is on for port 8443") {
-			t.Fatalf("DXAC50 conflict-funnel: stderr missing sag error; got %q", stderr)
-		}
-	})
+	}
 
-	t.Run("skip-address-invalid-loopback", func(t *testing.T) {
-		binDir := t.TempDir()
-		if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
-			t.Fatalf("DXAC50: link podman: %v", err)
-		}
-		if err := dxh.AddRealProgramLink(binDir, "tailscale", fakeBin); err != nil {
-			t.Fatalf("DXAC50: link tailscale: %v", err)
-		}
-		dxac50WriteState(t, binDir, "ts_ip4", "0.0.0.0")
+	readState := func(name string) string {
+		data, _ := os.ReadFile(filepath.Join(binDir, name))
+		return string(data)
+	}
 
-		stdout, stderr, code := dxac50RunBootstrap(t, ctx, groupDir, binDir, sagBin)
-		if code != 0 {
-			t.Fatalf("DXAC50 skip-address-invalid-loopback: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
+	countLine := func(text, want string) int {
+		count := 0
+		for _, line := range strings.Split(text, "\n") {
+			if line == want {
+				count++
+			}
 		}
-		if !strings.Contains(stdout, "skip tailscale address invalid; loopback only") {
-			t.Fatalf("DXAC50 skip-address-invalid-loopback: stdout missing skip line; got %q", stdout)
-		}
-	})
+		return count
+	}
 
-	t.Run("skip-address-invalid-private", func(t *testing.T) {
-		binDir := t.TempDir()
-		if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
-			t.Fatalf("DXAC50: link podman: %v", err)
-		}
-		if err := dxh.AddRealProgramLink(binDir, "tailscale", fakeBin); err != nil {
-			t.Fatalf("DXAC50: link tailscale: %v", err)
-		}
-		dxac50WriteState(t, binDir, "ts_ip4", "192.168.1.10")
-
-		stdout, stderr, code := dxac50RunBootstrap(t, ctx, groupDir, binDir, sagBin)
-		if code != 0 {
-			t.Fatalf("DXAC50 skip-address-invalid-private: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
-		}
-		if !strings.Contains(stdout, "skip tailscale address invalid; loopback only") {
-			t.Fatalf("DXAC50 skip-address-invalid-private: stdout missing skip line; got %q", stdout)
-		}
-	})
-
-	t.Run("skip-down", func(t *testing.T) {
-		binDir := t.TempDir()
-		if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
-			t.Fatalf("DXAC50: link podman: %v", err)
-		}
-		if err := dxh.AddRealProgramLink(binDir, "tailscale", fakeBin); err != nil {
-			t.Fatalf("DXAC50: link tailscale: %v", err)
-		}
-		dxac50WriteState(t, binDir, "ts_ip4", "exit:1")
-
-		stdout, stderr, code := dxac50RunBootstrap(t, ctx, groupDir, binDir, sagBin)
-		if code != 0 {
-			t.Fatalf("DXAC50 skip-down: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
-		}
-		if !strings.Contains(stdout, "skip tailscale down; loopback only") {
-			t.Fatalf("DXAC50 skip-down: stdout missing skip line; got %q", stdout)
-		}
-	})
+	runBS := func(t *testing.T) (stdout, stderr string, code int) {
+		t.Helper()
+		return dxac50RunBootstrap(t, ctx, groupDir, binDir, sagBin)
+	}
 
 	t.Run("success", func(t *testing.T) {
-		binDir := t.TempDir()
-		if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
-			t.Fatalf("DXAC50: link podman: %v", err)
-		}
-		if err := dxh.AddRealProgramLink(binDir, "tailscale", fakeBin); err != nil {
-			t.Fatalf("DXAC50: link tailscale: %v", err)
-		}
-		dxac50WriteState(t, binDir, "ts_ip4", fakeTailscaleIP)
+		cleanState()
+		installFake(t)
+		writeState(t, "ts_ip4", fakeTailscaleIP)
 
-		stdout, stderr, code := dxac50RunBootstrap(t, ctx, groupDir, binDir, sagBin)
+		stdout, stderr, code := runBS(t)
 		if code != 0 {
 			t.Fatalf("DXAC50 success: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
 		}
-		if !strings.Contains(stdout, "ok tailscale-serve") {
-			t.Fatalf("DXAC50 success: stdout missing ok line; got %q", stdout)
+		if n := countLine(stdout, "install tailscale-serve"); n != 1 {
+			t.Fatalf("DXAC50 success: install tailscale-serve appears %d times; want 1\nstdout=%q", n, stdout)
 		}
 		if _, err := os.Stat(filepath.Join(binDir, "ts_rule")); err != nil {
-			t.Fatalf("DXAC50 success: ts_rule not written in binDir: %v", err)
+			t.Fatal("DXAC50 success: ts_rule not written")
+		}
+		args := readState("ts_args")
+		if n := countLine(args, "serve --bg --tcp 8443 tcp://127.0.0.1:8443"); n != 1 {
+			t.Fatalf("DXAC50 success: serve --bg appears %d times in ts_args; want 1\n%s", n, args)
+		}
+		if strings.Contains(args, "funnel") {
+			t.Fatalf("DXAC50 success: funnel found in ts_args\n%s", args)
 		}
 	})
 
 	t.Run("idempotent", func(t *testing.T) {
-		binDir := t.TempDir()
-		if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
-			t.Fatalf("DXAC50: link podman: %v", err)
-		}
-		if err := dxh.AddRealProgramLink(binDir, "tailscale", fakeBin); err != nil {
-			t.Fatalf("DXAC50: link tailscale: %v", err)
-		}
-		dxac50WriteState(t, binDir, "ts_ip4", fakeTailscaleIP)
-		dxac50WriteState(t, binDir, "ts_serve_status", `{"TCP":{"8443":{"TCPForward":"127.0.0.1:8443"}}}`)
+		cleanState()
+		installFake(t)
+		writeState(t, "ts_ip4", fakeTailscaleIP)
+		writeState(t, "ts_serve_status", `{"TCP":{"8443":{"TCPForward":"127.0.0.1:8443"}}}`)
 
-		stdout, stderr, code := dxac50RunBootstrap(t, ctx, groupDir, binDir, sagBin)
+		stdout, stderr, code := runBS(t)
 		if code != 0 {
 			t.Fatalf("DXAC50 idempotent: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
 		}
-		if !strings.Contains(stdout, "ok tailscale-serve") {
-			t.Fatalf("DXAC50 idempotent: stdout missing ok line; got %q", stdout)
+		if n := countLine(stdout, "ok tailscale-serve"); n != 1 {
+			t.Fatalf("DXAC50 idempotent: ok tailscale-serve appears %d times; want 1\nstdout=%q", n, stdout)
 		}
 		if _, err := os.Stat(filepath.Join(binDir, "ts_rule")); err == nil {
 			t.Fatal("DXAC50 idempotent: ts_rule written when rule already present; want absent")
 		}
+		args := readState("ts_args")
+		if n := countLine(args, "serve --bg --tcp 8443 tcp://127.0.0.1:8443"); n != 0 {
+			t.Fatalf("DXAC50 idempotent: serve --bg appears %d times in ts_args; want 0\n%s", n, args)
+		}
+		if strings.Contains(args, "funnel") {
+			t.Fatalf("DXAC50 idempotent: funnel found in ts_args\n%s", args)
+		}
+	})
+
+	t.Run("skip-down", func(t *testing.T) {
+		cleanState()
+		installFake(t)
+		writeState(t, "ts_ip4", "exit:1")
+
+		stdout, stderr, code := runBS(t)
+		if code != 0 {
+			t.Fatalf("DXAC50 skip-down: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
+		}
+		if n := countLine(stdout, "skip tailscale down; loopback only"); n != 1 {
+			t.Fatalf("DXAC50 skip-down: skip line appears %d times; want 1\nstdout=%q", n, stdout)
+		}
+		args := readState("ts_args")
+		if strings.Contains(args, "serve --bg") {
+			t.Fatalf("DXAC50 skip-down: serve --bg in ts_args; want none\n%s", args)
+		}
+	})
+
+	t.Run("skip-address-invalid-loopback", func(t *testing.T) {
+		cleanState()
+		installFake(t)
+		writeState(t, "ts_ip4", "0.0.0.0")
+
+		stdout, stderr, code := runBS(t)
+		if code != 0 {
+			t.Fatalf("DXAC50 skip-address-invalid-loopback: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
+		}
+		if n := countLine(stdout, "skip tailscale address invalid; loopback only"); n != 1 {
+			t.Fatalf("DXAC50 skip-address-invalid-loopback: skip line appears %d times; want 1\nstdout=%q", n, stdout)
+		}
+	})
+
+	t.Run("skip-address-invalid-private", func(t *testing.T) {
+		cleanState()
+		installFake(t)
+		writeState(t, "ts_ip4", "192.168.1.10")
+
+		stdout, stderr, code := runBS(t)
+		if code != 0 {
+			t.Fatalf("DXAC50 skip-address-invalid-private: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
+		}
+		if n := countLine(stdout, "skip tailscale address invalid; loopback only"); n != 1 {
+			t.Fatalf("DXAC50 skip-address-invalid-private: skip line appears %d times; want 1\nstdout=%q", n, stdout)
+		}
+	})
+
+	t.Run("skip-command-absent", func(t *testing.T) {
+		cleanState()
+		removeFake()
+
+		stdout, stderr, code := runBS(t)
+		if code != 0 {
+			t.Fatalf("DXAC50 skip-command-absent: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
+		}
+		if n := countLine(stdout, "skip tailscale command absent; loopback only"); n != 1 {
+			t.Fatalf("DXAC50 skip-command-absent: skip line appears %d times; want 1\nstdout=%q", n, stdout)
+		}
+	})
+
+	t.Run("conflict-other-target", func(t *testing.T) {
+		cleanState()
+		installFake(t)
+		writeState(t, "ts_ip4", fakeTailscaleIP)
+		writeState(t, "ts_serve_status", `{"TCP":{"8443":{"TCPForward":"other:9090"}}}`)
+
+		stdout, stderr, code := runBS(t)
+		if code != 1 {
+			t.Fatalf("DXAC50 conflict-other-target: exit %d; want 1\nstdout=%s\nstderr=%s", code, stdout, stderr)
+		}
+		if n := countLine(stdout, "fail tailscale TCP 8443 serves another target"); n != 1 {
+			t.Fatalf("DXAC50 conflict-other-target: fail line appears %d times; want 1\nstdout=%q", n, stdout)
+		}
+		if !strings.Contains(stderr, "sag: tailscale: TCP 8443 serves another target") {
+			t.Fatalf("DXAC50 conflict-other-target: stderr missing sag error; got %q", stderr)
+		}
+		args := readState("ts_args")
+		if strings.Contains(args, "serve --bg") {
+			t.Fatalf("DXAC50 conflict-other-target: serve --bg in ts_args; want none\n%s", args)
+		}
+		if strings.Contains(args, "funnel") {
+			t.Fatalf("DXAC50 conflict-other-target: funnel in ts_args\n%s", args)
+		}
+	})
+
+	t.Run("conflict-funnel", func(t *testing.T) {
+		cleanState()
+		installFake(t)
+		writeState(t, "ts_ip4", fakeTailscaleIP)
+		writeState(t, "ts_serve_status", `{"AllowFunnel":{"ts-node:8443":true}}`)
+
+		stdout, stderr, code := runBS(t)
+		if code != 1 {
+			t.Fatalf("DXAC50 conflict-funnel: exit %d; want 1\nstdout=%s\nstderr=%s", code, stdout, stderr)
+		}
+		if n := countLine(stdout, "fail tailscale funnel is on for port 8443"); n != 1 {
+			t.Fatalf("DXAC50 conflict-funnel: fail line appears %d times; want 1\nstdout=%q", n, stdout)
+		}
+		if !strings.Contains(stderr, "sag: tailscale: funnel is on for port 8443") {
+			t.Fatalf("DXAC50 conflict-funnel: stderr missing sag error; got %q", stderr)
+		}
+		args := readState("ts_args")
+		if strings.Contains(args, "funnel") {
+			t.Fatalf("DXAC50 conflict-funnel: funnel in ts_args\n%s", args)
+		}
 	})
 
 	t.Run("address-change", func(t *testing.T) {
-		t.Skip("D3.2-blocker: planOnce (plan-again, step 5) writes new TailscaleIP to answers.json before stepCert runs; readStoredTailscaleIP then returns the new IP; stored==cfg.TailscaleIP so renewal is not triggered; fix requires flow.go or endpointcert.go change outside D3.2 ownership")
+		cleanState()
+		installFake(t)
+		writeState(t, "ts_ip4", fakeTailscaleIP)
+		stdout1, stderr1, code1 := runBS(t)
+		if code1 != 0 {
+			t.Fatalf("DXAC50 address-change setup: exit %d; want 0\nstdout=%s\nstderr=%s", code1, stdout1, stderr1)
+		}
+
+		cleanState()
+		installFake(t)
+		writeState(t, "ts_ip4", fakeTailscaleIPAlt)
+		stdout2, stderr2, code2 := runBS(t)
+		if code2 != 0 {
+			t.Fatalf("DXAC50 address-change run: exit %d; want 0\nstdout=%s\nstderr=%s", code2, stdout2, stderr2)
+		}
+		if !strings.Contains(stdout2, "install endpoint-cert") {
+			t.Fatalf("DXAC50 address-change: cert not renewed when Tailscale IP changed\nstdout=%q\nD3.2-blocker: planOnce (plan-again, step 5) writes new TailscaleIP to answers.json before stepCert runs; readStoredTailscaleIP then returns the new IP; stored==cfg.TailscaleIP so renewal is not triggered; fix requires flow.go or endpointcert.go change outside D3.2 ownership", stdout2)
+		}
 	})
 }
 
@@ -253,11 +319,4 @@ func dxac50RunBootstrap(t *testing.T, ctx context.Context, groupDir, binDir, sag
 		}
 	}
 	return stdoutBuf.String(), stderrBuf.String(), code
-}
-
-func dxac50WriteState(t *testing.T, dir, name, content string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
-		t.Fatalf("DXAC50: write %s: %v", name, err)
-	}
 }

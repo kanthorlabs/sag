@@ -199,4 +199,8 @@ func TestNeverFunnel(t *testing.T) {
 			t.Fatalf("Apply called funnel subcommand: %q", call)
 		}
 	}
+
+	if !strings.Contains(buf.String(), "install tailscale-serve") {
+		t.Fatalf("Apply did not write install line when rule absent; got %q", buf.String())
+	}
 }

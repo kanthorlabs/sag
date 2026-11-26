@@ -132,6 +132,6 @@ func Apply(ctx context.Context, state State, cmd Command, out stepline.Writer) e
 	if _, err := cmd.Output(ctx, "serve", "--bg", "--tcp", sagPort, "tcp://"+sagTCPForward); err != nil {
 		return err
 	}
-	out.Line(stepline.StatusOK, "tailscale-serve", "")
+	out.Line(stepline.StatusInstall, "tailscale-serve", "")
 	return nil
 }
