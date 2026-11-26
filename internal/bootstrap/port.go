@@ -1,7 +1,36 @@
 package bootstrap
 
-import "context"
+import (
+	"context"
+	"fmt"
 
-func defaultPlanPort(_ context.Context, _ *State) error {
-	return nil
+	"github.com/kanthorlabs/sag/internal/portcheck"
+	"github.com/kanthorlabs/sag/internal/stepline"
+)
+
+func defaultPlanPort(ctx context.Context, s *State) error {
+	h, err := portcheck.Check(ctx, s.PodmanPath)
+	if err != nil {
+		return err
+	}
+	switch h.Kind {
+	case portcheck.HolderNone:
+		return nil
+	case portcheck.HolderSAG:
+		if s.PortHolder.Kind != portcheck.HolderSAG {
+			s.Out.Line(stepline.StatusOK, "port-8443", "")
+		}
+		s.PortHolder = h
+		return nil
+	case portcheck.HolderContainer:
+		s.Out.Line(stepline.StatusFail, "port", "8443 held by container "+h.Name)
+		s.PortHolder = h
+		return fmt.Errorf("port 8443 held by container %s", h.Name)
+	case portcheck.HolderProcess:
+		s.Out.Line(stepline.StatusFail, "port", "8443 held by "+h.Name)
+		s.PortHolder = h
+		return fmt.Errorf("port 8443 held by %s", h.Name)
+	default:
+		return nil
+	}
 }

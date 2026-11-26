@@ -1,7 +1,5 @@
 package portcheck
 
-import "context"
-
 type HolderKind int
 
 const (
@@ -14,8 +12,4 @@ const (
 type Holder struct {
 	Kind HolderKind
 	Name string
-}
-
-func Check(_ context.Context) (Holder, error) {
-	return Holder{}, nil
 }
