@@ -127,13 +127,18 @@ func TestStepOrder(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	built := deps.BuildSteps()
-	if len(built) != len(Steps) {
-		t.Fatalf("BuildSteps() len = %d; want %d", len(built), len(Steps))
+	wantNames := []string{
+		"platform-check", "select-pins", "plan", "lock", "plan-again", "deps", "image",
+		"master-key", "cert", "sag-yaml", "autostart", "service-start", "tailscale",
+		"agent-setup", "print-endpoint",
 	}
-	for i, s := range Steps {
-		if built[i].Name != s.Name {
-			t.Fatalf("BuildSteps()[%d].Name = %q; want %q", i, built[i].Name, s.Name)
+	built := deps.BuildSteps()
+	if len(built) != len(wantNames) {
+		t.Fatalf("BuildSteps() len = %d; want %d", len(built), len(wantNames))
+	}
+	for i, name := range wantNames {
+		if built[i].Name != name {
+			t.Fatalf("BuildSteps()[%d].Name = %q; want %q", i, built[i].Name, name)
 		}
 	}
 
