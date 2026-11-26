@@ -7,42 +7,68 @@ import (
 )
 
 type TeardownConfig struct {
-	Home string
-	UID  string
+	Home   string
+	UID    string
+	CfgDir string
 }
 
 func Teardown(ctx context.Context, r Runner, cfg TeardownConfig) error {
+	var errs []string
+
 	if err := removeResourceSecrets(ctx, r); err != nil {
-		return fmt.Errorf("teardown: resource secrets: %w", err)
+		errs = append(errs, fmt.Sprintf("resource secrets: %s", err))
 	}
 	if err := removeLabeledObjects(ctx, r); err != nil {
-		return fmt.Errorf("teardown: labeled objects: %w", err)
+		errs = append(errs, fmt.Sprintf("labeled objects: %s", err))
 	}
 	if err := macOSBootout(ctx, r, cfg.UID); err != nil {
-		return fmt.Errorf("teardown: launchctl bootout: %w", err)
+		errs = append(errs, fmt.Sprintf("launchctl bootout: %s", err))
+	}
+	if _, err := r.Output(ctx, "rm", "-f", cfg.Home+"/Library/LaunchAgents/net.kanthorlabs.sag.plist"); err != nil {
+		errs = append(errs, fmt.Sprintf("rm plist: %s", err))
+	}
+	if _, err := r.Output(ctx, "rm", "-rf", cfg.Home+"/Library/Logs/sag"); err != nil {
+		errs = append(errs, fmt.Sprintf("rm logs: %s", err))
 	}
 	if _, err := r.Output(ctx, "podman", "rm", "-f", "sag"); err != nil {
-		return fmt.Errorf("teardown: podman rm sag: %w", err)
+		errs = append(errs, fmt.Sprintf("podman rm sag: %s", err))
 	}
-	if _, err := r.Output(ctx, "podman", "volume", "rm", "sag-state"); err != nil {
-		return fmt.Errorf("teardown: podman volume rm sag-state: %w", err)
+	if err := removeVolumeIfPresent(ctx, r, "sag-state"); err != nil {
+		errs = append(errs, fmt.Sprintf("podman volume rm sag-state: %s", err))
 	}
-	if _, err := r.Output(ctx, "podman", "secret", "rm", "sag-master-key", "sag-tls-cert", "sag-tls-key"); err != nil {
-		return fmt.Errorf("teardown: podman secret rm: %w", err)
+	for _, name := range []string{"sag-master-key", "sag-tls-cert", "sag-tls-key", "sag-aws-credentials"} {
+		if err := removeSecretIfPresent(ctx, r, name); err != nil {
+			errs = append(errs, fmt.Sprintf("podman secret rm %s: %s", name, err))
+		}
 	}
 	if err := removeSAGImages(ctx, r); err != nil {
-		return fmt.Errorf("teardown: podman rmi: %w", err)
+		errs = append(errs, fmt.Sprintf("podman rmi: %s", err))
+	}
+	if cfg.CfgDir != "" {
+		if _, err := r.Output(ctx, "rm", "-rf", cfg.CfgDir); err != nil {
+			errs = append(errs, fmt.Sprintf("rm cfg: %s", err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("teardown: %s", strings.Join(errs, "; "))
 	}
 	return nil
 }
 
 func removeResourceSecrets(ctx context.Context, r Runner) error {
-	out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "label=sag.resource=", "--format", "{{.Name}}")
+	out, err := r.Output(ctx, "podman", "secret", "ls", "--format", "{{.Name}}")
 	if err != nil {
 		return err
 	}
-	names := parseLines(out)
-	for _, name := range names {
+	for _, name := range parseLines(out) {
+		labelOut, err := r.Output(ctx, "podman", "secret", "inspect", name, "--format", `{{index .Spec.Labels "sag.resource"}}`)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(string(labelOut)) == "" {
+			continue
+		}
 		if _, err := r.Output(ctx, "podman", "secret", "rm", name); err != nil {
 			return err
 		}
@@ -69,11 +95,18 @@ func removeLabeledObjects(ctx context.Context, r Runner) error {
 			return err
 		}
 	}
-	secrets, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "label=sag.devx-e2e=1", "--format", "{{.Name}}")
+	secrets, err := r.Output(ctx, "podman", "secret", "ls", "--format", "{{.Name}}")
 	if err != nil {
 		return err
 	}
 	for _, name := range parseLines(secrets) {
+		labelOut, err := r.Output(ctx, "podman", "secret", "inspect", name, "--format", `{{index .Spec.Labels "sag.devx-e2e"}}`)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(string(labelOut)) != "1" {
+			continue
+		}
 		if _, err := r.Output(ctx, "podman", "secret", "rm", name); err != nil {
 			return err
 		}
@@ -91,8 +124,35 @@ func removeLabeledObjects(ctx context.Context, r Runner) error {
 }
 
 func macOSBootout(ctx context.Context, r Runner, uid string) error {
-	_, _ = r.Output(ctx, "launchctl", "bootout", "gui/"+uid, "net.kanthorlabs.sag")
+	_, err := r.Output(ctx, "launchctl", "bootout", "gui/"+uid+"/net.kanthorlabs.sag")
+	if err != nil && !strings.Contains(err.Error(), "not loaded") {
+		return err
+	}
 	return nil
+}
+
+func removeVolumeIfPresent(ctx context.Context, r Runner, name string) error {
+	out, err := r.Output(ctx, "podman", "volume", "ls", "--filter", "name="+name, "--format", "{{.Name}}")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return nil
+	}
+	_, err = r.Output(ctx, "podman", "volume", "rm", name)
+	return err
+}
+
+func removeSecretIfPresent(ctx context.Context, r Runner, name string) error {
+	out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "name="+name, "--format", "{{.Name}}")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(out)) == "" {
+		return nil
+	}
+	_, err = r.Output(ctx, "podman", "secret", "rm", name)
+	return err
 }
 
 func removeSAGImages(ctx context.Context, r Runner) error {

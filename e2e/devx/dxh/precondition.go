@@ -10,13 +10,13 @@ import (
 const minFreeGiB = 10
 
 type PreconditionConfig struct {
-	Home               string
-	UID                string
-	CfgDir             string
-	PortHeld           bool
-	CfgExists          bool
-	LaunchAgentExists  bool
-	Marker             bool
+	Home              string
+	UID               string
+	CfgDir            string
+	PortHeld          func() bool
+	CfgExists         func() bool
+	LaunchAgentExists func() bool
+	Marker            bool
 }
 
 func CheckPreconditions(ctx context.Context, r Runner, cfg PreconditionConfig) error {
@@ -29,7 +29,7 @@ func CheckPreconditions(ctx context.Context, r Runner, cfg PreconditionConfig) e
 	if err := checkContainers(ctx, r); err != nil {
 		return err
 	}
-	if cfg.PortHeld {
+	if cfg.PortHeld != nil && cfg.PortHeld() {
 		return fmt.Errorf("precondition: port 8443 is held")
 	}
 	if err := checkVolumeAndImage(ctx, r); err != nil {
@@ -38,10 +38,10 @@ func CheckPreconditions(ctx context.Context, r Runner, cfg PreconditionConfig) e
 	if err := checkSecrets(ctx, r); err != nil {
 		return err
 	}
-	if cfg.CfgExists {
+	if cfg.CfgExists != nil && cfg.CfgExists() {
 		return fmt.Errorf("precondition: cfg directory exists: %s", cfg.CfgDir)
 	}
-	if cfg.LaunchAgentExists {
+	if cfg.LaunchAgentExists != nil && cfg.LaunchAgentExists() {
 		return fmt.Errorf("precondition: LaunchAgent plist exists")
 	}
 	return nil
@@ -138,12 +138,18 @@ func checkSecrets(ctx context.Context, r Runner) error {
 			return fmt.Errorf("precondition: secret %s exists", name)
 		}
 	}
-	out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "label=sag.resource=", "--format", "{{.Name}}")
+	allOut, err := r.Output(ctx, "podman", "secret", "ls", "--format", "{{.Name}}")
 	if err != nil {
 		return fmt.Errorf("precondition: secret ls sag.resource: %w", err)
 	}
-	if strings.TrimSpace(string(out)) != "" {
-		return fmt.Errorf("precondition: secrets with sag.resource label exist")
+	for _, sname := range parseLines(allOut) {
+		labelOut, err := r.Output(ctx, "podman", "secret", "inspect", sname, "--format", `{{index .Spec.Labels "sag.resource"}}`)
+		if err != nil {
+			return fmt.Errorf("precondition: secret inspect %s: %w", sname, err)
+		}
+		if strings.TrimSpace(string(labelOut)) != "" {
+			return fmt.Errorf("precondition: secrets with sag.resource label exist")
+		}
 	}
 	return nil
 }
