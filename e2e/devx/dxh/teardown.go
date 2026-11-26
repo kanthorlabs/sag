@@ -2,8 +2,10 @@ package dxh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -51,11 +53,13 @@ func Teardown(ctx context.Context, r Runner, cfg TeardownConfig) error {
 		errs = append(errs, fmt.Sprintf("podman rmi: %s", err))
 	}
 	if cfg.CfgDir != "" {
-		_, cfgStatErr := os.Stat(cfg.CfgDir)
+		_, statErr := os.Stat(cfg.CfgDir)
 		if _, err := r.Output(ctx, "rm", "-rf", cfg.CfgDir); err != nil {
 			errs = append(errs, fmt.Sprintf("rm cfg: %s", err))
-		} else if cfgStatErr == nil {
-			time.Sleep(6 * time.Second)
+		} else if statErr == nil {
+			if err := waitMachineSeesAbsent(ctx, r, cfg.CfgDir, machineSyncTimeout); err != nil {
+				errs = append(errs, err.Error())
+			}
 		}
 	}
 
@@ -63,6 +67,23 @@ func Teardown(ctx context.Context, r Runner, cfg TeardownConfig) error {
 		return fmt.Errorf("teardown: %s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+const machineSyncTimeout = 15 * time.Second
+
+func waitMachineSeesAbsent(ctx context.Context, r Runner, path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		_, err := r.Output(ctx, "podman", "machine", "ssh", "--", "test", "-e", path)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("podman machine still sees %s after %s", path, timeout)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 func removeResourceSecrets(ctx context.Context, r Runner) error {

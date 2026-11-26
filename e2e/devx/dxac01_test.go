@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -119,7 +121,12 @@ func runSAG(t *testing.T, ctx context.Context, args ...string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return dxh.NewProductRunner(t).Output(ctx, bin, args...)
+	out, err := dxh.NewProductRunner(t).Output(ctx, bin, args...)
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return out, fmt.Errorf("%w; stderr: %s", err, exitErr.Stderr)
+	}
+	return out, err
 }
 
 func containerRunning(ctx context.Context) bool {
