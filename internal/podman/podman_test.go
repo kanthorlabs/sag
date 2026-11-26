@@ -199,6 +199,31 @@ func TestContainerInspectParsesSecrets(t *testing.T) {
 	}
 }
 
+func TestContainerInspectParsesConfigSecrets(t *testing.T) {
+	infos := []map[string]any{{
+		"Id":   "abc",
+		"Name": "/sag",
+		"Config": map[string]any{
+			"Secrets": []any{
+				map[string]any{"Name": "sag-tls-cert", "UID": float64(0), "GID": float64(0), "Mode": float64(0o400)},
+			},
+		},
+	}}
+	out, _ := json.Marshal(infos)
+	f := &fakeExec{output: out}
+	r := runner{exec: f.run}
+	got, err := r.ContainerInspect(context.Background(), "sag")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Secrets) != 1 {
+		t.Fatalf("want 1 secret, got %d", len(got.Secrets))
+	}
+	if got.Secrets[0].Name != "sag-tls-cert" {
+		t.Errorf("secret name = %q", got.Secrets[0].Name)
+	}
+}
+
 func TestContainerInspectNotFound(t *testing.T) {
 	f := &fakeExec{err: errors.New("no container with name or id")}
 	r := runner{exec: f.run}

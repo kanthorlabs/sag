@@ -142,6 +142,9 @@ type rawContainerInfo struct {
 	Id      string            `json:"Id"`
 	Name    string            `json:"Name"`
 	Secrets []rawContainerSec `json:"Secrets"`
+	Config  struct {
+		Secrets []rawContainerSec `json:"Secrets"`
+	} `json:"Config"`
 }
 
 type rawContainerSec struct {
@@ -152,22 +155,16 @@ type rawContainerSec struct {
 }
 
 func (r rawContainerInfo) toContainerInfo() ContainerInfo {
-	secrets := make([]ContainerSecret, len(r.Secrets))
-	for i, s := range r.Secrets {
+	all := r.Secrets
+	if len(all) == 0 {
+		all = r.Config.Secrets
+	}
+	secrets := make([]ContainerSecret, len(all))
+	for i, s := range all {
 		secrets[i] = ContainerSecret{Name: s.Name, UID: s.UID, GID: s.GID, Mode: s.Mode}
 	}
 	name := r.Name
 	name = strings.TrimPrefix(name, "/")
 	return ContainerInfo{ID: r.Id, Name: name, Secrets: secrets}
-}
-
-func isNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "no secret with name") ||
-		strings.Contains(msg, "no such secret") ||
-		strings.Contains(msg, "not found")
 }
 
