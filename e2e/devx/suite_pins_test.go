@@ -46,6 +46,9 @@ func TestDevxPins(t *testing.T) {
 	dxh.RunGroup(t, ctx, r, tcfg, "pins", tagImage, func(t *testing.T) {
 		t.Run("DXAC06_InstallApproval", func(t *testing.T) { DXAC06_InstallApproval(t, ctx) })
 		t.Run("DXAC07_ReleaseChecksum", func(t *testing.T) { DXAC07_ReleaseChecksum(t, ctx) })
+	})
+
+	dxh.RunGroup(t, ctx, r, tcfg, "version-rule", tagImage, func(t *testing.T) {
 		t.Run("DXAC08_VersionRule", func(t *testing.T) { DXAC08_VersionRule(t, ctx) })
 	})
 }

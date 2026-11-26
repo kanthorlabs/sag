@@ -24,10 +24,7 @@ func DXAC53_PortHolder(t *testing.T, ctx context.Context) {
 	cfgDir := dxh.CfgDir(home)
 
 	t.Run("BootstrapProcess", func(t *testing.T) {
-		ln, err := net.Listen("tcp", "127.0.0.1:8443")
-		if err != nil {
-			t.Skipf("cannot listen on 127.0.0.1:8443: %v", err)
-		}
+		ln := listenRetry(t, "127.0.0.1:8443")
 		t.Cleanup(func() { _ = ln.Close() })
 
 		out, runErr := runSAG(t, ctx, "bootstrap", "--autostart", "no")
@@ -87,10 +84,7 @@ func DXAC53_PortHolder(t *testing.T, ctx context.Context) {
 	ctrID := strings.TrimSpace(string(ctrIDOut))
 
 	t.Run("ServiceStartProcess", func(t *testing.T) {
-		ln, err := net.Listen("tcp", "127.0.0.1:8443")
-		if err != nil {
-			t.Skipf("cannot listen on 127.0.0.1:8443: %v", err)
-		}
+		ln := listenRetry(t, "127.0.0.1:8443")
 		t.Cleanup(func() { _ = ln.Close() })
 
 		out, runErr := runSAG(t, ctx, "service", "start")
@@ -146,6 +140,23 @@ func DXAC53_PortHolder(t *testing.T, ctx context.Context) {
 	})
 }
 
+func listenRetry(t *testing.T, addr string) net.Listener {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for {
+		ln, err := net.Listen("tcp", addr)
+		if err == nil {
+			return ln
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			t.Fatalf("cannot listen on %s after 10s: %v", addr, lastErr)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
 func waitContainerRunning(t *testing.T, ctx context.Context, r dxh.Runner, name string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -164,19 +175,17 @@ func waitContainerRunning(t *testing.T, ctx context.Context, r dxh.Runner, name 
 func buildHolderImage(t *testing.T, ctx context.Context) string {
 	t.Helper()
 
+	repoOut, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse: %v", err)
+	}
+	root := strings.TrimSpace(string(repoOut))
+
 	srcDir := t.TempDir()
 
-	holderSrc := "package main\n\nimport (\n\t\"os\"\n\t\"os/signal\"\n\t\"syscall\"\n)\n\nfunc main() {\n\tch := make(chan os.Signal, 1)\n\tsignal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)\n\t<-ch\n}\n"
-	if err := os.WriteFile(filepath.Join(srcDir, "main.go"), []byte(holderSrc), 0o644); err != nil {
-		t.Fatalf("write holder main.go: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(srcDir, "go.mod"), []byte("module holder\n\ngo 1.21\n"), 0o644); err != nil {
-		t.Fatalf("write holder go.mod: %v", err)
-	}
-
 	holderBin := filepath.Join(srcDir, "holder")
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", holderBin, ".")
-	cmd.Dir = srcDir
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", holderBin, "./e2e/devx/testdata/holder")
+	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GOOS=linux", "CGO_ENABLED=0", "GOARCH="+runtime.GOARCH)
 	if data, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build holder binary: %v\n%s", err, data)
@@ -190,7 +199,9 @@ func buildHolderImage(t *testing.T, ctx context.Context) string {
 
 	img := "localhost/sag-dx53-holder:1"
 	r := dxh.NewRunner()
-	if _, err := r.Output(ctx, "podman", "build", "-t", img, "-f", cfile, srcDir); err != nil {
+	if _, err := r.Output(ctx, "podman", "build",
+		"--label", "sag.devx-e2e=1",
+		"-t", img, "-f", cfile, srcDir); err != nil {
 		t.Fatalf("podman build holder image: %v", err)
 	}
 	t.Cleanup(func() {

@@ -74,6 +74,12 @@ func (t *TTY) Redact(values ...string) {
 	t.mu.Unlock()
 }
 
+func (t *TTY) RawOutput() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.output.String()
+}
+
 func (t *TTY) redactString(s string) string {
 	for _, v := range t.redact {
 		if v != "" {
