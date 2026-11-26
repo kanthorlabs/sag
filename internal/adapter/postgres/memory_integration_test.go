@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	memoryBound   = 64 << 20
-	retainedBound = maxMessageBodyBytes + 1<<20
+	memoryBound    = 64 << 20
+	oversizedBound = maxMessageBodyBytes / 4
+	retainedBound  = maxMessageBodyBytes + 1<<20
 )
 
 var memoryLimits = core.Limits{MaxRows: 100, MaxResultBytes: 32 << 10, MaxCellBytes: 4 << 10, Timeout: 15 * time.Second}
@@ -72,13 +73,13 @@ func TestOversizedRowGivesFixedErrorInBoundedMemory(t *testing.T) {
 	peak, _ := peakHeapGrowth(func() {
 		_, err = runQuery(t, res, "SELECT repeat('x', 20000000) AS v FROM generate_series(1, 20)", memoryLimits)
 	})
+	t.Logf("peak heap growth = %d KiB", peak>>10)
+	if peak > oversizedBound {
+		t.Fatalf("peak heap growth = %d KiB; want at most %d KiB", peak>>10, oversizedBound>>10)
+	}
 	var ce *core.Error
 	if !errors.As(err, &ce) || ce.Code != core.CodeUpstreamError || ce.Message != messageTooLarge {
 		t.Fatalf("Execute = %v; want upstream_error %q", err, messageTooLarge)
-	}
-	t.Logf("peak heap growth = %d MiB", peak>>20)
-	if peak > memoryBound {
-		t.Fatalf("peak heap growth = %d MiB; want at most %d MiB", peak>>20, memoryBound>>20)
 	}
 	out, err := runQuery(t, res, "SELECT 1 AS n", memoryLimits)
 	if err != nil || len(out.Rows) != 1 {

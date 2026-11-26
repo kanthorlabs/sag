@@ -56,7 +56,7 @@ func TestPreflightMinimal(t *testing.T) {
 	defer cancel()
 	report, err := res.Preflight(ctx)
 	if err != nil {
-		t.Fatalf("Preflight: %v", err)
+		t.Fatalf("Preflight: %v; cause: %v", err, errors.Unwrap(err))
 	}
 	if !report.Passed {
 		t.Fatalf("Preflight report = %+v; want passed", report)
