@@ -24,6 +24,7 @@ type TTY struct {
 	matched int
 	changed chan struct{}
 	done    chan struct{}
+	redact  []string
 }
 
 func StartTTY(ctx context.Context, name string, args ...string) (*TTY, error) {
@@ -60,6 +61,21 @@ func (t *TTY) read() {
 	}
 }
 
+func (t *TTY) Redact(values ...string) {
+	t.mu.Lock()
+	t.redact = append(t.redact, values...)
+	t.mu.Unlock()
+}
+
+func (t *TTY) redactString(s string) string {
+	for _, v := range t.redact {
+		if v != "" {
+			s = strings.ReplaceAll(s, v, "[REDACTED]")
+		}
+	}
+	return s
+}
+
 func (t *TTY) Expect(ctx context.Context, text string) error {
 	finished := false
 	for {
@@ -73,14 +89,14 @@ func (t *TTY) Expect(ctx context.Context, text string) error {
 		}
 		t.mu.Unlock()
 		if finished {
-			return fmt.Errorf("dxh: pseudo-terminal closed before %q; output %q", text, out)
+			return fmt.Errorf("dxh: pseudo-terminal closed before %q; output %q", text, t.redactString(out))
 		}
 		select {
 		case <-changed:
 		case <-t.done:
 			finished = true
 		case <-ctx.Done():
-			return fmt.Errorf("dxh: wait for %q: %w; output %q", text, ctx.Err(), out)
+			return fmt.Errorf("dxh: wait for %q: %w; output %q", text, ctx.Err(), t.redactString(out))
 		}
 	}
 }
