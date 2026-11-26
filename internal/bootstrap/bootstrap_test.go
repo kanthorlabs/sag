@@ -454,3 +454,36 @@ func TestContainerRefused(t *testing.T) {
 		t.Fatalf("error = %q; want container refusal message", err.Error())
 	}
 }
+
+func TestPlanKeepsStoredTailscaleIPAndCertGetsDetected(t *testing.T) {
+	dir := t.TempDir()
+	deps := baseDeps(dir)
+	deps.LoadAnswers = func(hoststate.Paths) (hoststate.Answers, error) {
+		return hoststate.Answers{Autostart: "no", TailscaleIP: "100.64.0.1"}, nil
+	}
+	var saved []hoststate.Answers
+	deps.SaveAnswers = func(_ hoststate.Paths, a hoststate.Answers) error {
+		saved = append(saved, a)
+		return nil
+	}
+	deps.PlanTailscale = func(_ context.Context, s *State) error {
+		s.TailscaleState.Address = "100.64.0.2"
+		return nil
+	}
+	var certIP string
+	deps.CertEnsure = func(_ context.Context, _ podman.Command, cfg endpointcert.Config, _ time.Time, _ stepline.Writer) (bool, error) {
+		certIP = cfg.TailscaleIP
+		return false, nil
+	}
+	if err := Run(context.Background(), Flags{Autostart: "no"}, deps); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, a := range saved {
+		if a.TailscaleIP != "100.64.0.1" {
+			t.Fatalf("plan saved tailscale_ip %q; only the certificate sequence may change it", a.TailscaleIP)
+		}
+	}
+	if certIP != "100.64.0.2" {
+		t.Fatalf("certificate step got TailscaleIP %q; want the detected address", certIP)
+	}
+}

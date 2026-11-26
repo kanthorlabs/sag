@@ -269,7 +269,7 @@ func (d Deps) stepCert(ctx context.Context, s *State) error {
 	pm := d.PodmanCmd(s.PodmanPath)
 	cfg := endpointcert.Config{
 		CfgDir:      s.Paths.Cfg,
-		TailscaleIP: s.Answers.TailscaleIP,
+		TailscaleIP: s.TailscaleState.Address,
 	}
 	changed, err := d.CertEnsure(ctx, pm, cfg, d.Now(), s.Out)
 	if err != nil {
@@ -369,7 +369,6 @@ func (d Deps) planOnce(ctx context.Context, s *State) error {
 		merged := fresh
 		merged.Autostart = s.Answers.Autostart
 		merged.PodmanPath = s.PodmanPath
-		merged.TailscaleIP = s.TailscaleState.Address
 		if err := d.SaveAnswers(s.Paths, merged); err != nil {
 			return err
 		}
