@@ -28,11 +28,13 @@ const (
 var phaseGroups = []string{"parallel", "sequential"}
 
 type buildInfo struct {
-	GeneratedAt  string
-	Commit       string
-	Dirty        bool
-	Image        string
-	ImageVersion string
+	GeneratedAt   string
+	Commit        string
+	Dirty         bool
+	Image         string
+	ImageVersion  string
+	OSVersion     string
+	PodmanVersion string
 }
 
 type majorRun struct {

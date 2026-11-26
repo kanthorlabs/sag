@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -51,10 +52,11 @@ type devxEnv struct {
 }
 
 type devxGate struct {
-	Layer   int      `json:"layer"`
-	Phase   string   `json:"phase"`
-	Passed  bool     `json:"passed"`
-	Failing []string `json:"failing"`
+	Layer     int      `json:"layer"`
+	Phase     string   `json:"phase"`
+	Passed    bool     `json:"passed"`
+	Failing   []string `json:"failing"`
+	RunFilter string   `json:"run_filter,omitempty"`
 }
 
 type devxReport struct {
@@ -74,6 +76,7 @@ func runDevx(args []string, stderr io.Writer, probe func() buildInfo) int {
 	layer := fs.Int("layer", 0, "gate layer, 1 to 10")
 	phase := fs.String("phase", "A", "build phase A or B")
 	out := fs.String("out", "", "output directory for ac-report.json and ac-report.md")
+	runFilter := fs.String("run", "", "test name pattern; select only matching tests in phase at layer<=N")
 	var inputs inputPaths
 	fs.Var(&inputs, "in", "go test -json events file; repeat for each suite")
 	if err := fs.Parse(args); err != nil {
@@ -89,7 +92,7 @@ func runDevx(args []string, stderr io.Writer, probe func() buildInfo) int {
 		return 2
 	}
 	info := probe()
-	r := buildDevxReport(*layer, *phase, runs, devx.ACTable, info)
+	r := buildDevxReport(*layer, *phase, *runFilter, runs, devx.ACTable, info)
 	outDir := filepath.Join(*out, devxReportDir)
 	if err := writeDevxReport(outDir, r); err != nil {
 		fmt.Fprintf(stderr, "acreport: %v\n", err)
@@ -135,6 +138,9 @@ func readDevxRuns(paths []string) ([]suiteRun, error) {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		commit := readCommitFile(filepath.Dir(path))
+		if commit == "" {
+			return nil, fmt.Errorf("%s: missing commit file", path)
+		}
 		runs = append(runs, suiteRun{Suite: suite, Commit: commit, Run: tr})
 	}
 	return runs, nil
@@ -157,23 +163,63 @@ func readCommitFile(dir string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func buildDevxReport(layer int, phase string, runs []suiteRun, table []devx.ACRow, info buildInfo) devxReport {
+func buildDevxReport(layer int, phase, runFilter string, runs []suiteRun, table []devx.ACRow, info buildInfo) devxReport {
 	r := devxReport{
 		Schema:      devxSchema,
 		GeneratedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 		Commit:      info.Commit,
 		Layer:       layer,
 		Phase:       phase,
-		Env:         devxEnv{Date: time.Now().UTC().Format("2006-01-02")},
-		ACs:         []devxACResult{},
+		Env: devxEnv{
+			Date:          time.Now().UTC().Format("2006-01-02"),
+			OSVersion:     info.OSVersion,
+			PodmanVersion: info.PodmanVersion,
+		},
+		ACs: []devxACResult{},
 		Gate: devxGate{
-			Layer:   layer,
-			Phase:   phase,
-			Failing: []string{},
+			Layer:     layer,
+			Phase:     phase,
+			Failing:   []string{},
+			RunFilter: runFilter,
 		},
 	}
 	if info.GeneratedAt != "" {
 		r.GeneratedAt = info.GeneratedAt
+	}
+
+	if runFilter != "" {
+		re, err := regexp.Compile(runFilter)
+		if err != nil {
+			r.Gate.Failing = append(r.Gate.Failing, "invalid run filter: "+err.Error())
+			r.Gate.Passed = false
+			return r
+		}
+		matched := 0
+		failed := 0
+		for _, row := range table {
+			if !rowInPhase(row.Run, phase) {
+				continue
+			}
+			for _, t := range row.Tests {
+				if t.Layer > layer || !re.MatchString(t.Name) {
+					continue
+				}
+				matched++
+				if findDevxTestStatus(runs, t.Name) != statusPass {
+					failed++
+					r.Gate.Failing = append(r.Gate.Failing, t.Name)
+				}
+			}
+		}
+		if matched == 0 {
+			r.Gate.Failing = append(r.Gate.Failing, "no tests matched run filter: "+runFilter)
+		}
+		r.Gate.Failing = slices.Compact(slices.Sorted(slices.Values(r.Gate.Failing)))
+		if r.Gate.Failing == nil {
+			r.Gate.Failing = []string{}
+		}
+		r.Gate.Passed = len(r.Gate.Failing) == 0
+		return r
 	}
 
 	for _, row := range table {
@@ -181,7 +227,7 @@ func buildDevxReport(layer int, phase string, runs []suiteRun, table []devx.ACRo
 		r.ACs = append(r.ACs, ac)
 		if ac.Status == statusFail {
 			for _, t := range ac.Tests {
-				if t.Layer <= layer && t.Status == statusFail {
+				if t.Layer <= layer && t.Status != statusPass {
 					r.Gate.Failing = append(r.Gate.Failing, t.Name)
 				}
 			}
@@ -195,7 +241,10 @@ func buildDevxReport(layer int, phase string, runs []suiteRun, table []devx.ACRo
 		r.Gate.Failing = append(r.Gate.Failing, "commit mismatch: "+err.Error())
 	}
 
-	r.Gate.Failing = slices.Sorted(slices.Values(uniqueStrings(r.Gate.Failing)))
+	r.Gate.Failing = slices.Compact(slices.Sorted(slices.Values(r.Gate.Failing)))
+	if r.Gate.Failing == nil {
+		r.Gate.Failing = []string{}
+	}
 	r.Gate.Passed = len(r.Gate.Failing) == 0
 	return r
 }
@@ -215,9 +264,9 @@ func buildDevxAC(row devx.ACRow, runs []suiteRun, layer int, phase string) devxA
 		return ac
 	}
 
-	anyFail := false
-	anyPass := false
 	allNotImpl := true
+	allLayerPass := true
+	countInLayer := 0
 	for i, t := range row.Tests {
 		status := findDevxTestStatus(runs, t.Name)
 		if t.Layer > layer {
@@ -226,24 +275,20 @@ func buildDevxAC(row devx.ACRow, runs []suiteRun, layer int, phase string) devxA
 		ac.Tests[i] = devxTestResult{Name: t.Name, Layer: t.Layer, Status: status}
 		if t.Layer <= layer {
 			allNotImpl = false
-			switch status {
-			case statusPass:
-				anyPass = true
-			case statusFail:
-				anyFail = true
+			countInLayer++
+			if status != statusPass {
+				allLayerPass = false
 			}
 		}
 	}
 
 	switch {
-	case allNotImpl:
+	case allNotImpl || countInLayer == 0:
 		ac.Status = statusNotImplemented
-	case anyFail:
-		ac.Status = statusFail
-	case anyPass:
+	case allLayerPass:
 		ac.Status = statusPass
 	default:
-		ac.Status = statusNotImplemented
+		ac.Status = statusFail
 	}
 	return ac
 }
@@ -296,9 +341,6 @@ func checkSkeletonPass(runs []suiteRun) error {
 func checkCommitConsistency(runs []suiteRun) error {
 	var base string
 	for _, sr := range runs {
-		if sr.Commit == "" {
-			continue
-		}
 		if base == "" {
 			base = sr.Commit
 			continue
@@ -308,18 +350,6 @@ func checkCommitConsistency(runs []suiteRun) error {
 		}
 	}
 	return nil
-}
-
-func uniqueStrings(s []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, v := range s {
-		if !seen[v] {
-			seen[v] = true
-			out = append(out, v)
-		}
-	}
-	return out
 }
 
 func writeDevxReport(dir string, r devxReport) error {
@@ -351,12 +381,29 @@ func writeDevxMarkdown(w io.Writer, r devxReport) error {
 	fmt.Fprintf(&b, "- Generated: %s\n", r.GeneratedAt)
 	fmt.Fprintf(&b, "- Phase: %s\n", r.Phase)
 	fmt.Fprintf(&b, "- Env: OS `%s`, Podman `%s`\n", r.Env.OSVersion, r.Env.PodmanVersion)
-	fmt.Fprintf(&b, "- Gate layer %d phase %s: %s\n\n", r.Gate.Layer, r.Gate.Phase, cell(gateResult))
+	fmt.Fprintf(&b, "- Gate layer %d phase %s: %s\n", r.Gate.Layer, r.Gate.Phase, cell(gateResult))
+	if r.Gate.RunFilter != "" {
+		selected := statusPass
+		if !r.Gate.Passed {
+			selected = statusFail
+		}
+		fmt.Fprintf(&b, "- Run filter: %s\n", r.Gate.RunFilter)
+		fmt.Fprintf(&b, "- Selected: %s\n", selected)
+	} else {
+		skeletonResult := statusPass
+		if slices.Contains(r.Gate.Failing, devxRequiredSubtest) {
+			skeletonResult = statusFail
+		}
+		fmt.Fprintf(&b, "- Harness skeleton: %s\n", skeletonResult)
+	}
+	fmt.Fprintf(&b, "\n")
 
-	writeRow(&b, []string{"AC", "Run", "Status"})
-	writeRow(&b, []string{"---", "---", "---"})
-	for _, ac := range r.ACs {
-		writeRow(&b, []string{ac.ID, ac.Run, ac.Status})
+	if r.Gate.RunFilter == "" {
+		writeRow(&b, []string{"AC", "Run", "Status"})
+		writeRow(&b, []string{"---", "---", "---"})
+		for _, ac := range r.ACs {
+			writeRow(&b, []string{ac.ID, ac.Run, ac.Status})
+		}
 	}
 	_, err := io.WriteString(w, b.String())
 	return err

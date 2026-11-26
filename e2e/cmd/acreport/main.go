@@ -58,7 +58,7 @@ func run(args []string, stderr io.Writer, probe func() buildInfo) int {
 		return runMerge(args[1:], stderr)
 	}
 	if len(args) >= 2 && args[0] == "-suite" && args[1] == devxSuite {
-		return runDevx(args[2:], stderr, probe)
+		return runDevx(args[2:], stderr, probeDevx)
 	}
 	flags := flag.NewFlagSet("acreport", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -182,11 +182,22 @@ func writeReport(dir string, r report) error {
 
 func probe() buildInfo {
 	return buildInfo{
-		GeneratedAt:  time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		Commit:       commandOutput("git", "rev-parse", "HEAD"),
-		Dirty:        commandOutput("git", "status", "--porcelain") != "",
-		Image:        commandOutput("podman", "image", "inspect", "--format", "{{.Digest}}", imageRef),
-		ImageVersion: commandOutput("podman", "run", "--rm", "--network", "none", imageRef, "version"),
+		GeneratedAt:   time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		Commit:        commandOutput("git", "rev-parse", "HEAD"),
+		Dirty:         commandOutput("git", "status", "--porcelain") != "",
+		Image:         commandOutput("podman", "image", "inspect", "--format", "{{.Digest}}", imageRef),
+		ImageVersion:  commandOutput("podman", "run", "--rm", "--network", "none", imageRef, "version"),
+		OSVersion:     commandOutput("sw_vers", "-productVersion"),
+		PodmanVersion: commandOutput("podman", "version", "--format", "{{.Client.Version}}"),
+	}
+}
+
+func probeDevx() buildInfo {
+	return buildInfo{
+		GeneratedAt:   time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		Commit:        commandOutput("git", "rev-parse", "HEAD"),
+		OSVersion:     commandOutput("sw_vers", "-productVersion"),
+		PodmanVersion: commandOutput("podman", "version", "--format", "{{.Client.Version}}"),
 	}
 }
 
