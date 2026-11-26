@@ -84,7 +84,7 @@ func (f *approveFixture) recordExists() bool {
 
 func approveIO(input string, terminalIn, terminalOut bool) (IO, *bytes.Buffer, *bytes.Buffer) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
-	std := IO{In: strings.NewReader(input), Out: out, Err: errOut}
+	std := IO{In: strings.NewReader(input), Out: out, Err: errOut, Mode: ModeContainer}
 	std.IsTerminal = func(stream any) bool {
 		return (terminalIn && stream == std.In) || (terminalOut && stream == std.Out)
 	}

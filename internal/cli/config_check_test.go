@@ -23,7 +23,7 @@ func setConfigCheckPaths(t *testing.T, p Paths) {
 
 func runConfigCheck(args ...string) (int, string, string) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
-	std := IO{In: strings.NewReader(""), Out: out, Err: errOut, IsTerminal: func(any) bool { return false }}
+	std := IO{In: strings.NewReader(""), Out: out, Err: errOut, IsTerminal: func(any) bool { return false }, Mode: ModeContainer}
 	code := Run(append([]string{"config", "check"}, args...), std)
 	return code, out.String(), errOut.String()
 }

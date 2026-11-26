@@ -43,7 +43,7 @@ func (f *fakeIssuer) install(t *testing.T, known ...string) {
 
 func jwtIO(terminalOut bool) (IO, *bytes.Buffer, *bytes.Buffer) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
-	std := IO{In: strings.NewReader(""), Out: out, Err: errOut}
+	std := IO{In: strings.NewReader(""), Out: out, Err: errOut, Mode: ModeContainer}
 	std.IsTerminal = func(stream any) bool { return terminalOut && stream == std.Out }
 	return std, out, errOut
 }

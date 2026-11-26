@@ -13,6 +13,18 @@ func testIO() (IO, *bytes.Buffer) {
 		Out:        &bytes.Buffer{},
 		Err:        errOut,
 		IsTerminal: func(any) bool { return false },
+		Mode:       ModeContainer,
+	}, errOut
+}
+
+func hostIO() (IO, *bytes.Buffer) {
+	errOut := &bytes.Buffer{}
+	return IO{
+		In:         strings.NewReader(""),
+		Out:        &bytes.Buffer{},
+		Err:        errOut,
+		IsTerminal: func(any) bool { return false },
+		Mode:       ModeHost,
 	}, errOut
 }
 
@@ -31,6 +43,45 @@ func TestRunUnknownCommandPrintsUsage(t *testing.T) {
 		std, _ := testIO()
 		if code := Run(args, std); code != ExitUsage {
 			t.Fatalf("Run(%q) = %d; want %d", args, code, ExitUsage)
+		}
+	}
+}
+
+func TestUID0Refused(t *testing.T) {
+	saved := uid
+	uid = func() int { return 0 }
+	defer func() { uid = saved }()
+
+	for _, args := range [][]string{
+		{"bootstrap"},
+		{"service", "start"},
+		{"service", "stop"},
+		{"credential", "create"},
+		{"jwt", "generate", "a"},
+	} {
+		std, errOut := hostIO()
+		if code := Run(args, std); code != ExitFailure {
+			t.Fatalf("Run(%q) as root = %d; want %d", args, code, ExitFailure)
+		}
+		if !strings.Contains(errOut.String(), "root") {
+			t.Fatalf("Run(%q) as root stderr = %q; want root message", args, errOut.String())
+		}
+	}
+}
+
+func TestInternalCommandOnHostExit2(t *testing.T) {
+	for _, args := range [][]string{
+		{"serve"},
+		{"credential", "check"},
+		{"audit", "read"},
+		{"agent", "issue", "a"},
+	} {
+		std, errOut := hostIO()
+		if code := Run(args, std); code != ExitUsage {
+			t.Fatalf("Run(%q) on host = %d; want %d (stderr: %q)", args, code, ExitUsage, errOut.String())
+		}
+		if !strings.Contains(errOut.String(), "container") {
+			t.Fatalf("Run(%q) on host stderr = %q; want container message", args, errOut.String())
 		}
 	}
 }
