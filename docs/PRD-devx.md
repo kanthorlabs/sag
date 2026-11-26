@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 7 |
+| Status | Revision 8 |
 | Date | 2026-11-26 |
 | Base | `docs/PRD.md` revision 16, tag `sag-layer-6` |
 
@@ -948,7 +948,7 @@ devx has no uninstall command. Do these steps in this order to remove the devx s
 
 1. Run `sag credential delete <name>` for each resource in `sag credential list`.
 2. Run `sag service stop`. When `tailscale serve status --json` shows the SAG rule of section 5.8, run `tailscale serve --tcp 8443 off`. On Ubuntu, when bootstrap set the operator, run `sudo tailscale set --operator=`.
-3. On macOS, run `launchctl bootout gui/$(id -u)/net.kanthorlabs.sag`. Then remove `~/Library/LaunchAgents/net.kanthorlabs.sag.plist`.
+3. On macOS, run `launchctl bootout gui/$(id -u)/net.kanthorlabs.sag`. Then remove `~/Library/LaunchAgents/net.kanthorlabs.sag.plist` and `~/Library/Logs/sag/`.
 4. On Ubuntu, remove `~/.config/containers/systemd/sag.container`. Then run `systemctl --user daemon-reload`.
 5. Run `podman rm sag` and `podman volume rm sag-state`. This step deletes the audit log and the approvals.
 6. Run `podman secret rm sag-master-key sag-tls-cert sag-tls-key`. If `sag-aws-credentials` exists, remove it.
@@ -1069,7 +1069,7 @@ Both phases:
 - Fake `tailscale`: a test file `tailscale` in a test `PATH` directory. It answers `ip -4`, `debug prefs`, `serve status --json`, `serve`, and `set` from test files, and records its arguments. A `serve` call stores the rule, and the next `serve status --json` reports it.
 - Each DX criterion except DX-AC50 and DX-AC52 runs without a `tailscale` command in `PATH`. Only DX-AC52 runs the real `tailscale`.
 - DX-AC44 runs with Node 24. DX-AC49 runs with `go test`.
-- The build tag `devxtest` enables `SAG_TEST_PINS`, `SAG_TEST_IMAGE`, `SAG_TEST_CERT_DAYS`, `SAG_TEST_ABSENT`, `SAG_TEST_STOP_BEFORE_INSTALL`, and the failure hooks of DX-AC16, DX-AC22, DX-AC29, and DX-AC37. The product binary has no such path.
+- The build tag `devxtest` enables `SAG_TEST_PINS`, `SAG_TEST_IMAGE`, `SAG_TEST_CERT_DAYS`, `SAG_TEST_ABSENT`, `SAG_TEST_STOP_BEFORE_INSTALL`, `SAG_TEST_REGISTRY`, and the failure hooks of DX-AC16, DX-AC22, DX-AC29, and DX-AC37. The product binary has no such path.
 - Test pins hold a `release` item that a local HTTP server serves. In phase B, they also hold the apt package `hello`.
 - The test-pin criteria and DX-AC5 run separately from the other criteria.
 - LocalStack runs as a container pinned by digest. The test sets `AWS_ENDPOINT_URL_SECRETS_MANAGER` in the container environment. Build step 7 confirms the LocalStack image and its access rules.
@@ -1082,10 +1082,12 @@ Phase A, macOS development machine:
 - No criterion removes Podman, restarts `podman-machine-default`, or starts a second Podman machine.
 - Preconditions: `podman-machine-default` is the only Podman machine, and it runs. No container `sag` exists, and port 8443 is free. Remove the container of the old development scripts first. When a precondition fails, the run exits 1 and changes nothing.
 - The binary is a test build. `SAG_TEST_IMAGE` names a local image, because the `main` image does not exist before the merge.
+- DX-AC30 sets `SAG_TEST_REGISTRY` to a local registry container. The test build pulls `<registry>/kanthorlabs/sag@<digest>` from it, with TLS verification off for that registry only. The test does not change the configuration of `podman-machine-default`. The first real release proves the pull from `docker.io`.
 - The PostgreSQL container of DX-AC35 uses a free host port.
-- DX-AC34, DX-AC35, and DX-AC52 change the user state. Section 15 removes it.
+- In phase A, each DX criterion changes the user state. Section 15 removes it.
 - DX-AC52 runs the real `tailscale serve` and never `tailscale funnel`. Before DX-AC52, save the output of `tailscale serve status --json`. After the section 15 teardown, the serve status equals the saved output.
 - Real-harness criteria: DX-AC47, DX-AC48, and the default path case of DX-AC39. They change the harness files of the operator.
+- The real-harness criteria use the default Claude Code profile: `~/.claude` and `~/.claude.json`. When `CLAUDE_CONFIG_DIR` is set, the run exits 1 with `unset CLAUDE_CONFIG_DIR; this suite uses the default profile` and changes nothing. Precondition: `env -u CLAUDE_CONFIG_DIR claude -p "ok"` works.
 - Run the real-harness criteria from a terminal outside a Claude Code session, because a Claude Code session rewrites `.claude.json` (R24). The run refuses to start while a `claude` process runs.
 - Before the real-harness criteria, copy `~/.claude.json`, `~/.claude/settings.json`, `~/.pi/agent/mcp.json`, and the shell profile. After the section 15 teardown, compare only the SAG entries of each file with its copy.
 - The SAG entries are `mcpServers.sag`, `env.NODE_EXTRA_CA_CERTS`, the deny rules of section 12.7, and the lines of section 12.5. On a difference, the run exits 1 and keeps the copies.
