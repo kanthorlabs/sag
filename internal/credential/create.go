@@ -116,7 +116,7 @@ func applyCreate(ctx context.Context, opts CreateOptions, cred secret.Credential
 		"sag.kind":     opts.Kind,
 		"sag.role":     "connection",
 	}); err != nil {
-		return rollback(ctx, opts, snapshot, created, fmt.Errorf("put connection secret: %w", err))
+		return fmt.Errorf("put connection secret: %w", err)
 	}
 	created = append(created, connName)
 
@@ -153,11 +153,17 @@ func applyCreate(ctx context.Context, opts CreateOptions, cred secret.Credential
 }
 
 func rollback(ctx context.Context, opts CreateOptions, snapshot []byte, created []string, cause error) error {
-	_ = restoreYAML(opts.CfgDir, snapshot)
-	for _, name := range created {
-		_ = opts.Storage.Delete(ctx, name)
+	if err := restoreYAML(opts.CfgDir, snapshot); err != nil {
+		fmt.Fprintf(opts.Err, "warn rollback: restore YAML: %v\n", err)
 	}
-	_ = opts.ServiceStart(ctx, opts.Out)
+	for _, name := range created {
+		if err := opts.Storage.Delete(ctx, name); err != nil {
+			fmt.Fprintf(opts.Err, "warn rollback: delete %s: %v\n", name, err)
+		}
+	}
+	if err := opts.ServiceStart(ctx, opts.Out); err != nil {
+		fmt.Fprintf(opts.Err, "warn rollback: service start: %v\n", err)
+	}
 	return cause
 }
 
@@ -167,9 +173,6 @@ func readValue(opts CreateOptions, credPrompt string) (secret.Credential, error)
 			return secret.Credential{}, fmt.Errorf("--stdin: standard input is a terminal: %w", prompt.ErrNoTerminal)
 		}
 		return readStdin(opts.StdinReader, false)
-	}
-	if !opts.IsStdinTerm {
-		return secret.Credential{}, fmt.Errorf("piped input requires --stdin flag: %w", prompt.ErrNoTerminal)
 	}
 	tty, err := opts.OpenTTY()
 	if err != nil {
