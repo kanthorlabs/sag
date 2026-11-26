@@ -21,11 +21,11 @@ func newCleanTeardownFake(home, uid, cfgDir string) (*fakeRunner, dxh.TeardownCo
 	r.set("rm -f "+home+"/Library/LaunchAgents/net.kanthorlabs.sag.plist", nil, nil)
 	r.set("rm -rf "+home+"/Library/Logs/sag", nil, nil)
 	r.set("podman rm -f sag", nil, nil)
-	r.set("podman volume ls --filter name=sag-state --format {{.Name}}", nil, nil)
-	r.set("podman secret ls --filter name=sag-master-key --format {{.Name}}", nil, nil)
-	r.set("podman secret ls --filter name=sag-tls-cert --format {{.Name}}", nil, nil)
-	r.set("podman secret ls --filter name=sag-tls-key --format {{.Name}}", nil, nil)
-	r.set("podman secret ls --filter name=sag-aws-credentials --format {{.Name}}", nil, nil)
+	r.set("podman volume ls --filter name=^sag-state$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-master-key$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-tls-cert$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-tls-key$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-aws-credentials$ --format {{.Name}}", nil, nil)
 	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", nil, nil)
 	if cfgDir != "" {
 		r.set("rm -rf "+cfgDir, nil, nil)
@@ -52,11 +52,11 @@ func TestTeardownOrder(t *testing.T) {
 		{"rm", "-f", "/home/u/Library/LaunchAgents/net.kanthorlabs.sag.plist"},
 		{"rm", "-rf", "/home/u/Library/Logs/sag"},
 		{"podman", "rm", "-f", "sag"},
-		{"podman", "volume", "ls", "--filter", "name=sag-state", "--format", "{{.Name}}"},
-		{"podman", "secret", "ls", "--filter", "name=sag-master-key", "--format", "{{.Name}}"},
-		{"podman", "secret", "ls", "--filter", "name=sag-tls-cert", "--format", "{{.Name}}"},
-		{"podman", "secret", "ls", "--filter", "name=sag-tls-key", "--format", "{{.Name}}"},
-		{"podman", "secret", "ls", "--filter", "name=sag-aws-credentials", "--format", "{{.Name}}"},
+		{"podman", "volume", "ls", "--filter", "name=^sag-state$", "--format", "{{.Name}}"},
+		{"podman", "secret", "ls", "--filter", "name=^sag-master-key$", "--format", "{{.Name}}"},
+		{"podman", "secret", "ls", "--filter", "name=^sag-tls-cert$", "--format", "{{.Name}}"},
+		{"podman", "secret", "ls", "--filter", "name=^sag-tls-key$", "--format", "{{.Name}}"},
+		{"podman", "secret", "ls", "--filter", "name=^sag-aws-credentials$", "--format", "{{.Name}}"},
 		{"podman", "image", "ls", "--filter", "reference=docker.io/kanthorlabs/sag", "--format", "{{.Repository}}:{{.Tag}}"},
 		{"rm", "-rf", "/home/u/.config/sag"},
 	}
@@ -178,9 +178,9 @@ func TestTeardownSkipsBootoutWhenAgentAbsent(t *testing.T) {
 
 func TestTeardownRemovesFiles(t *testing.T) {
 	r, cfg := newCleanTeardownFake("/home/u", "1000", "/home/u/.config/sag")
-	r.set("podman volume ls --filter name=sag-state --format {{.Name}}", []byte("sag-state\n"), nil)
+	r.set("podman volume ls --filter name=^sag-state$ --format {{.Name}}", []byte("sag-state\n"), nil)
 	r.set("podman volume rm sag-state", nil, nil)
-	r.set("podman secret ls --filter name=sag-aws-credentials --format {{.Name}}", []byte("sag-aws-credentials\n"), nil)
+	r.set("podman secret ls --filter name=^sag-aws-credentials$ --format {{.Name}}", []byte("sag-aws-credentials\n"), nil)
 	r.set("podman secret rm sag-aws-credentials", nil, nil)
 
 	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
@@ -217,8 +217,8 @@ func TestTeardownRunsEachStepAfterAFailure(t *testing.T) {
 	}
 
 	subsequentCalls := []string{
-		"podman volume ls --filter name=sag-state --format {{.Name}}",
-		"podman secret ls --filter name=sag-master-key --format {{.Name}}",
+		"podman volume ls --filter name=^sag-state$ --format {{.Name}}",
+		"podman secret ls --filter name=^sag-master-key$ --format {{.Name}}",
 		"podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}",
 		"rm -rf /home/u/.config/sag",
 	}
@@ -309,4 +309,23 @@ func callsContaining(calls [][]string, text string) [][]string {
 		}
 	}
 	return out
+}
+
+func TestTeardownRefusesUnsafePaths(t *testing.T) {
+	cases := []dxh.TeardownConfig{
+		{Home: "", UID: "1000"},
+		{Home: "/", UID: "1000"},
+		{Home: "relative/home", UID: "1000"},
+		{Home: "/home/u", UID: "1000", CfgDir: "/home/u"},
+		{Home: "/home/u", UID: "1000", CfgDir: "relative/sag"},
+	}
+	for _, cfg := range cases {
+		r := newFake()
+		if err := dxh.Teardown(context.Background(), r, cfg); err == nil {
+			t.Errorf("Teardown(%+v) = nil, want refusal", cfg)
+		}
+		if len(r.calls) != 0 {
+			t.Errorf("Teardown(%+v) ran %v, want no call", cfg, r.calls)
+		}
+	}
 }

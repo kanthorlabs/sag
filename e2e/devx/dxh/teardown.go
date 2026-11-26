@@ -3,6 +3,7 @@ package dxh
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -13,6 +14,9 @@ type TeardownConfig struct {
 }
 
 func Teardown(ctx context.Context, r Runner, cfg TeardownConfig) error {
+	if err := checkTeardownPaths(cfg); err != nil {
+		return err
+	}
 	var errs []string
 
 	if err := removeResourceSecrets(ctx, r); err != nil {
@@ -132,8 +136,18 @@ func macOSBootout(ctx context.Context, r Runner, uid string) error {
 	return err
 }
 
+func checkTeardownPaths(cfg TeardownConfig) error {
+	if !filepath.IsAbs(cfg.Home) || filepath.Clean(cfg.Home) == "/" {
+		return fmt.Errorf("teardown: home %q is not an absolute user directory", cfg.Home)
+	}
+	if cfg.CfgDir != "" && (!filepath.IsAbs(cfg.CfgDir) || filepath.Base(cfg.CfgDir) != "sag") {
+		return fmt.Errorf("teardown: config directory %q is not an absolute sag directory", cfg.CfgDir)
+	}
+	return nil
+}
+
 func removeVolumeIfPresent(ctx context.Context, r Runner, name string) error {
-	out, err := r.Output(ctx, "podman", "volume", "ls", "--filter", "name="+name, "--format", "{{.Name}}")
+	out, err := r.Output(ctx, "podman", "volume", "ls", "--filter", "name=^"+name+"$", "--format", "{{.Name}}")
 	if err != nil {
 		return err
 	}
@@ -145,7 +159,7 @@ func removeVolumeIfPresent(ctx context.Context, r Runner, name string) error {
 }
 
 func removeSecretIfPresent(ctx context.Context, r Runner, name string) error {
-	out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "name="+name, "--format", "{{.Name}}")
+	out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "name=^"+name+"$", "--format", "{{.Name}}")
 	if err != nil {
 		return err
 	}

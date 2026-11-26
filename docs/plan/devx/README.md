@@ -163,7 +163,8 @@ Podman store (ruling Q36):
 
 Child environment:
 
-- `dxh` builds the environment of each child process from an allow list: `HOME`, the test `PATH`, `TMPDIR`, `USER`, `LANG`, and each `SAG_TEST_*` variable.
+- `dxh` builds the environment of each child process under test (`sag`, `claude`, `pi`, `node`, and the programs that they start) from an allow list: `HOME`, the test `PATH`, `TMPDIR`, `USER`, `LANG`, and each `SAG_TEST_*` variable.
+- The harness commands of the preconditions and the teardown (`podman`, `launchctl`, `rm`, `git`) keep the environment of the run, so that they reach the same Podman machine.
 - No other variable passes. This removes `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, `NODE_EXTRA_CA_CERTS`, `XDG_CONFIG_HOME`, `ZDOTDIR`, `SHELL`, and each `CLAUDE*` variable.
 - A criterion test sets a variable only when its criterion states it, for example `SHELL=/bin/bash` for DX-AC41.
 - In the suites `Main`, `Pins`, and `Mac`, `dxh` sets `CLAUDE_CONFIG_DIR` and `PI_CODING_AGENT_DIR` to new test directories for each group.

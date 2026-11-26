@@ -2,6 +2,7 @@ package dxh_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,8 +10,20 @@ import (
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
 
+func holdRunLock(t *testing.T, devDir string) {
+	t.Helper()
+	lock := filepath.Join(devDir, "claims", "devx-e2e.lock")
+	if err := os.MkdirAll(lock, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lock, "owner"), []byte(fmt.Sprintf("%d test", os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSuiteEntryCreatesAndRemovesMarker(t *testing.T) {
 	dir := t.TempDir()
+	holdRunLock(t, dir)
 	markerFile := filepath.Join(dir, "sub", "devx-run-active")
 
 	r := goodMachineRunner()
@@ -32,7 +45,11 @@ func TestSuiteEntryCreatesAndRemovesMarker(t *testing.T) {
 
 func TestSuiteEntryWithExistingMarkerPreconditionsPass(t *testing.T) {
 	dir := t.TempDir()
-	markerFile := filepath.Join(dir, "devx-run-active")
+	holdRunLock(t, dir)
+	markerFile := filepath.Join(dir, "local", "devx-run-active")
+	if err := os.MkdirAll(filepath.Dir(markerFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := os.WriteFile(markerFile, nil, 0o600); err != nil {
 		t.Fatalf("write marker: %v", err)

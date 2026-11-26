@@ -22,6 +22,10 @@ func SuiteEntry(t *testing.T, r Runner, pcfg PreconditionConfig, tcfg TeardownCo
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
+	if err := CheckRunLock(filepath.Dir(filepath.Dir(markerFile))); err != nil {
+		t.Fatalf("suite entry: %v", err)
+	}
+
 	if _, err := os.Stat(markerFile); err == nil {
 		pcfg.Marker = true
 	}
