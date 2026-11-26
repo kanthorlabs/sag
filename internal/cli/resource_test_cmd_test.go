@@ -59,7 +59,7 @@ func withPreflightAdapter(t *testing.T, a *preflightAdapter) {
 
 func runResourceTest(args ...string) (int, string, string) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
-	std := IO{In: strings.NewReader(""), Out: out, Err: errOut, IsTerminal: func(any) bool { return false }}
+	std := IO{In: strings.NewReader(""), Out: out, Err: errOut, IsTerminal: func(any) bool { return false }, Mode: ModeContainer}
 	code := Run(append([]string{"resource", "test"}, args...), std)
 	return code, out.String(), errOut.String()
 }

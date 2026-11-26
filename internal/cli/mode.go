@@ -1,5 +1,10 @@
 package cli
 
+import (
+	"fmt"
+	"os"
+)
+
 type Mode int
 
 const (
@@ -17,13 +22,29 @@ const (
 	kindInternal      commandKind = 3
 )
 
+var uid = os.Getuid
+
 func resolveMode(m Mode) Mode {
-	if m == ModeUnset {
+	if m != ModeUnset {
+		return m
+	}
+	if _, err := os.Stat("/run/.containerenv"); err == nil {
 		return ModeContainer
 	}
-	return m
+	return ModeHost
 }
 
 func commandGuard(m Mode, c command, std IO) (int, bool) {
+	if m != ModeHost {
+		return 0, false
+	}
+	if c.kind == kindInternal {
+		fmt.Fprintln(std.Err, "sag: command runs only in the container")
+		return ExitUsage, true
+	}
+	if c.kind == kindHostOnly && uid() == 0 {
+		fmt.Fprintln(std.Err, "sag: host commands refuse root")
+		return ExitFailure, true
+	}
 	return 0, false
 }

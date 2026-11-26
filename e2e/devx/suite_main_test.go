@@ -56,7 +56,10 @@ func TestDevxMain(t *testing.T) {
 
 	dxh.RunGroup(t, ctx, r, tcfg, "noterm", nil, func(t *testing.T) {})
 
-	dxh.RunGroup(t, ctx, r, tcfg, "guards", nil, func(t *testing.T) {})
+	dxh.RunGroup(t, ctx, r, tcfg, "guards", nil, func(t *testing.T) {
+		testDXAC33_ProductBinary(t, ctx, groupDir, binDir)
+		testDXAC36_HostGuards(t, ctx, groupDir, binDir)
+	})
 
 	dxh.RunGroup(t, ctx, r, tcfg, "service", nil, func(t *testing.T) {})
 }
