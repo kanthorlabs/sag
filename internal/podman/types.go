@@ -1,6 +1,10 @@
 package podman
 
-import "time"
+import (
+	"context"
+	"io"
+	"time"
+)
 
 type SecretInfo struct {
 	ID        string
@@ -25,4 +29,8 @@ type ContainerSecret struct {
 	UID  int
 	GID  int
 	Mode uint32
+}
+
+type Command interface {
+	Run(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error)
 }
