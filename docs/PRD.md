@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 16 |
+| Status | Revision 17 |
 | Date | 2026-11-26 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
@@ -19,7 +19,7 @@ SAG is a gateway between agents and resources. SAG runs as one container service
 
 | ID | Goal |
 |---|---|
-| G1 | Credentials stay inside the SAG container. An agent never sees, receives, or exfiltrates a credential through SAG. |
+| G1 | Credentials stay inside the SAG container or in a SecureStorage backend. On a developer machine, section 2.3 of `docs/PRD-devx.md` limits G1. An agent never sees, receives, or exfiltrates a credential through SAG. |
 | G2 | SAG guarantees read-only access by itself. SAG assumes that every configured credential has write privileges. |
 | G3 | Each agent has its own JWT identity. Each resource lists the agent identities that can use it. SAG denies by default. |
 | G4 | SAG writes one audit record for each tool call, allowed or denied, and for each authentication failure. SAG returns no data without an audit record. |
@@ -39,7 +39,7 @@ SAG is a gateway between agents and resources. SAG runs as one container service
 
 | Persona | Trust | Responsibilities |
 |---|---|---|
-| Operator (Ulrich) | Trusted. Has shell access to the container host. | Runs the container. Creates Podman secrets. Writes `sag.yaml`. Issues JWTs. Approves risky extensions. Reads the audit log. |
+| Operator (Ulrich) | Trusted. Has shell access to the container host. | Runs the container. Creates Podman secrets. Writes `sag.yaml`. Issues JWTs. Approves risky extensions. Reads the audit log. The operator uses the devx host commands to create secrets, write `sag.yaml`, issue JWTs, approve extensions, set up agent harnesses, and read the audit log. |
 | Agent (Claude Code, other MCP clients) | Untrusted. Has network access to the SAG endpoint only. | Lists permitted resources. Reads schema. Sends read queries. Receives data only. |
 | Adapter author (Ulrich as developer) | Trusted | Adds a resource type through the adapter interface and the read-only contract. |
 
@@ -66,6 +66,9 @@ Constraints that this decision imposes:
 | ULID | `github.com/oklog/ulid/v2` |
 | YAML | `go.yaml.in/yaml/v3` |
 | HTTP, TLS, JSON, logs | Go standard library |
+| AWS configuration (SecureStorage AWS backend) | `github.com/aws/aws-sdk-go-v2/config` |
+| AWS Secrets Manager (SecureStorage AWS backend) | `github.com/aws/aws-sdk-go-v2/service/secretsmanager` |
+| Hidden terminal read (section 7.3 of `docs/PRD-devx.md`) | `golang.org/x/term` |
 
 - v1.1 adds `github.com/go-sql-driver/mysql` and `github.com/pingcap/tidb/pkg/parser` at one pinned commit.
 
@@ -100,14 +103,15 @@ Container constraints:
 | State volume | `/var/lib/sag`, owner UID 65532, mode 0700, mount option `noexec`. Contains `audit/` and `approvals/`. Except for `/dev/shm` (`noexec`), it is the only writable path. No writable path permits execution. |
 | Secrets | Podman secrets, `type=mount`, target `/run/secrets/<name>`, `uid=65532`, `mode=0400`. |
 | Unit | A Quadlet file `deploy/sag.container` for systemd. `Pull=never`, `Restart=on-failure`, `RestartSec=10`. |
+| Logs | The log flags of section 13 of `docs/PRD-devx.md`: `--log-driver k8s-file --log-opt max-size=10mb`. |
 
 Operational rules:
 
-- The daemon reads `sag.yaml` and all secrets at start. A change to `sag.yaml` or to a secret needs a container restart in v1.
+- The daemon reads `sag.yaml` and all secrets at start. This rule applies to `secret:` references. Section 11.4 of `docs/PRD-devx.md` applies to `aws-sm:` references. A change to `sag.yaml` or to a secret needs a container restart in v1.
 - The daemon removes each `PG*` environment variable at start.
 - The daemon refuses to start if a secret file has an owner other than UID 65532 or a mode other than exactly 0400.
 - The owner and mode rule covers the regular files of the SAG secrets in `/run/secrets`. A directory that Podman adds to `/run/secrets` from `mounts.conf`, for example `rhsm`, is outside SAG control.
-- The operator runs CLI commands inside the container with `podman exec`. No CLI function is reachable through MCP.
+- The operator runs CLI commands inside the container with `podman exec`. This rule also allows the host forms of section 1.2 of `docs/PRD-devx.md`. No CLI function is reachable through MCP.
 - `GET /healthz` returns `200` with an empty body and needs no token. All other paths need a JWT.
 
 Network constraints:
@@ -116,6 +120,7 @@ Network constraints:
 - Remote agents reach SAG only through the Tailscale VPN.
 - Tailscale ACLs allow only agent hosts to reach the SAG port.
 - An agent on the container host uses `127.0.0.1`.
+- devx publishes `127.0.0.1:8443` only. On a host with Tailscale, `tailscale serve --tcp` forwards TCP port 8443 of the Tailscale address to `127.0.0.1:8443` (section 5.8 of `docs/PRD-devx.md`). This forward is the devx form of the Tailscale publish.
 
 ### 6.1 Endpoint certificate
 
@@ -123,8 +128,9 @@ The operator supplies the certificate and the key as the Podman secrets `sag-tls
 
 | Environment | Certificate source |
 |---|---|
-| Server reached over Tailscale | `tailscale cert <machine>.<tailnet>.ts.net` on the host. The operator creates the Podman secrets from the output files. Before the certificate expires, the operator runs the command again, replaces the secrets, and restarts the container. |
-| macOS development machine | mkcert. Run `mkcert -install` one time. Then run `mkcert localhost 127.0.0.1 <hostname>` and create the Podman secrets from the output files. |
+| Server reached over Tailscale | Server install only. `tailscale cert <machine>.<tailnet>.ts.net` on the host. The operator creates the Podman secrets from the output files. Before the certificate expires, the operator runs the command again, replaces the secrets, and restarts the container. |
+| macOS and Ubuntu development machine | `sag bootstrap` (section 5.7 of `docs/PRD-devx.md`). Its CA has no name constraints extension, and no file holds the CA key. The server certificate names `localhost`, `127.0.0.1`, `::1`, and the Tailscale address of section 5.8 of `docs/PRD-devx.md`. `NODE_EXTRA_CA_CERTS` points to `<cfg>/ca.pem` through section 12.5 of `docs/PRD-devx.md`. |
+| Manual mkcert setup | mkcert. Run `mkcert -install` one time. Then run `mkcert localhost 127.0.0.1 <hostname>` and create the Podman secrets from the output files. |
 
 Node-based agent clients, for example Claude Code, do not read the macOS trust store. With a mkcert certificate, start the client with `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`.
 
@@ -137,6 +143,7 @@ Node-based agent clients, for example Claude Code, do not read the macOS trust s
 - The operator is the only person with shell access to the container host as the Podman user.
 - The SAG port is reachable only from `127.0.0.1` and from the tailnet.
 - Target databases belong to other teams or companies. Their TLS support is unknown. Some DSNs point to primary servers.
+- On a developer machine, the agent runs on the container host in the account of the operator. Section 2 of `docs/PRD-devx.md` applies.
 
 ### 7.2 Assets
 
@@ -161,15 +168,16 @@ Node-based agent clients, for example Claude Code, do not read the macOS trust s
 | T5 | Network attacker between SAG and a database | Reads and changes network traffic. Runs a false database server. |
 | T6 | Hostile data in a resource (prompt injection in rows) | Puts instructions into tool output. |
 | T7 | Database owner who adds objects after setup (extensions, views, functions) | Changes the code that a read query can reach. |
+| T8 | AI agent with a shell in the OS account of the operator, for example Claude Code or pi | Runs each command that the operator can run. Reads and writes each file of the operator. Opens a pseudo-terminal with `script` or `expect`. Section 2.2 of `docs/PRD-devx.md` applies. |
 
 ### 7.4 Trust boundaries
 
 | ID | Boundary | Rule |
 |---|---|---|
 | TB1 | Agent ↔ SAG endpoint | All input is untrusted. SAG terminates TLS, verifies the JWT, authorizes, validates, limits, and audits each request. |
-| TB2 | Container ↔ container host | Secrets, master key, config, and approvals enter the container only through Podman secrets and mounts that the operator creates. |
+| TB2 | Container ↔ container host | Secrets, master key, config, and approvals enter the container only through Podman secrets and mounts that the operator creates. On a developer machine, the operator path is the devx host commands. Secrets also enter through the AWS backend as a secret source (section 11 of `docs/PRD-devx.md`). |
 | TB3 | SAG ↔ resource | TLS `verify-full` by default. SAG treats the credential as write-capable and applies the read-only contract (section 8) to each request. |
-| TB4 | Operator ↔ admin functions | JWT issue and extension approval are CLI commands inside the container. They need a terminal and the master key. |
+| TB4 | Operator ↔ admin functions | JWT issue and extension approval are CLI commands inside the container. They need a terminal and the master key. On a developer machine, the devx host commands are the operator path. |
 
 ### 7.5 Mitigations
 
@@ -192,14 +200,16 @@ Node-based agent clients, for example Claude Code, do not read the macOS trust s
 - **R5.** An agent can read all data that the credential can read, except the credential catalogs. A view that the database owner created over a credential catalog exposes that catalog. Column redaction is not a security boundary (section 10.4).
 - **R6.** An agent can read the database user, the port, and server settings through SQL. SAG keeps only the password and the DSN text secret.
 - **R7.** Read queries on a primary server use its resources up to the limits in section 10.1.
-- **R8.** On the development machine, the mkcert root CA key can sign a certificate for any host name, and that machine trusts it. This applies to development only. The mkcert root CA is never installed on a server or on an agent host outside development.
+- **R8.** This risk applies only to a manual mkcert setup. On the development machine, the mkcert root CA key can sign a certificate for any host name, and that machine trusts it. This applies to development only. The mkcert root CA is never installed on a server or on an agent host outside development.
 - **R9.** A risky object that a database owner adds stays usable for up to one `preflight.recheck_interval`, until the next preflight re-check.
 - **R10.** Audit growth has no limit. One agent can fill the state volume with audit records, and then each `tools/call` returns `internal`. The operator monitors the free space of the state volume.
+- **R11 to R28.** The residual risks R11 to R28 of section 18 of `docs/PRD-devx.md` apply.
 
 Operator guidance for Claude Code:
 
 - Register SAG with `--scope user`, or use `${SAG_TOKEN}` expansion in `.mcp.json`. Do not commit a literal JWT.
 - Issue one JWT for each agent identity. Do not share one JWT between agents.
+- On a developer machine, `sag agent setup` writes the JWT into the user-level MCP configuration file of the harness.
 
 ## 8. Read-only enforcement
 
@@ -374,13 +384,13 @@ SAG runs preflight at `sag resource test <name>` and at daemon start for each re
 
 Preflight runs on its own connection outside the request pool. Its first statement in the transaction is `SELECT pg_catalog.set_config('search_path', 'pg_catalog', true)`.
 
-Refusal hint text: `resource <name> has risky objects <list>; to approve, run on the host: podman exec -it sag sag extension approve <name>`.
+Refusal hint text: `resource <name> has risky objects <list>; to approve, run: sag extension approve <name>`.
 
 ### 9.2 Extension approval
 
 An approval accepts the risk of the listed objects for one resource. An approval does not turn off a control. C1 still rejects each function and operator outside `pg_catalog`.
 
-Command: `podman exec -it sag sag extension approve <resource>`.
+Command: `sag extension approve <resource>`.
 
 Flow:
 
@@ -398,7 +408,7 @@ Rules:
 
 - Preflight accepts an approval only with a valid `mac` and a fingerprint equal to the current one.
 - A new risky object, a version change, or a change of the target fields makes the approval invalid. Preflight then refuses the resource.
-- `sag extension revoke <resource>` writes a revoke tombstone `/var/lib/sag/approvals/<resource>.revoked.json`, then deletes the approval record. The tombstone holds the resource name and the revoke time. Its `mac` is HMAC-SHA-256 with the approval key, so the command needs the master key. The daemon reads the record only at a preflight run. A served resource stays served until the next re-check or a daemon restart. The command prints this fact.
+- `sag extension revoke <resource>` writes a revoke tombstone `/var/lib/sag/approvals/<resource>.revoked.json`, then deletes the approval record. The command exits 0 when no approval record exists, after it writes the tombstone. The tombstone holds the resource name and the revoke time. Its `mac` is HMAC-SHA-256 with the approval key, so the command needs the master key. The daemon reads the record only at a preflight run. A served resource stays served until the next re-check or a daemon restart. The command prints this fact.
 - Preflight refuses a record with an `approved_at` that is not after the tombstone time. A new approval after the revoke is valid.
 - An approval record is valid for one year after `approved_at`. Preflight refuses an expired record with the check detail `approval record expired: <list>`.
 - The approvals directory must be a directory, not a symbolic link, with mode 0700 and the process user as owner. Otherwise preflight refuses the risky objects.
@@ -456,7 +466,7 @@ Value encoding: `NULL` is `null`. Integers inside ±(2^53 − 1) are JSON number
 
 - An error message to the agent holds fixed text only. It never holds agent text or driver text.
 - A rejected statement returns `statement rejected: <rule>`, `statement rejected: <rule>:<detail>`, or `statement rejected: <Node.Field>`. A detail comes from a closed set and never from agent text: the node type for `statement` and `node` (`statement:InsertStmt`), the limit for `depth` (`depth:500`), and the count for `statement_count` (`statement_count:2`). Names that the agent writes stay out of the message: relations, functions, operators, schemas, EXPLAIN options, and field names. The full reason with the name goes to the audit `reason` only.
-- Before SAG logs a line or appends an audit record, SAG removes every exact occurrence of each loaded secret value and of its password part. The scrub applies to log text, error causes, and the audit fields `sql` and `reason`. The scrub does not apply to the agent message.
+- Before SAG logs a line or appends an audit record, SAG removes every exact occurrence of each loaded secret value and of its password part. The scrubber adds a credential at the time that `Load` returns it. The scrubber also holds the value of the `storage.aws.credentials` file. The scrub applies to log text, error causes, and the audit fields `sql` and `reason`. The scrub does not apply to the agent message.
 - SAG never puts a DSN string into an error or a log line.
 - Accepted limit: an MCP SDK protocol error before dispatch can repeat text of the same request. Examples: `tools/call` `params` that do not decode (`-32602` with the `params` text); `prompts/get` (`unknown prompt "<name>"`); `resources/read` (`data.uri`); an unknown method (the method name, HTTP `400` or `-32601`); an `Mcp-Name` or `Mcp-Method` header that differs from the body (`-32020` with both values); an unsupported protocol version (`-32022` with `data.requested`). Such a request writes no audit record (section 10.5 exception). The scrubber does not run on the message. The message holds only text of the same request and no resource data, so it is no oracle.
 - For a connect error, the agent receives the code `resource_unavailable`, a fixed message, and the `request_id`. The scrubbed driver error goes to the daemon log only.
@@ -481,7 +491,7 @@ SAG appends one JSON line to `/var/lib/sag/audit/audit-YYYY-MM-DD.jsonl`, mode 0
 |---|---|
 | `ts` | RFC 3339 time with milliseconds, UTC |
 | `request_id` | ULID, also returned to the agent |
-| `remote_addr` | Client address and port |
+| `remote_addr` | Client address and port. For a tailnet client through `tailscale serve`, `remote_addr` holds `127.0.0.1`. |
 | `sub`, `jti` | JWT claims, or `null` on authentication failure |
 | `auth_cause` | JWT refusal cause, or `null` |
 | `resource`, `capability`, `operation` | Target of the request. `resource` and `operation` hold at most the first 63 bytes. |
@@ -505,7 +515,7 @@ Rules:
 ### 11.1 Master key
 
 - The master key is 32 random bytes, encoded as base64. It is the Podman secret `sag-master-key` at `/run/secrets/sag-master-key`.
-- The operator creates it on the host: `openssl rand -base64 32 | podman secret create sag-master-key -`.
+- On a developer machine, `sag bootstrap` creates the master key. On a server, the operator creates it on the host: `openssl rand -base64 32 | podman secret create sag-master-key -`.
 - The daemon refuses to start if the value does not decode to exactly 32 bytes.
 
 ### 11.2 JWT
@@ -535,10 +545,12 @@ Verification order:
 
 The response for each failure is HTTP `401` with `WWW-Authenticate: Bearer`. The cause goes to the audit log only.
 
-Issue command: `podman exec -it sag sag jwt generate <sub> [--name <display>]`.
+Issue command: `sag jwt generate <sub> [--name <display>]` on the host.
 
 - The command refuses to run without a terminal on standard output.
-- The command refuses a `sub` that is not in the `agents` list of at least one resource.
+- The host form exits 3 unless standard input and standard output are terminals, and has no `--json`.
+- The command refuses a `sub` that is not in the `agents` list of at least one resource. This refusal applies to `sag jwt generate` only.
+- Exception: the internal command `sag agent issue` issues a JWT to a pipe for `sag agent setup` (section 12.4 of `docs/PRD-devx.md`).
 - The command prints the JWT once. SAG stores no JWT.
 
 ### 11.3 Authorization
@@ -564,10 +576,10 @@ Issue command: `podman exec -it sag sag jwt generate <sub> [--name <display>]`.
 
 ### 12.1 Credentials
 
-- Credentials come only from Podman secrets, mounted as files at `/run/secrets/<name>` with `uid=65532` and `mode=0400`.
+- Credentials come from a SecureStorage backend (section 11 of `docs/PRD-devx.md`). The Podman backend mounts each secret as a file at `/run/secrets/<name>` with `uid=65532` and `mode=0400`.
 - `sag.yaml` references a secret with `secret:<name>`. It never contains a secret value.
 - The secret value for a PostgreSQL resource is a DSN URL with user, password, host, port, and database only, for example `postgres://app:<password>@db.example.net:5432/app`. Host, port, database, and user are inside the protected value.
-- The operator creates the secret on the host. The operator reads the DSN without echo: `read -rs DSN && printf '%s' "$DSN" | podman secret create sag-orders -`.
+- `sag credential create` replaces the manual steps below. For a manual setup, the operator creates the secret on the host. The operator reads the DSN without echo: `read -rs DSN && printf '%s' "$DSN" | podman secret create sag-orders -`.
 - The operator adds `Secret=sag-orders,type=mount,target=sag-orders,uid=65532,mode=0400` to the Quadlet file, runs `systemctl --user daemon-reload`, and restarts the service with `systemctl --user restart sag`.
 
 ### 12.2 Database TLS
@@ -585,7 +597,7 @@ Issue command: `podman exec -it sag sag jwt generate <sub> [--name <display>]`.
 
 ### 13.1 CLI (v1)
 
-All commands run inside the container with `podman exec`, except `sag version` and `sag config check`, which also run on macOS and Linux hosts.
+All commands run inside the container with `podman exec`, except `sag version` and `sag config check`, which also run on macOS and Linux hosts. The commands of section 1.1 of `docs/PRD-devx.md` run on the host.
 
 | Command | Function |
 |---|---|
@@ -596,6 +608,7 @@ All commands run inside the container with `podman exec`, except `sag version` a
 | `sag extension approve <resource>` | Approve risky objects (section 9.2). |
 | `sag extension revoke <resource>` | Delete an approval. |
 | `sag version` | Print the version. |
+| The commands of section 1.1 of `docs/PRD-devx.md` | The devx host commands, for example `sag bootstrap`, `sag credential create`, and `sag agent setup`. |
 
 ### 13.2 MCP endpoint
 
@@ -604,6 +617,8 @@ All commands run inside the container with `podman exec`, except `sag version` a
 - The server builds its tool list from the compile-time adapter registry. A new capability adds a new tool set. The tool name prefix is the capability name.
 
 Claude Code registration:
+
+On a developer machine, `sag agent setup` registers SAG (section 12 of `docs/PRD-devx.md`). A manual registration writes the entry into the MCP configuration file. It never passes the JWT as a command argument.
 
 ```
 claude mcp add --transport http --scope user sag https://sag.example.net:8443/mcp \
@@ -642,15 +657,19 @@ Rules:
 | `preflight.recheck_interval` | duration | no | From `10s` to `10m`. Default `10m`. No value turns off the re-check. |
 | `defaults.limits` | Limits | no | Changes the defaults in section 10.1, also `pool_size`. The only place for `max_concurrent_per_agent`. |
 | `defaults.redact.columns` | list of globs | no | Replaces the default patterns. |
-| `resources.<name>` | Resource | yes | `<name>` matches `^[a-z][a-z0-9-]{0,62}$`. |
+| `storage.aws.region` | string | no | AWS region of the SecureStorage AWS backend (section 11 of `docs/PRD-devx.md`). |
+| `storage.aws.credentials` | secret reference | no | `secret:<name>`. AWS credentials of the SecureStorage AWS backend. |
+| `resources.<name>` | Resource | no | `<name>` matches `^[a-z][a-z0-9-]{0,62}$`. `resources` can be empty. An absent `resources` key equals an empty map. |
 | `resources.<name>.kind` | string | yes | A registered adapter kind. v1: `postgres`. |
 | `resources.<name>.description` | string | no | Shown to agents. Max 500 characters. |
-| `resources.<name>.connection` | secret reference | yes | `secret:<name>`. |
+| `resources.<name>.connection` | secret reference | yes | `secret:<name>` or `aws-sm:` reference (section 11 of `docs/PRD-devx.md`). |
 | `resources.<name>.tls` | string | no | `verify-full` (default), `insecure-skip-verify`, `disable`. |
 | `resources.<name>.tls_ca` | secret reference | no | CA bundle in PEM. |
 | `resources.<name>.agents` | list of string | yes | JWT `sub` values. |
 | `resources.<name>.limits` | Limits | no | Values up to the hard maximums in section 10.1. `max_concurrent_per_agent` is rejected here. |
 | `resources.<name>.redact.columns` | list of globs | no | Adds to the default patterns. |
+
+AC1 keeps its five fixtures.
 
 The daemon rejects unknown keys. `sag.yaml` has no key that turns off a read-only control.
 
@@ -694,7 +713,7 @@ resources:
 
 ### 13.5 Quadlet file
 
-`deploy/sag.container` contains the container constraints in section 6, the port publish, the mounts, and one `Secret=` line for each Podman secret.
+`deploy/sag.container` contains the container constraints in section 6, the log keys of section 13 of `docs/PRD-devx.md`, the port publish, the mounts, and one `Secret=` line for each Podman secret.
 
 **Decision: the operator installs SAG as a Quadlet unit of the systemd user manager of the rootless Podman user.**
 
@@ -702,7 +721,7 @@ Install steps on a Linux host. Run each step as the Podman user of the service, 
 
 1. Build the image with `make image IMAGE=localhost/sag:latest`. The Quadlet file uses `Image=localhost/sag:latest`. Without `IMAGE`, `make image` builds `localhost/sag:e2e`.
 2. Create each secret: `sag-master-key` (section 11.1), `sag-tls-cert` and `sag-tls-key` (section 6.1), and each secret that `sag.yaml` references, for example `sag-orders` (section 12.1).
-3. Edit the `Secret=` lines of a copy of `deploy/sag.container` to the secrets of the `sag.yaml`. The committed file follows `deploy/dev/sag.yaml` and needs `sag-dev-pg-ca`, which only the development setup has. For an absent secret, Podman prints `no secret with name or id`. The unit does not start, and systemd tries again every 10 s. On a Tailscale host, also edit `PublishPort=` (section 6).
+3. Edit the `Secret=` lines of a copy of `deploy/sag.container` to the secrets of the `sag.yaml`. The committed file follows the golden input `deploy/dev/sag.yaml` and needs `sag-orders` and `sag-dev-pg-ca`. No devx command creates these secrets. For an absent secret, Podman prints `no secret with name or id`. The unit does not start, and systemd tries again every 10 s. On a Tailscale host, also edit `PublishPort=` (section 6).
 4. Put `sag.yaml` in `/etc/sag` with mode 0644: `sudo install -D -m 0644 sag.yaml /etc/sag/sag.yaml`. Container UID 65532 maps to a subordinate UID of the host, so the file needs read permission for other users. Do not move the file from a home directory: a file with the SELinux label `user_home_t` gives `Permission denied` in the container.
 5. Copy the unit: `mkdir -p ~/.config/containers/systemd && cp sag.container ~/.config/containers/systemd/`.
 6. Run `sudo loginctl enable-linger "$USER"`. Without linger, the user unit with `WantedBy=default.target` does not start at host start.
@@ -829,7 +848,7 @@ In scope:
 
 ### 15.2 Build order and acceptance criteria
 
-Do not start a step before every acceptance criterion of the previous step passes. Each criterion belongs to one step and has one executable check. "Suite" means the Go integration test suite with PostgreSQL containers.
+Do not start a step before every acceptance criterion of the previous step passes. Each criterion belongs to one step and has one executable check. "Suite" means the Go integration test suite with PostgreSQL containers. The devx build order is section 19 of `docs/PRD-devx.md`.
 
 **Step 1: config, secrets, JWT**
 
