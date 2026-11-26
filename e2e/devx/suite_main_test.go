@@ -15,6 +15,10 @@ import (
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
 
+var credentialTests = map[string]func(*testing.T, context.Context){}
+
+var certTests = map[string]func(*testing.T, context.Context){}
+
 func TestDevxMain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -82,6 +86,45 @@ func TestDevxMain(t *testing.T) {
 
 	dxh.RunGroup(t, ctx, r, tcfg, "port", tagImage, func(t *testing.T) {
 		t.Run("DXAC53_PortHolder", func(t *testing.T) { DXAC53_PortHolder(t, ctx) })
+	})
+
+	credentialOrder := []string{
+		"DXAC09_CreateCanary",
+		"DXAC10_CanaryNoLeak",
+		"DXAC11_CreateRejectsForm",
+		"DXAC12_ConnectionCheck",
+		"DXAC13_LoopbackWarn",
+		"DXAC14_CreateStdin",
+		"DXAC15_CreateSecretExists",
+		"DXAC16_CreateRollback",
+		"DXAC17_ListInspect",
+		"DXAC37_CreateTLSCA",
+	}
+	dxh.RunGroup(t, ctx, r, tcfg, "credential", tagImage, func(t *testing.T) {
+		for _, name := range credentialOrder {
+			name := name
+			fn := credentialTests[name]
+			t.Run(name, func(t *testing.T) {
+				if fn == nil {
+					t.Fatal("not implemented")
+				}
+				fn(t, ctx)
+			})
+		}
+	})
+
+	certOrder := []string{"DXAC29_CertRenewal"}
+	dxh.RunGroup(t, ctx, r, tcfg, "cert", tagImage, func(t *testing.T) {
+		for _, name := range certOrder {
+			name := name
+			fn := certTests[name]
+			t.Run(name, func(t *testing.T) {
+				if fn == nil {
+					t.Fatal("not implemented")
+				}
+				fn(t, ctx)
+			})
+		}
 	})
 }
 
