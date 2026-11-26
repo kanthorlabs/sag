@@ -98,7 +98,7 @@ SAG runs under the current OS user. devx creates no service account, no `sudoers
 
 - No devx command prints, logs, or writes a credential value. The value goes from `/dev/tty` or standard input to the backend, and to the container.
 - Thus a credential value does not reach the agent context through a `sag` command or through MCP.
-- An agent with a shell in the same account can read or delete each Podman secret with `podman` directly; the `sag credential delete` check stops only an agent that uses `sag`.
+- An agent with a shell in the same account can read or delete each Podman secret with `podman` directly. The `sag credential delete` check stops only an agent that uses `sag`.
 - `sag credential delete` reads the typed resource name from the controlling terminal. It stops an agent that runs `sag` through a tool without a terminal. It does not stop an agent that opens a pseudo-terminal or runs `podman secret rm`.
 - The same limit applies to the AWS backend. T8 reads the Podman secret `sag-aws-credentials` and then reads each AWS secret that this key can read.
 
