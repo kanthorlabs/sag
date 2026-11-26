@@ -54,7 +54,9 @@ func testDXAC33_ProductBinary(t *testing.T, ctx context.Context, groupDir, binDi
 			}
 		}
 
-		lsOut, err := exec.CommandContext(ctx, "git", "ls-files").Output()
+		lsCmd := exec.CommandContext(ctx, "git", "ls-files")
+		lsCmd.Dir = root
+		lsOut, err := lsCmd.Output()
 		if err != nil {
 			t.Fatalf("git ls-files: %v", err)
 		}
