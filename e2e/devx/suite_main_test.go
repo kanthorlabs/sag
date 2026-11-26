@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,29 +16,40 @@ import (
 )
 
 func TestDevxMain(t *testing.T) {
-	t.Run("harness", func(t *testing.T) {
-		t.Run("DX_Harness_Skeleton", testHarnessSkeleton)
-	})
-}
-
-func testHarnessSkeleton(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	r := dxh.NewRunner()
 	home := os.Getenv("HOME")
-	cfg := dxh.PreconditionConfig{
-		Home:              home,
-		UID:               fmt.Sprintf("%d", os.Getuid()),
+	tcfg := dxh.TeardownConfig{
+		Home:   home,
+		UID:    fmt.Sprintf("%d", os.Getuid()),
+		CfgDir: cfgDir(home),
+	}
+	pcfg := dxh.PreconditionConfig{
 		CfgDir:            cfgDir(home),
-		PortHeld:          isPortHeld("127.0.0.1:8443"),
-		CfgExists:         pathExists(cfgDir(home)),
-		LaunchAgentExists: pathExists(filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist")),
+		PortHeld:          func() bool { return isPortHeld("127.0.0.1:8443") },
+		CfgExists:         func() bool { return pathExists(cfgDir(home)) },
+		LaunchAgentExists: func() bool { return pathExists(filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist")) },
 	}
+	markerFile := filepath.Join("..", "..", ".dev", "local", "devx-run-active")
 
-	if err := dxh.CheckPreconditions(ctx, r, cfg); err != nil {
-		t.Fatalf("precondition: %v", err)
-	}
+	cleanup := dxh.SuiteEntry(t, r, pcfg, tcfg, markerFile)
+	defer cleanup()
+
+	groupDir := t.TempDir()
+	binDir := t.TempDir()
+
+	dxh.RunGroup(t, ctx, r, tcfg, "harness", nil, func(t *testing.T) {
+		t.Run("DX_Harness_Skeleton", func(t *testing.T) {
+			testHarnessSkeleton(t, ctx, groupDir, binDir)
+		})
+	})
+}
+
+func testHarnessSkeleton(t *testing.T, ctx context.Context, groupDir, binDir string) {
+	r := dxh.NewRunner()
+	home := os.Getenv("HOME")
 
 	uid := fmt.Sprintf("%d", os.Getuid())
 	if out, err := r.Output(ctx, "launchctl", "print", "gui/"+uid); err != nil {
@@ -59,12 +71,23 @@ func testHarnessSkeleton(t *testing.T) {
 		t.Fatalf("listener on 127.0.0.1:8443: %v", err)
 	}
 
-	if err := checkPTYRoundTrip(ctx); err != nil {
+	if err := checkPTYRoundTrip(ctx, groupDir, binDir); err != nil {
 		t.Fatalf("pseudo-terminal round trip: %v", err)
 	}
 
 	if err := dxh.CheckFreeSpace(ctx, r); err != nil {
 		t.Fatalf("free space: %v", err)
+	}
+
+	gr := dxh.NewGroupRunner(groupDir, binDir)
+	out, err := gr.Output(ctx, "sh", "-c", "echo $CLAUDE_CONFIG_DIR")
+	if err != nil {
+		t.Fatalf("child CLAUDE_CONFIG_DIR check: %v", err)
+	}
+	childCfgDir := strings.TrimSpace(string(out))
+	parentCfgDir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if parentCfgDir != "" && childCfgDir == parentCfgDir {
+		t.Fatalf("child inherited parent CLAUDE_CONFIG_DIR=%q", parentCfgDir)
 	}
 }
 
@@ -114,8 +137,8 @@ func checkListenerOnPort(addr string) error {
 	return ln.Close()
 }
 
-func checkPTYRoundTrip(ctx context.Context) error {
-	tty, err := dxh.StartTTY(ctx, "echo", "dxh-pty-ok")
+func checkPTYRoundTrip(ctx context.Context, groupDir, binDir string) error {
+	tty, err := dxh.StartTTY(ctx, groupDir, binDir, "echo", "dxh-pty-ok")
 	if err != nil {
 		return err
 	}

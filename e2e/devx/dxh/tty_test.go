@@ -13,7 +13,7 @@ func TestExpectErrorRedacts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tty, err := dxh.StartTTY(ctx, "echo", "super-secret-token")
+	tty, err := dxh.StartTTY(ctx, t.TempDir(), "", "echo", "super-secret-token")
 	if err != nil {
 		t.Fatalf("StartTTY: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestExpectErrorRedacts(t *testing.T) {
 	}
 	_, _ = tty.Wait(ctx)
 
-	tty2, err := dxh.StartTTY(ctx, "echo", "super-secret-token")
+	tty2, err := dxh.StartTTY(ctx, t.TempDir(), "", "echo", "super-secret-token")
 	if err != nil {
 		t.Fatalf("StartTTY: %v", err)
 	}

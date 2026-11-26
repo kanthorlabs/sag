@@ -27,8 +27,15 @@ type TTY struct {
 	redact  []string
 }
 
-func StartTTY(ctx context.Context, name string, args ...string) (*TTY, error) {
+func StartTTY(ctx context.Context, groupDir, binDir, name string, args ...string) (*TTY, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if groupDir != "" {
+		env, err := childEnv(groupDir, binDir)
+		if err != nil {
+			return nil, fmt.Errorf("dxh: child env for %s: %w", name, err)
+		}
+		cmd.Env = env
+	}
 	master, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 40, Cols: 200})
 	if err != nil {
 		return nil, fmt.Errorf("dxh: start %s on a pseudo-terminal: %w", name, err)

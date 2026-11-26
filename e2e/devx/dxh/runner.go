@@ -9,10 +9,25 @@ type Runner interface {
 	Output(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
-type osRunner struct{}
+type osRunner struct {
+	groupDir string
+	binDir   string
+}
 
 func NewRunner() Runner { return osRunner{} }
 
-func (osRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).Output()
+func NewGroupRunner(groupDir, binDir string) Runner {
+	return osRunner{groupDir: groupDir, binDir: binDir}
+}
+
+func (r osRunner) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	if r.groupDir != "" {
+		env, err := childEnv(r.groupDir, r.binDir)
+		if err != nil {
+			return nil, err
+		}
+		cmd.Env = env
+	}
+	return cmd.Output()
 }
