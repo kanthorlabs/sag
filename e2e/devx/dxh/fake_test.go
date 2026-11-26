@@ -23,6 +23,8 @@ func (f *fakeRunner) set(cmd string, out []byte, err error) {
 	f.outputs[cmd] = out
 	if err != nil {
 		f.errors[cmd] = err
+	} else {
+		delete(f.errors, cmd)
 	}
 }
 

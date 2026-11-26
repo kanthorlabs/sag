@@ -214,6 +214,69 @@ func TestTeardownRunsEachStepAfterAFailure(t *testing.T) {
 	}
 }
 
+func TestTeardownSecretInspectBeforeRm(t *testing.T) {
+	r, cfg := newCleanTeardownFake("/home/u", "1000", "/home/u/.config/sag")
+	r.set("podman secret ls --format {{.Name}}", []byte("sag-res-canary.conn\n"), nil)
+	r.set(`podman secret inspect sag-res-canary.conn --format {{index .Spec.Labels "sag.resource"}}`, []byte("true"), nil)
+	r.set("podman secret rm sag-res-canary.conn", nil, nil)
+	r.set(`podman secret inspect sag-res-canary.conn --format {{index .Spec.Labels "sag.devx-e2e"}}`, nil, nil)
+
+	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	inspectIdx := firstIndexContaining(r.calls, `inspect sag-res-canary.conn --format`)
+	rmIdx := firstIndexContaining(r.calls, "secret rm sag-res-canary.conn")
+	if inspectIdx < 0 {
+		t.Fatal("no secret inspect call found")
+	}
+	if rmIdx < 0 {
+		t.Fatal("no secret rm call found")
+	}
+	if inspectIdx >= rmIdx {
+		t.Errorf("inspect (call[%d]) must come before rm (call[%d])", inspectIdx, rmIdx)
+	}
+}
+
+func TestTeardownDevxE2ELabeledSecret(t *testing.T) {
+	r, cfg := newCleanTeardownFake("/home/u", "1000", "/home/u/.config/sag")
+	r.set("podman secret ls --format {{.Name}}", []byte("test-secret\n"), nil)
+	r.set(`podman secret inspect test-secret --format {{index .Spec.Labels "sag.resource"}}`, nil, nil)
+	r.set(`podman secret inspect test-secret --format {{index .Spec.Labels "sag.devx-e2e"}}`, []byte("1"), nil)
+	r.set("podman secret rm test-secret", nil, nil)
+
+	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	rmFound := false
+	for _, call := range r.calls {
+		if slices.Contains(call, "secret") && slices.Contains(call, "rm") && slices.Contains(call, "test-secret") {
+			rmFound = true
+		}
+	}
+	if !rmFound {
+		t.Error("teardown did not remove sag.devx-e2e labeled secret")
+	}
+}
+
+func TestTeardownSkipsUnlabeledSecret(t *testing.T) {
+	r, cfg := newCleanTeardownFake("/home/u", "1000", "/home/u/.config/sag")
+	r.set("podman secret ls --format {{.Name}}", []byte("unrelated-secret\n"), nil)
+	r.set(`podman secret inspect unrelated-secret --format {{index .Spec.Labels "sag.resource"}}`, nil, nil)
+	r.set(`podman secret inspect unrelated-secret --format {{index .Spec.Labels "sag.devx-e2e"}}`, nil, nil)
+
+	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, call := range r.calls {
+		if slices.Contains(call, "secret") && slices.Contains(call, "rm") && slices.Contains(call, "unrelated-secret") {
+			t.Errorf("teardown removed unlabeled secret: %v", call)
+		}
+	}
+}
+
 func firstIndexContaining(calls [][]string, text string) int {
 	for i, call := range calls {
 		if strings.Contains(strings.Join(call, " "), text) {

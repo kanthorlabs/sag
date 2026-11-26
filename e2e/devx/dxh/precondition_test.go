@@ -232,3 +232,78 @@ func TestRecoveryReadsStateAgain(t *testing.T) {
 		t.Fatalf("expected nil after recovery cleared port: %v", err)
 	}
 }
+
+func TestRefusesLaunchAgent(t *testing.T) {
+	r := goodMachineRunner()
+	cfg := dxh.PreconditionConfig{
+		CfgDir:            "/home/u/.config/sag",
+		LaunchAgentExists: func() bool { return true },
+	}
+	err := dxh.CheckPreconditions(context.Background(), r, cfg)
+	if err == nil {
+		t.Fatal("expected error for existing LaunchAgent plist")
+	}
+	if !strings.Contains(err.Error(), "LaunchAgent") {
+		t.Errorf("error = %q, want it to mention 'LaunchAgent'", err)
+	}
+}
+
+func TestRefusesVolume(t *testing.T) {
+	r := goodMachineRunner()
+	r.set("podman volume inspect sag-state", nil, nil)
+
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	err := dxh.CheckPreconditions(context.Background(), r, cfg)
+	if err == nil {
+		t.Fatal("expected error for existing sag-state volume")
+	}
+	if !strings.Contains(err.Error(), "sag-state") {
+		t.Errorf("error = %q, want it to mention 'sag-state'", err)
+	}
+}
+
+func TestRefusesImage(t *testing.T) {
+	r := goodMachineRunner()
+	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", []byte("docker.io/kanthorlabs/sag:main\n"), nil)
+
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	err := dxh.CheckPreconditions(context.Background(), r, cfg)
+	if err == nil {
+		t.Fatal("expected error for existing image")
+	}
+	if !strings.Contains(err.Error(), "image") {
+		t.Errorf("error = %q, want it to mention 'image'", err)
+	}
+}
+
+func TestRefusesSagResourceLabel(t *testing.T) {
+	r := goodMachineRunner()
+	r.set("podman secret ls --format {{.Name}}", []byte("sag-res-canary.conn\n"), nil)
+	r.set(`podman secret inspect sag-res-canary.conn --format {{index .Spec.Labels "sag.resource"}}`, []byte("true"), nil)
+
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	err := dxh.CheckPreconditions(context.Background(), r, cfg)
+	if err == nil {
+		t.Fatal("expected error for secret with sag.resource label")
+	}
+	if !strings.Contains(err.Error(), "sag.resource") {
+		t.Errorf("error = %q, want it to mention 'sag.resource'", err)
+	}
+}
+
+func TestAnchoredSecretNameFilter(t *testing.T) {
+	r := goodMachineRunner()
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	if err := dxh.CheckPreconditions(context.Background(), r, cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range r.calls {
+		joined := strings.Join(call, " ")
+		if !strings.Contains(joined, "podman secret ls --filter name=") {
+			continue
+		}
+		if strings.Contains(joined, "name=sag") && !strings.Contains(joined, "name=^sag") {
+			t.Errorf("secret name filter missing anchors: %v", call)
+		}
+	}
+}
