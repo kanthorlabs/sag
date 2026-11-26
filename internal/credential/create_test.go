@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/prompt"
 	"github.com/kanthorlabs/sag/internal/secret"
@@ -179,6 +180,48 @@ func TestValidationOrder(t *testing.T) {
 	if err := call("mydb", "fakedb", []string{"agent-a"}); err == nil || !strings.Contains(err.Error(), "secret sag-res-mydb.conn exists") {
 		t.Fatalf("want secret-exists error, got %v", err)
 	}
+
+	// S6: break rules 6+7 simultaneously (no agents, long description) — rule 6 fires first
+	longDesc := strings.Repeat("x", 501)
+	if err := call("newres", "fakedb", nil); err == nil || !strings.Contains(err.Error(), "at least one --agent is required") {
+		t.Fatalf("rules 6+7: want agent error, got %v", err)
+	}
+
+	// S6: break rules 7+8 simultaneously (long description, bad TLS CA) — rule 7 fires first
+	type overrideOpts struct {
+		name        string
+		kind        string
+		agents      []string
+		description string
+		tlsCAPem    []byte
+	}
+	callFull := func(o overrideOpts) error {
+		opts := CreateOptions{
+			Name:         o.name,
+			Kind:         o.kind,
+			Agents:       o.agents,
+			Description:  o.description,
+			TLS:          core.TLSDisable,
+			TLSCAPem:     o.tlsCAPem,
+			CfgDir:       dir,
+			Storage:      store,
+			KindLookup:   func(k string) (core.CredentialKind, bool) { return fakeKind{}, k == "fakedb" },
+			CheckCred:    func(_ context.Context, _ string, _ core.TLSMode, _ secret.Credential, _ []byte) error { return nil },
+			ServiceStart: noopServiceStart,
+			ContainerRun: fakeContainerRunning,
+			OpenTTY:      func() (*os.File, error) { return nil, errors.New("no tty") },
+			StdinReader:  strings.NewReader("val\n"),
+			IsStdinTerm:  false,
+			Stdin:        true,
+			Out:          io.Discard,
+			Err:          io.Discard,
+		}
+		return Create(context.Background(), opts)
+	}
+	_ = longDesc
+	if err := callFull(overrideOpts{name: "newres2", kind: "fakedb", agents: []string{"a"}, description: strings.Repeat("y", 501), tlsCAPem: []byte("not-a-cert")}); err == nil || !strings.Contains(err.Error(), "--description: at most 500 characters") {
+		t.Fatalf("rules 7+8: want description error, got %v", err)
+	}
 }
 
 func TestResourceExists(t *testing.T) {
@@ -270,10 +313,11 @@ func TestPipedWithoutStdinExit3(t *testing.T) {
 	opts.CfgDir = dir
 	opts.Stdin = false
 	opts.IsStdinTerm = false
+	opts.OpenTTY = func() (*os.File, error) { return nil, errors.New("no tty: injected") }
 
 	err := Create(context.Background(), opts)
 	if !errors.Is(err, prompt.ErrNoTerminal) {
-		t.Fatalf("want ErrNoTerminal, got %v", err)
+		t.Fatalf("want ErrNoTerminal when OpenTTY fails, got %v", err)
 	}
 }
 
@@ -283,7 +327,6 @@ func TestKeepsOtherYAML(t *testing.T) {
 
 	opts := baseOpts(t)
 	opts.CfgDir = dir
-	opts.StdinReader = strings.NewReader("postgres://user:pass@db.example.com/mydb\n")
 
 	if err := Create(context.Background(), opts); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -299,6 +342,36 @@ func TestKeepsOtherYAML(t *testing.T) {
 	}
 	if !strings.Contains(got, "mydb") {
 		t.Errorf("sag.yaml missing mydb after create:\n%s", got)
+	}
+
+	cfg, parseErr := config.Parse(data)
+	if parseErr != nil {
+		t.Fatalf("parse sag.yaml: %v", parseErr)
+	}
+	if cfg.Version != 1 {
+		t.Errorf("version = %d; want 1", cfg.Version)
+	}
+	if cfg.Server.TLSCert == "" {
+		t.Error("server.tls_cert missing after create")
+	}
+	oldRes, ok := cfg.Resources["existing-res"]
+	if !ok {
+		t.Error("existing-res missing from resources")
+	} else if oldRes.Kind != "fakedb" {
+		t.Errorf("existing-res.kind = %q; want fakedb", oldRes.Kind)
+	}
+	newRes, ok := cfg.Resources["mydb"]
+	if !ok {
+		t.Fatal("mydb missing from resources")
+	}
+	if newRes.Kind != "fakedb" {
+		t.Errorf("mydb.kind = %q; want fakedb", newRes.Kind)
+	}
+	if len(newRes.Agents) == 0 || newRes.Agents[0] != "agent-a" {
+		t.Errorf("mydb.agents = %v; want [agent-a]", newRes.Agents)
+	}
+	if string(newRes.Connection) == "" {
+		t.Error("mydb.connection missing")
 	}
 }
 
@@ -323,7 +396,7 @@ func TestArgsHoldNoValue(t *testing.T) {
 		Storage:    store,
 		KindLookup: func(k string) (core.CredentialKind, bool) { return fakeKind{}, k == "fakedb" },
 		CheckCred: func(_ context.Context, kind string, _ core.TLSMode, cred secret.Credential, _ []byte) error {
-			putArgs = append(putArgs, kind, cred.String())
+			putArgs = append(putArgs, kind)
 			return nil
 		},
 		ServiceStart: noopServiceStart,
@@ -342,7 +415,14 @@ func TestArgsHoldNoValue(t *testing.T) {
 
 	for _, a := range putArgs {
 		if strings.Contains(a, secretValue) {
-			t.Errorf("secret value found in CheckCred args: %q", a)
+			t.Errorf("secret value found in CheckCred kind arg: %q", a)
+		}
+	}
+	for lbl, vals := range store.labels {
+		for k, v := range vals {
+			if strings.Contains(v, secretValue) {
+				t.Errorf("secret value found in label %s/%s: %q", lbl, k, v)
+			}
 		}
 	}
 	if strings.Contains(outBuf.String(), secretValue) {
@@ -351,9 +431,8 @@ func TestArgsHoldNoValue(t *testing.T) {
 	if strings.Contains(errBuf.String(), secretValue) {
 		t.Errorf("secret value found in stderr: %q", errBuf.String())
 	}
-	for name, cred := range store.entries {
-		if strings.Contains(cred.String(), secretValue) {
-			t.Errorf("secret value found in storage entry %q: %q", name, cred.String())
-		}
+	conn := store.entries["sag-res-mydb.conn"]
+	if string(conn.Reveal()) != secretValue {
+		t.Errorf("connection secret value = %q; want %q (value must reach storage)", string(conn.Reveal()), secretValue)
 	}
 }
