@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 
 	"github.com/kanthorlabs/sag/internal/hoststate"
@@ -13,12 +15,21 @@ import (
 )
 
 var (
-	buildCfgFn = defaultBuildCfg
-	startFn    = service.Start
-	stopFn     = service.Stop
+	buildCfgFn    = defaultBuildCfg
+	startFn       = service.Start
+	stopFn        = service.Stop
+	serviceGOOS   = runtime.GOOS
+	serviceGOARCH = runtime.GOARCH
 )
 
-func serviceStart(_ []string, std IO) int {
+func serviceStart(args []string, std IO) int {
+	if len(args) != 0 {
+		fmt.Fprintln(std.Err, "sag: service start: unexpected arguments")
+		return ExitUsage
+	}
+	if err := service.CheckPlatform(serviceGOOS, serviceGOARCH); err != nil {
+		return fail(std, err)
+	}
 	cfg, release, err := buildCfgFn()
 	if err != nil {
 		return fail(std, err)
@@ -31,7 +42,14 @@ func serviceStart(_ []string, std IO) int {
 	return ExitOK
 }
 
-func serviceStop(_ []string, std IO) int {
+func serviceStop(args []string, std IO) int {
+	if len(args) != 0 {
+		fmt.Fprintln(std.Err, "sag: service stop: unexpected arguments")
+		return ExitUsage
+	}
+	if err := service.CheckPlatform(serviceGOOS, serviceGOARCH); err != nil {
+		return fail(std, err)
+	}
 	cfg, release, err := buildCfgFn()
 	if err != nil {
 		return fail(std, err)

@@ -211,14 +211,16 @@ func applyAutostart(ctx context.Context, cfg Config, enable bool, d deps, out st
 	target := "gui/" + cfg.UID + "/" + launchAgentLabel
 
 	if !enable {
-		if _, err := os.Stat(plistPath); os.IsNotExist(err) {
+		_ = bootout(ctx, d, target)
+		_, statErr := os.Stat(plistPath)
+		if os.IsNotExist(statErr) {
 			out.Line(stepline.StatusOK, "autostart", "")
 			return false, nil
 		}
-		_ = bootout(ctx, d, target)
 		if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
 			return false, err
 		}
+		out.Line(stepline.StatusInstall, "autostart", "")
 		return true, nil
 	}
 
@@ -251,6 +253,7 @@ func applyAutostart(ctx context.Context, cfg Config, enable bool, d deps, out st
 		return false, fmt.Errorf("launchctl bootstrap: %w", err)
 	}
 
+	out.Line(stepline.StatusInstall, "autostart", "")
 	return true, nil
 }
 

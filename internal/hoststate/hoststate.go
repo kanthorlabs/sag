@@ -38,6 +38,9 @@ func ResolvePaths() (Paths, error) {
 func EnsureCfg(p Paths) (created bool, err error) {
 	_, err = os.Stat(p.Cfg)
 	if err == nil {
+		if err := os.Chmod(p.Cfg, 0o700); err != nil {
+			return false, err
+		}
 		return false, nil
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
@@ -96,6 +99,11 @@ func SaveAnswers(p Paths, a Answers) error {
 	return os.Rename(tmp, p.AnswersJSON)
 }
 
+var podmanFixedPaths = []string{
+	"/opt/podman/bin/podman",
+	"/opt/homebrew/bin/podman",
+}
+
 func FindPodman(stored string) (string, error) {
 	if stored != "" {
 		if _, err := os.Stat(stored); err == nil {
@@ -105,10 +113,7 @@ func FindPodman(stored string) (string, error) {
 	if p, err := exec.LookPath("podman"); err == nil {
 		return p, nil
 	}
-	for _, candidate := range []string{
-		"/opt/podman/bin/podman",
-		"/opt/homebrew/bin/podman",
-	} {
+	for _, candidate := range podmanFixedPaths {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
 		}

@@ -68,6 +68,11 @@ func parseBootstrapFlags(args []string, std IO) (bootstrap.Flags, bool) {
 		return bootstrap.Flags{}, false
 	}
 
+	if fs.NArg() != 0 {
+		fmt.Fprintf(std.Err, "sag: bootstrap: unexpected arguments: %v\n", fs.Args())
+		return bootstrap.Flags{}, false
+	}
+
 	if !validYesNoFlag("--autostart", autostart, std.Err) {
 		return bootstrap.Flags{}, false
 	}

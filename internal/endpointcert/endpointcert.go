@@ -226,6 +226,9 @@ func runSequence(ctx context.Context, pm podman.Command, cfg Config, now time.Ti
 	if err := os.Rename(newPath, pemPath); err != nil {
 		return err
 	}
+	if err := os.Chmod(pemPath, 0o644); err != nil {
+		return err
+	}
 
 	if err := updateTailscaleIP(cfg.CfgDir, cfg.TailscaleIP); err != nil {
 		return err

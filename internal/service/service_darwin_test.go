@@ -144,12 +144,16 @@ func TestHealthzTimeoutTailsLog(t *testing.T) {
 		Podman: r, CfgDir: dir, UID: "501", Home: dir, BinPath: "/usr/local/bin/sag",
 		Image: "localhost/sag:test",
 	}
+	var logTailN int
 	d := deps{
 		launchctlRun: func(_ context.Context, _ ...string) ([]byte, error) { return nil, nil },
 		healthzCheck: func(_ context.Context, _ string) error { return fmt.Errorf("not ready") },
-		logTail:      func(_ context.Context, _ int) ([]byte, error) { return []byte("container log line"), nil },
-		interval:     time.Millisecond,
-		timeout:      10 * time.Millisecond,
+		logTail: func(_ context.Context, n int) ([]byte, error) {
+			logTailN = n
+			return []byte("container log line"), nil
+		},
+		interval: time.Millisecond,
+		timeout:  10 * time.Millisecond,
 	}
 
 	var out strings.Builder
@@ -159,6 +163,9 @@ func TestHealthzTimeoutTailsLog(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "container log line") {
 		t.Fatalf("error %q does not contain log tail", err.Error())
+	}
+	if logTailN != logTailLines {
+		t.Fatalf("logTail called with n=%d; want %d", logTailN, logTailLines)
 	}
 }
 
@@ -179,12 +186,31 @@ func TestLaunchAgentPlist(t *testing.T) {
 	if !strings.Contains(plist, "start") {
 		t.Error("plist missing 'start' argument")
 	}
-	if !strings.Contains(plist, "<true/>") {
-		t.Error("plist missing RunAtLoad true")
-	}
 	if !strings.Contains(plist, filepath.Join(logDir, "service.log")) {
 		t.Error("plist missing log path")
 	}
+
+	type plistDict struct {
+		Keys   []string `xml:"key"`
+		Values []string `xml:"true"`
+	}
+	plistStr := plist
+	runAtLoadIdx := strings.Index(plistStr, "<key>RunAtLoad</key>")
+	if runAtLoadIdx < 0 {
+		t.Fatal("plist missing RunAtLoad key")
+	}
+	afterKey := plistStr[runAtLoadIdx+len("<key>RunAtLoad</key>"):]
+	trimmed := strings.TrimSpace(afterKey)
+	if !strings.HasPrefix(trimmed, "<true/>") {
+		t.Fatalf("RunAtLoad value is not <true/>; got %q", trimmed[:min(len(trimmed), 20)])
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func TestBootoutNotLoadedIsNotFailure(t *testing.T) {
@@ -310,6 +336,62 @@ func TestNoGUIDomainWarns(t *testing.T) {
 	if !strings.Contains(out.String(), "warn autostart") {
 		t.Errorf("expected warn autostart line, got: %q", out.String())
 	}
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", launchAgentLabel+".plist")
+	if _, err := os.Stat(plistPath); err != nil {
+		t.Errorf("plist not written: %v", err)
+	}
+}
+
+func TestAutostartDisableRemovesPlist(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	laDir := filepath.Join(home, "Library", "LaunchAgents")
+	logDir := filepath.Join(home, "Library", "Logs", "sag")
+	if err := os.MkdirAll(laDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	plist := buildPlist("/usr/local/bin/sag", logDir)
+	plistPath := filepath.Join(laDir, launchAgentLabel+".plist")
+	if err := os.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bootoutCalled := false
+	d := deps{
+		launchctlRun: func(_ context.Context, args ...string) ([]byte, error) {
+			if len(args) > 0 && args[0] == "bootout" {
+				bootoutCalled = true
+			}
+			return nil, nil
+		},
+		logTail:  func(_ context.Context, _ int) ([]byte, error) { return nil, nil },
+		interval: time.Millisecond,
+		timeout:  time.Millisecond,
+	}
+
+	cfg := Config{
+		Podman: newFake(), CfgDir: dir, UID: "501", Home: home, BinPath: "/usr/local/bin/sag",
+		Image: "localhost/sag:test",
+	}
+
+	var out strings.Builder
+	changed, err := applyAutostart(context.Background(), cfg, false, d, writerOf(&out))
+	if err != nil {
+		t.Fatalf("applyAutostart enable=false: %v", err)
+	}
+	if !bootoutCalled {
+		t.Error("bootout was not called on disable")
+	}
+	if _, err := os.Stat(plistPath); err == nil {
+		t.Error("plist still exists after disable; want removed")
+	}
+	if !changed {
+		t.Error("expected changed=true when plist was removed")
+	}
+	if !strings.Contains(out.String(), "install autostart") {
+		t.Errorf("expected install autostart line, got: %q", out.String())
+	}
 }
 
 func TestLinuxUnsupported(t *testing.T) {
@@ -317,7 +399,13 @@ func TestLinuxUnsupported(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected non-nil error")
 	}
-	if !strings.Contains(err.Error(), "unsupported platform linux/amd64") {
-		t.Fatalf("error %q does not contain expected text", err.Error())
+	if err.Error() != "unsupported platform linux/amd64" {
+		t.Fatalf("error = %q; want %q", err.Error(), "unsupported platform linux/amd64")
+	}
+	if CheckPlatform("linux", "amd64") == nil {
+		t.Fatal("CheckPlatform(linux, amd64) = nil; want error")
+	}
+	if err2 := CheckPlatform("darwin", "arm64"); err2 != nil {
+		t.Fatalf("CheckPlatform(darwin, arm64) = %v; want nil", err2)
 	}
 }

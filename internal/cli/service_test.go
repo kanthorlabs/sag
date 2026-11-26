@@ -34,6 +34,15 @@ func withFakeCfgErr(t *testing.T, err error) {
 	t.Cleanup(func() { buildCfgFn = oldBuild })
 }
 
+func withGOOS(t *testing.T, goos, goarch string) {
+	t.Helper()
+	savedOS, savedArch := serviceGOOS, serviceGOARCH
+	serviceGOOS, serviceGOARCH = goos, goarch
+	t.Cleanup(func() {
+		serviceGOOS, serviceGOARCH = savedOS, savedArch
+	})
+}
+
 func TestServiceStartSucceeds(t *testing.T) {
 	cfg := service.Config{Image: "localhost/sag:test"}
 	withFakeCfg(t, cfg)
@@ -151,5 +160,66 @@ func TestServiceStopReleasesOnError(t *testing.T) {
 	}
 	if !released {
 		t.Fatal("release not called on stop error")
+	}
+}
+
+func TestServiceStartRejectsPositionalArgs(t *testing.T) {
+	withFakeCfgErr(t, fmt.Errorf("should not reach build"))
+	std, errOut := testIO()
+	std.Mode = ModeHost
+	if code := serviceStart([]string{"extra"}, std); code != ExitUsage {
+		t.Fatalf("serviceStart(extra) = %d; want %d", code, ExitUsage)
+	}
+	if strings.Contains(errOut.String(), "should not reach build") {
+		t.Fatal("buildCfgFn called despite unexpected args")
+	}
+}
+
+func TestServiceStopRejectsPositionalArgs(t *testing.T) {
+	withFakeCfgErr(t, fmt.Errorf("should not reach build"))
+	std, errOut := testIO()
+	std.Mode = ModeHost
+	if code := serviceStop([]string{"extra"}, std); code != ExitUsage {
+		t.Fatalf("serviceStop(extra) = %d; want %d", code, ExitUsage)
+	}
+	if strings.Contains(errOut.String(), "should not reach build") {
+		t.Fatal("buildCfgFn called despite unexpected args")
+	}
+}
+
+func TestServiceStartRejectsUnsupportedPlatform(t *testing.T) {
+	withGOOS(t, "darwin", "amd64")
+	withFakeCfgErr(t, fmt.Errorf("should not reach build"))
+	std, errOut := testIO()
+	std.Mode = ModeHost
+	if code := serviceStart(nil, std); code != ExitFailure {
+		t.Fatalf("serviceStart on darwin/amd64 = %d; want %d", code, ExitFailure)
+	}
+	if !strings.Contains(errOut.String(), "unsupported platform darwin/amd64") {
+		t.Fatalf("stderr = %q; want unsupported platform", errOut.String())
+	}
+}
+
+func TestServiceStopRejectsUnsupportedPlatform(t *testing.T) {
+	withGOOS(t, "darwin", "amd64")
+	withFakeCfgErr(t, fmt.Errorf("should not reach build"))
+	std, errOut := testIO()
+	std.Mode = ModeHost
+	if code := serviceStop(nil, std); code != ExitFailure {
+		t.Fatalf("serviceStop on darwin/amd64 = %d; want %d", code, ExitFailure)
+	}
+	if !strings.Contains(errOut.String(), "unsupported platform darwin/amd64") {
+		t.Fatalf("stderr = %q; want unsupported platform", errOut.String())
+	}
+}
+
+func TestDefaultBuildCfgLockFailReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+
+	_, _, err := defaultBuildCfg()
+	if err == nil {
+		t.Fatal("defaultBuildCfg with absent cfg dir: expected error from AcquireLock")
 	}
 }

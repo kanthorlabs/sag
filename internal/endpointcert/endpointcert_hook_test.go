@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/kanthorlabs/sag/internal/endpointcert"
-	"github.com/kanthorlabs/sag/internal/podman"
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
@@ -21,9 +20,9 @@ func TestResumeAfterStep3(t *testing.T) {
 
 	t.Setenv("SAG_TEST_FAIL_CERT_RENEWAL", "1")
 
-	fr := &fake{fn: secretsAbsent()}
+	sf := newStatefulFake()
 	out := stepline.New(io.Discard)
-	_, err := endpointcert.Ensure(context.Background(), fr, cfg, now, out)
+	_, err := endpointcert.Ensure(context.Background(), sf, cfg, now, out)
 	if err == nil {
 		t.Fatal("expected error from FailCertRenewal hook")
 	}
@@ -37,16 +36,14 @@ func TestResumeAfterStep3(t *testing.T) {
 		t.Fatal("ca.pem must not exist after partial run (rename was not done)")
 	}
 
+	if !sf.secrets["sag-tls-cert"] || !sf.secrets["sag-tls-key"] {
+		t.Fatal("secrets must be present after first run created them")
+	}
+
 	t.Setenv("SAG_TEST_FAIL_CERT_RENEWAL", "")
 
-	fr2 := &fake{fn: func(args []string, _ []byte) ([]byte, error) {
-		if len(args) >= 2 && args[0] == "secret" && args[1] == "inspect" {
-			return nil, &podman.RunError{ExitCode: 125, Stderr: "no such secret"}
-		}
-		return nil, nil
-	}}
 	out2 := stepline.New(io.Discard)
-	changed, err := endpointcert.Ensure(context.Background(), fr2, cfg, now, out2)
+	changed, err := endpointcert.Ensure(context.Background(), sf, cfg, now, out2)
 	if err != nil {
 		t.Fatalf("second run failed: %v", err)
 	}

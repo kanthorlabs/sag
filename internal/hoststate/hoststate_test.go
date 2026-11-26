@@ -141,6 +141,39 @@ func TestSaveAnswersAtomicWrite(t *testing.T) {
 	}
 }
 
+func TestPodmanFixedPathOrder(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first", "podman")
+	second := filepath.Join(dir, "second", "podman")
+
+	if err := os.MkdirAll(filepath.Dir(first), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(second), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(first, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := podmanFixedPaths
+	podmanFixedPaths = []string{first, second}
+	defer func() { podmanFixedPaths = orig }()
+
+	t.Setenv("PATH", "/usr/bin:/bin")
+
+	got, err := FindPodman("")
+	if err != nil {
+		t.Fatalf("FindPodman: %v", err)
+	}
+	if got != first {
+		t.Fatalf("FindPodman = %q; want first path %q", got, first)
+	}
+}
+
 func TestPodmanSearchOrder(t *testing.T) {
 	dir := t.TempDir()
 	fakePodman := filepath.Join(dir, "podman")
@@ -262,4 +295,29 @@ func lockIsTaken(path string) bool {
 	defer f.Close()
 	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	return err != nil
+}
+
+func TestEnsureCfgFixesModeOnExistingDir(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "sag")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := Paths{Cfg: cfgDir, Lock: filepath.Join(cfgDir, "lock")}
+
+	created, err := EnsureCfg(p)
+	if err != nil {
+		t.Fatalf("EnsureCfg: %v", err)
+	}
+	if created {
+		t.Fatal("EnsureCfg returned created=true for existing dir")
+	}
+
+	info, err := os.Stat(cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("cfg mode = %04o; want 0700", info.Mode().Perm())
+	}
 }

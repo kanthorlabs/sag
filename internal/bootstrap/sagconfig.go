@@ -30,5 +30,8 @@ func createSAGConfig(cfgDir string) (bool, error) {
 	if err := os.WriteFile(path, []byte(sagYAMLTemplate), 0o644); err != nil {
 		return false, err
 	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		return false, err
+	}
 	return true, nil
 }

@@ -118,4 +118,12 @@ func TestBootstrapFlags(t *testing.T) {
 			t.Fatalf("bootstrapCmd() = %d; want %d", code, ExitOK)
 		}
 	})
+
+	t.Run("positional argument gives exit 2", func(t *testing.T) {
+		std, _ := bootstrapTestIO()
+		code := bootstrapCmd([]string{"extra"}, std)
+		if code != ExitUsage {
+			t.Fatalf("bootstrapCmd(extra) = %d; want %d", code, ExitUsage)
+		}
+	})
 }
