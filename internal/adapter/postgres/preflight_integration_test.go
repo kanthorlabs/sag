@@ -49,8 +49,7 @@ func openResource(t *testing.T, cfg core.ResourceConfig, dsn string) core.Resour
 func TestPreflightMinimal(t *testing.T) {
 	pg := startPostgres(t)
 	start := time.Now()
-	cfg := core.ResourceConfig{Name: "main", Kind: Kind, TLS: core.TLSVerifyFull, TLSCA: pg.CAPEM, PoolSize: 2, ConnectTimeout: 10 * time.Second}
-	res := openResource(t, cfg, pg.HostDSN())
+	res := openResource(t, preflightResourceConfig(pg), pg.HostDSN())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
