@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 5 |
+| Status | Revision 6 |
 | Date | 2026-11-26 |
 | Base | `docs/PRD.md` revision 16, tag `sag-layer-6` |
 
@@ -221,7 +221,7 @@ Bootstrap runs these steps in this order. Each step first reads the current stat
 
 1. Refuse UID 0, a container, and an unsupported platform.
 2. Select the pins for the OS and the architecture.
-3. Plan: read the state and collect each needed answer of section 5.4. Read the Tailscale state of section 5.8. If bootstrap needs an answer and no source gives it, exit 3. A plan conflict of section 5.3, section 5.8, or section 12.3 gives exit 1. Both exits occur before any change.
+3. Plan: read the state and collect each needed answer of section 5.4. Read the Tailscale state of section 5.8. Check the holder of `127.0.0.1:8443` (section 6). If bootstrap needs an answer and no source gives it, exit 3. A plan conflict of section 5.3, section 5.8, or section 12.3, or a port conflict of section 6, gives exit 1. Both exits occur before any change.
 4. Create `<cfg>` with mode 0700 when it is absent. Take the lock `<cfg>/lock`. If another process holds it, exit 1.
 5. Read the state again and plan again. A new needed answer without a source gives exit 3.
 6. For each dependency, apply the dependency rule (section 5.3). On macOS, when no Podman machine exists, run `podman machine init`. When the machine is stopped, run `podman machine start`.
@@ -346,6 +346,7 @@ Bootstrap runs this sequence in each of these cases:
 - Thus a second run repairs a stopped run.
 - After a new certificate, step 12 restarts SAG. Each agent client then needs a restart. The path `<cfg>/ca.pem` does not change, so no agent configuration changes.
 - A Tailscale skip at bootstrap does not trigger the sequence. The certificate keeps its Tailscale address.
+- During a skip with the reason `down`, a renewal keeps the stored `tailscale_ip` as a name of the new certificate.
 
 ### 5.8 Tailscale
 
@@ -366,8 +367,10 @@ Endpoint:
 
 Serve rule:
 
-- In step 3, bootstrap reads `tailscale serve status --json`. The SAG rule is the entry `TCP."8443"` equal to `{"TCPForward": "127.0.0.1:8443"}`.
+- In step 3, when bootstrap uses Tailscale, bootstrap reads `tailscale serve status --json`. When this command fails, bootstrap writes `skip tailscale down; loopback only`.
+- The SAG rule is the entry `TCP."8443"` equal to `{"TCPForward": "127.0.0.1:8443"}`, and no key of `AllowFunnel` that ends in `:8443` is true.
 - When `TCP."8443"` exists and is not the SAG rule, bootstrap writes `fail tailscale TCP 8443 serves another target` and exits 1 before any change.
+- When a key of `AllowFunnel` ends in `:8443` and is true, bootstrap writes `fail tailscale funnel is on for port 8443` and exits 1 before any change.
 - In step 13, when `TCP."8443"` is absent, bootstrap runs `tailscale serve --bg --tcp 8443 tcp://127.0.0.1:8443`. When the SAG rule exists, bootstrap writes `ok tailscale-serve`.
 - `tailscaled` keeps the rule across restarts. `sag service start` does not run `tailscale`.
 - Bootstrap never runs `tailscale funnel`.
@@ -405,6 +408,17 @@ sag service stop
 - `start` and `stop` take the lock `<cfg>/lock`. A command that holds the lock runs the start steps in its own process and does not take the lock again.
 - On macOS, the run arguments include `--restart=on-failure`.
 - `start` publishes `127.0.0.1:8443:8443` only (section 5.8).
+
+Port check:
+
+- Bootstrap in step 3 and `start` before it starts a container check the holder of `127.0.0.1:8443`.
+- When `podman ps` shows a container that publishes port 8443, this container is the holder. This check comes first.
+- Else the holder is the process that listens on TCP port 8443. On macOS, `lsof -nP -iTCP:8443 -sTCP:LISTEN` names it. On Ubuntu, `ss -ltnp` names it.
+- On macOS, `lsof` shows `gvproxy` for each Podman publish.
+- When no process holds the port, the command continues.
+- When the holder is the container `sag`, bootstrap writes `ok port-8443`, and `start` continues.
+- When the holder is another container, the command writes `fail port 8443 held by container <name>` and exits 1 before any change.
+- When the holder is a process outside Podman, the command writes `fail port 8443 held by <process>` and exits 1 before any change.
 
 ## 7. `sag credential create`
 
@@ -920,7 +934,7 @@ devx removes these items:
 devx has no uninstall command. Do these steps in this order to remove the devx state.
 
 1. Run `sag credential delete <name>` for each resource in `sag credential list`.
-2. Run `sag service stop`. When `tailscale serve status --json` shows the SAG rule of section 5.8, run `tailscale serve --tcp 8443 off`.
+2. Run `sag service stop`. When `tailscale serve status --json` shows the SAG rule of section 5.8, run `tailscale serve --tcp 8443 off`. On Ubuntu, when bootstrap set the operator, run `sudo tailscale set --operator=`.
 3. On macOS, run `launchctl bootout gui/$(id -u)/net.kanthorlabs.sag`. Then remove `~/Library/LaunchAgents/net.kanthorlabs.sag.plist`.
 4. On Ubuntu, remove `~/.config/containers/systemd/sag.container`. Then run `systemctl --user daemon-reload`.
 5. Run `podman rm sag` and `podman volume rm sag-state`. This step deletes the audit log and the approvals.
@@ -1020,9 +1034,10 @@ Each criterion has one e2e test, except DX-AC44, which is a Node test, and DX-AC
 | DX-AC47 | With Claude Code 2.1.332, after `agent setup claude-code --deny-rules yes`, `claude mcp list` from a shell without `NODE_EXTRA_CA_CERTS` shows `sag` connected. `claude -p --output-format json` from the same shell lists the resources. With `--allowedTools "Bash(sag:*)"`, for a prompt that asks for the Bash tool call `sag credential delete x`, the JSON output has a match in `permission_denials`. Resource `x` does not exist. | macOS dev machine | Dev machine |
 | DX-AC48 | With pi 1.6.1, after `agent setup pi --shell-profile yes --guard yes`, `pi mcp list --json` from a new shell shows `sag` connected. For a prompt that asks for the `bash` tool call `podman secret rm x`, `pi --mode json` prints a tool result with a reason that starts with `sag-guard:`. | macOS dev machine | Dev machine |
 | DX-AC49 | The skill body holds each tool name and each error code of PRD 13.3. The test reads them from the Go constants. | Ubuntu CI, Go unit test | CI |
-| DX-AC50 | The fake `tailscale` prints a test address from `100.64.0.0/10` and reports the current user as operator. `bootstrap --autostart no` exits 0. The server certificate names exactly `localhost`, `127.0.0.1`, `::1`, and the test address. The fake received `serve --bg --tcp 8443 tcp://127.0.0.1:8443` one time and no `funnel`. The Quadlet file holds `PublishPort=127.0.0.1:8443:8443` and no other `PublishPort=`. A second `bootstrap` writes `ok tailscale-serve`, runs no `serve`, and keeps the certificate. When the fake prints another address in the range, the next `bootstrap` renews the certificate. When the fake reports TCP 8443 with another target, `bootstrap` exits 1, and no file or secret changes. When the fake prints `0.0.0.0` or `192.168.1.10`, `bootstrap` writes the `address invalid` skip line, and the certificate has no such name. When the fake exits 1 for `ip -4`, `bootstrap` writes the `down` skip line and keeps the certificate. When the fake reports another operator and no terminal exists, `bootstrap` writes the `operator not set` skip line and runs no `serve`. | Ubuntu CI, fake `tailscale` | CI |
+| DX-AC50 | The fake `tailscale` prints a test address from `100.64.0.0/10` and reports the current user as operator. `bootstrap --autostart no` exits 0. The server certificate names exactly `localhost`, `127.0.0.1`, `::1`, and the test address. The fake received `serve --bg --tcp 8443 tcp://127.0.0.1:8443` one time and no `funnel`. The Quadlet file holds `PublishPort=127.0.0.1:8443:8443` and no other `PublishPort=`. A second `bootstrap` writes `ok tailscale-serve`, runs no `serve`, and keeps the certificate. When the fake prints another address in the range, the next `bootstrap` renews the certificate. When the fake reports TCP 8443 with another target, `bootstrap` exits 1, and no file or secret changes. When the fake reports `AllowFunnel` true for `<name>:8443`, `bootstrap` writes `fail tailscale funnel is on for port 8443`, exits 1, and no file or secret changes. When the fake prints `0.0.0.0` or `192.168.1.10`, `bootstrap` writes the `address invalid` skip line, and the certificate has no such name. When the fake exits 1 for `ip -4`, `bootstrap` writes the `down` skip line and keeps the certificate. When the fake reports another operator and no terminal exists, `bootstrap` writes the `operator not set` skip line and runs no `serve`. | Ubuntu CI, fake `tailscale` | CI |
 | DX-AC51 | `agent setup claude-code --url https://<test address>:8443/mcp --sub remote-a` with a JWT typed on a pseudo-terminal exits 0. The entry has that `url`. No `podman` child process runs. Without a terminal, it exits 3 and changes no file. A JWT with another `sub` gives exit 1. `--url http://<test address>:8443/mcp` gives exit 2. An entry with the header value `${SAG_JWT}` gives exit 1 with the `another form` line. | Ubuntu CI, harness stubs | CI |
 | DX-AC52 | On macOS with Tailscale up and no TCP 8443 entry in `tailscale serve status --json`, `bootstrap --autostart yes --agent-setup claude-code=no --agent-setup pi=no` exits 0. `tailscale serve status --json` shows the SAG rule of section 5.8. `curl --cacert <cfg>/ca.pem https://<tailscale IP>:8443/healthz` returns 200. `lsof -nP -iTCP:8443 -sTCP:LISTEN` shows no listener on `*:8443`. After `tailscale serve --tcp 8443 off`, `tailscale serve status --json` has no TCP 8443 entry, and the `curl` fails. | macOS dev machine, Tailscale | Dev machine |
+| DX-AC53 | A process outside Podman listens on `127.0.0.1:8443`. `bootstrap --autostart no` and `sag service start` each exit 1 with the line `fail port 8443 held by <process>`. Another container publishes 8443. Both commands exit 1 with the line `fail port 8443 held by container <name>`. In each case, no file, secret, or container changes. | Ubuntu CI | CI |
 
 ### 17.1 Test environment
 
@@ -1073,7 +1088,7 @@ macOS development machine:
 - **R23.** T8 reads the JWT of each harness from its MCP configuration file. T8 can also run `sag agent setup` or `podman exec sag sag agent issue <sub>` and get a JWT for each `sub`.
 - **R24.** A Claude Code process that runs during agent setup can write `.claude.json` from its own state and remove `mcpServers.sag`. The verification detects a lost entry only at setup time.
 - **R25.** A pi process that does not start from an interactive shell does not read the shell profile. Without `NODE_EXTRA_CA_CERTS` from its parent, its TLS connection to SAG fails, and the verification of section 12.8 still passes.
-- **R26.** With the Tailscale serve rule, each tailnet device that the Tailscale ACLs allow reaches port 8443. The JWT check applies to each request except `/healthz`. SAG v1 has no rate limit for a request without a JWT. T8 can change the Tailscale configuration in the account of the operator, for example with `tailscale funnel`, when the tailnet policy allows Funnel.
+- **R26.** With the Tailscale serve rule, each tailnet device that the Tailscale ACLs allow reaches port 8443. The JWT check applies to each request except `/healthz`. SAG v1 has no rate limit for a request without a JWT. T8 can change the Tailscale configuration in the account of the operator, for example with `tailscale funnel`, when the tailnet policy allows Funnel. On Ubuntu, the operator step gives this capability.
 - **R27.** SAG sees each tailnet client as `127.0.0.1`. The audit log identifies a tailnet client only by the `sub` of its JWT.
 - **R28.** Only the macOS development machine proves the real harness formats, the macOS Podman install, and the real `tailscale serve`. This proof comes in build step 8. CI tests their logic with stubs and a fake `tailscale`. No test runs the real `tailscale serve` or the operator step on Ubuntu.
 
@@ -1095,7 +1110,7 @@ Do not start a step before each criterion of the previous step passes.
 | Step | Content | Criteria |
 |---|---|---|
 | 1 | `internal/deploy`, log flags, empty `resources`, Podman SecureStorage backend. Confirm the secret list of `podman container inspect` on Podman 4.9.3. | AC32 and AC33 of PRD 15.2 pass with `internal/deploy`. |
-| 2 | `bootstrap` and `service` on Ubuntu, pins, certificate, Tailscale serve rule. Confirm that `apt-get install -y podman` installs `uidmap` on Ubuntu 24.04. | DX-AC1 to DX-AC8, DX-AC27 to DX-AC29, DX-AC33, DX-AC36, DX-AC50 |
+| 2 | `bootstrap` and `service` on Ubuntu, pins, certificate, Tailscale serve rule. Confirm that `apt-get install -y podman` installs `uidmap` on Ubuntu 24.04. | DX-AC1 to DX-AC8, DX-AC27 to DX-AC29, DX-AC33, DX-AC36, DX-AC50, DX-AC53 |
 | 3 | `credential create`, `list`, `inspect`, `credential check` | DX-AC9 to DX-AC17, DX-AC37 |
 | 4 | `credential delete`, host forms, `logs`, `audit read` | DX-AC18 to DX-AC25 |
 | 5 | On the macOS machine, record the connected `sag` line of `claude mcp list` 2.1.332 before the stub work. `agent setup` in the local and remote modes, `agent issue`, skill, pi guard, bootstrap step 14. | DX-AC26, DX-AC39 to DX-AC46, DX-AC49, DX-AC51 |
