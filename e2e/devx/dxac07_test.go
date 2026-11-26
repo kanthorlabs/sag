@@ -94,7 +94,9 @@ func DXAC07_ReleaseChecksum(t *testing.T, ctx context.Context) {
 	t.Setenv("SAG_TEST_FAKEINSTALL_RECORD", recordFile)
 	t.Setenv("TMPDIR", downloadTmpDir)
 
-	t.Setenv("SAG_TEST_PINS", fmt.Sprintf("testpkg 0.1.0 darwin/arm64 release %s wronghashvalue\n", pkgURL))
+	wrongBytes := sha256.Sum256([]byte("wrong-content-for-dxac07"))
+	wrongHash := hex.EncodeToString(wrongBytes[:])
+	t.Setenv("SAG_TEST_PINS", fmt.Sprintf("testpkg 0.1.0 darwin/arm64 release %s %s\n", pkgURL, wrongHash))
 
 	childEnv, err := dxh.ChildEnv(os.Environ(), groupDir)
 	if err != nil {
@@ -113,6 +115,9 @@ func DXAC07_ReleaseChecksum(t *testing.T, ctx context.Context) {
 	if len(pkgFiles) > 0 {
 		t.Fatalf("DXAC07 wrong-sha: downloaded file not deleted: %v", pkgFiles)
 	}
+	if !strings.Contains(stderr, "checksum mismatch") {
+		t.Fatalf("DXAC07 wrong-sha: stderr = %q; want 'checksum mismatch'", stderr)
+	}
 
 	_ = os.Remove(recordFile)
 	t.Setenv("SAG_TEST_PINS", fmt.Sprintf("testpkg 0.1.0 darwin/arm64 release %s %s\n", pkgURL, correctHash))
@@ -128,13 +133,30 @@ func DXAC07_ReleaseChecksum(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC07 correct-sha: exit code = %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
 	}
 
-	data, err := os.ReadFile(recordFile)
+	recordData, err := os.ReadFile(recordFile)
 	if err != nil {
 		t.Fatalf("DXAC07 correct-sha: fakeinstall record not found: %v", err)
 	}
-	recorded := strings.TrimSpace(string(data))
-	if filepath.Base(recorded) != "test.pkg" {
-		t.Fatalf("DXAC07 correct-sha: fakeinstall got %q; want basename test.pkg", recorded)
+	lines := strings.Split(strings.TrimSpace(string(recordData)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("DXAC07 correct-sha: fakeinstall record has %d lines; want 1\n%s", len(lines), recordData)
+	}
+	parts := strings.SplitN(lines[0], "\t", 2)
+	if len(parts) != 2 {
+		t.Fatalf("DXAC07 correct-sha: fakeinstall record line malformed: %q", lines[0])
+	}
+	recordedPath := parts[0]
+	recordedHash := parts[1]
+
+	if filepath.Base(recordedPath) != "test.pkg" {
+		t.Fatalf("DXAC07 correct-sha: fakeinstall got path %q; want basename test.pkg", recordedPath)
+	}
+	parentDir := filepath.Dir(recordedPath)
+	if !strings.HasPrefix(filepath.Base(parentDir), "sag-deps-") || filepath.Dir(parentDir) != downloadTmpDir {
+		t.Fatalf("DXAC07 correct-sha: fakeinstall path %q not under TMPDIR/sag-deps-*", recordedPath)
+	}
+	if recordedHash != correctHash {
+		t.Fatalf("DXAC07 correct-sha: fakeinstall recorded hash %q; want %q", recordedHash, correctHash)
 	}
 
 	if !strings.Contains(stdout, "install testpkg") {

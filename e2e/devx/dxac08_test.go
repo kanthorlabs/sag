@@ -4,6 +4,7 @@ package devx_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -19,12 +20,23 @@ func DXAC08_VersionRule(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC08: test binary: %v", err)
 	}
 
+	r := dxh.NewRunner()
+	versionOut, err := r.Output(ctx, "podman", "--version")
+	if err != nil {
+		t.Fatalf("DXAC08: podman --version: %v", err)
+	}
+	versionParts := strings.Fields(strings.TrimSpace(string(versionOut)))
+	if len(versionParts) < 3 {
+		t.Fatalf("DXAC08: podman --version unexpected output: %q", versionOut)
+	}
+	installedVersion := versionParts[2]
+
 	t.Setenv("SAG_TEST_ABSENT", "")
 
 	olderGroupDir := t.TempDir()
 	olderBinDir := t.TempDir()
 
-	t.Setenv("SAG_TEST_PINS", "podman 999.0.0 darwin/arm64 release - -\n")
+	t.Setenv("SAG_TEST_PINS", "podman 999.0.0 darwin/arm64 release https://example.invalid/podman.pkg 0000000000000000000000000000000000000000000000000000000000000000\n")
 	olderChildEnv, err := dxh.ChildEnv(os.Environ(), olderGroupDir)
 	if err != nil {
 		t.Fatalf("DXAC08 older: child env: %v", err)
@@ -35,14 +47,18 @@ func DXAC08_VersionRule(t *testing.T, ctx context.Context) {
 	if code != 1 {
 		t.Fatalf("DXAC08 older: exit code = %d; want 1\nstdout=%s\nstderr=%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "fail podman") {
-		t.Fatalf("DXAC08 older: stdout = %q; want 'fail podman' line", stdout)
+	expectedFail := fmt.Sprintf("fail podman installed %s, pin 999.0.0", installedVersion)
+	if !strings.Contains(stdout, expectedFail) {
+		t.Fatalf("DXAC08 older: stdout = %q; want %q line", stdout, expectedFail)
+	}
+	if _, statErr := os.Stat(dxh.CfgDir(os.Getenv("HOME"))); statErr == nil {
+		t.Fatal("DXAC08 older: cfg dir exists after failed bootstrap")
 	}
 
 	newerGroupDir := t.TempDir()
 	newerBinDir := t.TempDir()
 
-	t.Setenv("SAG_TEST_PINS", "podman 0.0.1 darwin/arm64 release - -\n")
+	t.Setenv("SAG_TEST_PINS", "podman 0.0.1 darwin/arm64 release https://example.invalid/podman.pkg 0000000000000000000000000000000000000000000000000000000000000000\n")
 	newerChildEnv, err := dxh.ChildEnv(os.Environ(), newerGroupDir)
 	if err != nil {
 		t.Fatalf("DXAC08 newer: child env: %v", err)
@@ -59,5 +75,17 @@ func DXAC08_VersionRule(t *testing.T, ctx context.Context) {
 	warnCount := strings.Count(stdout, "warn podman")
 	if warnCount != 1 {
 		t.Fatalf("DXAC08 newer: found %d 'warn podman' lines; want exactly 1", warnCount)
+	}
+
+	versionOut2, err := r.Output(ctx, "podman", "--version")
+	if err != nil {
+		t.Fatalf("DXAC08: podman --version after tests: %v", err)
+	}
+	versionParts2 := strings.Fields(strings.TrimSpace(string(versionOut2)))
+	if len(versionParts2) < 3 {
+		t.Fatalf("DXAC08: podman --version after tests unexpected output: %q", versionOut2)
+	}
+	if versionParts2[2] != installedVersion {
+		t.Fatalf("DXAC08: podman version changed: before=%q after=%q", installedVersion, versionParts2[2])
 	}
 }

@@ -4,8 +4,12 @@ package devx_test
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,6 +17,8 @@ import (
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
+
+var jwtRe = regexp.MustCompile(`eyJ[A-Za-z0-9+/=_-]+\.[A-Za-z0-9+/=_-]+\.[A-Za-z0-9+/=_-]+`)
 
 func DXAC03_BootstrapIdempotent(t *testing.T, ctx context.Context) {
 	t.Helper()
@@ -72,12 +78,20 @@ func DXAC03_BootstrapIdempotent(t *testing.T, ctx context.Context) {
 	if err := tty.Expect(ctx, "\n"); err != nil {
 		t.Fatalf("jwt generate did not print a line: %v", err)
 	}
+	raw := tty.RawOutput()
+	jwt := jwtRe.FindString(raw)
+	if jwt != "" {
+		tty.Redact(jwt)
+	}
 	jwtCode, err := tty.Wait(ctx)
 	if err != nil {
 		t.Fatalf("jwt generate wait: %v", err)
 	}
 	if jwtCode != 0 {
 		t.Fatalf("jwt generate exit %d; want 0", jwtCode)
+	}
+	if jwt == "" {
+		t.Fatal("jwt generate: no JWT found in terminal output")
 	}
 
 	secretOut, err := r.Output(ctx, "podman", "secret", "inspect", "sag-master-key", "--format", "{{.CreatedAt}}")
@@ -94,9 +108,13 @@ func DXAC03_BootstrapIdempotent(t *testing.T, ctx context.Context) {
 
 	time.Sleep(time.Second)
 
-	out, err := runSAG(t, ctx, "bootstrap")
+	bin, err := dxh.TestBinary()
 	if err != nil {
-		t.Fatalf("second bootstrap: %v\n%s", err, out)
+		t.Fatalf("second bootstrap: test binary: %v", err)
+	}
+	out, bootstrapErr := dxh.NewProductSetsidRunner(t).Output(ctx, bin, "bootstrap")
+	if bootstrapErr != nil {
+		t.Fatalf("second bootstrap: %v\n%s", bootstrapErr, out)
 	}
 
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -111,6 +129,11 @@ func DXAC03_BootstrapIdempotent(t *testing.T, ctx context.Context) {
 			continue
 		}
 		t.Fatalf("second bootstrap: unexpected line %q in output:\n%s", line, out)
+	}
+
+	skipCount := strings.Count(string(out), "skip tailscale command absent; loopback only")
+	if skipCount != 1 {
+		t.Fatalf("second bootstrap: 'skip tailscale command absent; loopback only' count = %d; want 1; output:\n%s", skipCount, out)
 	}
 
 	okPortCount := strings.Count(string(out), "ok port-8443")
@@ -132,5 +155,43 @@ func DXAC03_BootstrapIdempotent(t *testing.T, ctx context.Context) {
 	}
 	if got := strings.TrimSpace(string(ctrOut2)); got != ctrState {
 		t.Fatalf("container state changed after second bootstrap: before=%q after=%q", ctrState, got)
+	}
+
+	caPath := filepath.Join(cfgDir, "ca.pem")
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		t.Fatalf("read ca.pem: %v", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		t.Fatal("ca.pem: no certificate found")
+	}
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{RootCAs: pool},
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	garbageReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://localhost:8443/mcp", nil)
+	garbageReq.Header.Set("Authorization", "Bearer garbage.invalid.token")
+	garbageResp, err := client.Do(garbageReq)
+	if err != nil {
+		t.Fatalf("POST /mcp with garbage token: %v", err)
+	}
+	garbageResp.Body.Close()
+	if garbageResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("POST /mcp with garbage token: status = %d; want 401", garbageResp.StatusCode)
+	}
+
+	validReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://localhost:8443/mcp", nil)
+	validReq.Header.Set("Authorization", "Bearer "+jwt)
+	validResp, err := client.Do(validReq)
+	if err != nil {
+		t.Fatalf("POST /mcp with JWT: %v", err)
+	}
+	validResp.Body.Close()
+	if validResp.StatusCode == http.StatusUnauthorized {
+		t.Fatal("POST /mcp with JWT: status 401; JWT not accepted after second bootstrap")
 	}
 }
