@@ -68,7 +68,7 @@
   - The scrubber adds each credential when `Load` returns it. At start it adds the value of the `storage.aws.credentials` file.
   - `sag config check` skips the owner and mode check for each `aws-sm:` reference.
   - DX-AC32 uses the packet drop method of `D8.0`. `DXAC32_AWSUnavailable` calls `EnsureLocalStack`.
-- Tests first: `aws_open_test.go`: `TestListenerBeforeAWS`, `TestUnavailableUntilLoad`, `TestRetryBringsBack`, `TestScrubAddOnLoad`, `TestCredentialsFileScrubbed`; `scrub_test.go`: `TestAddConcurrent`; `config_check_test.go`: `TestAWSRefSkipsFileCheck`.
+- Tests first: `aws_open_test.go`: `TestListenerBeforeAWS`, `TestUnavailableUntilLoad`, `TestRetryBringsBack`, `TestScrubAddOnLoad`, `TestCredentialsFileScrubbed`; `scrub_test.go`: `TestAddConcurrent`; `config_check_test.go`: `TestAWSRefSkipsFileCheck`; `daemon_test.go`: `TestDaemonLoadsThroughBackend` (daemon loads each `secret:` reference through the Podman backend `Load` at start).
 - e2e: `DXAC32_AWSUnavailable`.
 - ACs: DX-AC32.
 - Verify: `go test -count=1 ./internal/daemon/... ./internal/scrub/... ./internal/preflight/... ./internal/cli/... && make e2e-devx SUITE=Main RUN=DXAC32_ LAYER=8`. Expected: `ok`, then exit 0.

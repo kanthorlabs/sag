@@ -32,16 +32,16 @@ build-devxtest:
 
 define build_image
 	old=$$(podman image inspect --format '{{.Id}}' $(1) 2>/dev/null); \
-	podman build --layers=false --build-arg VERSION=$(VERSION) -t $(1) -f $(2) . && \
+	podman build --layers=false --build-arg VERSION=$(VERSION) $(if $(4),--label $(4)) -t $(1) -f $(2) $(3) && \
 	new=$$(podman image inspect --format '{{.Id}}' $(1)) && \
 	if [ -n "$$old" ] && [ "$$old" != "$$new" ]; then podman rmi "$$old" >/dev/null 2>&1 || true; fi
 endef
 
 image:
-	$(call build_image,$(IMAGE),deploy/Containerfile)
+	$(call build_image,$(IMAGE),deploy/Containerfile,.)
 
 image-conformance:
-	$(call build_image,$(CONFORMANCE_IMAGE),e2e/conformance/Containerfile)
+	$(call build_image,$(CONFORMANCE_IMAGE),e2e/conformance/Containerfile,.)
 
 test:
 	$(GO) vet ./...
@@ -74,17 +74,18 @@ e2e-devx:
 		echo "Removing stale devx-e2e lock (PID $$pid not running)"; \
 		rm -rf "$(DEVX_LOCK)"; \
 	fi; \
-	until mkdir "$(DEVX_LOCK)" 2>/dev/null; do echo "Waiting for devx-e2e lock..."; sleep 30; done; \
+	until mkdir "$(DEVX_LOCK)" 2>/dev/null; do echo "Waiting for devx-e2e lock $(DEVX_LOCK)..."; sleep 30; done; \
 	echo "$$PPID $(CURDIR)" > "$(DEVX_LOCK)/owner"; \
-	trap 'rm -rf $(DEVX_LOCK)' EXIT INT TERM; \
+	trap 'rm -rf $(DEVX_LOCK); exit 130' INT; trap 'rm -rf $(DEVX_LOCK)' EXIT TERM; \
 	$(MAKE) build build-devxtest || exit 1; \
-	podman build --layers=false --build-arg VERSION=$(VERSION) --label sag.devx-e2e=1 -t $(DEVX_IMAGE) -f deploy/Containerfile . || exit 1; \
+	$(call build_image,$(DEVX_IMAGE),deploy/Containerfile,.,sag.devx-e2e=1) || exit 1; \
 	mkdir -p $(REPORT)/devx-$(SUITE); \
 	git rev-parse HEAD > $(REPORT)/devx-$(SUITE)/commit; \
 	SAG_TEST_IMAGE=$(DEVX_IMAGE) $(GO) test -tags devxe2e -json -count=1 -timeout 90m \
 		-run '^TestDevx$(SUITE)$$/.*$(if $(RUN),/$(RUN))' \
 		./e2e/devx/ > $(REPORT)/devx-$(SUITE)/events.json; \
 	$(GO) run ./e2e/cmd/acreport -suite devx -layer $(LAYER) -phase $(PHASE) \
+		$(if $(RUN),-run '$(RUN)') \
 		-in $(REPORT)/devx-$(SUITE)/events.json -out $(REPORT)
 
 contract-check:

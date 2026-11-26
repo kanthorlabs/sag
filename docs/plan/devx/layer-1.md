@@ -65,7 +65,6 @@
   - `List` runs `podman secret ls`, then `Metadata` of each name, then a label filter in SAG.
   - `Load` is the v1 file load with the PRD 6 owner and mode rules.
   - `config.Load` accepts an absent or empty `resources` key. AC1 keeps its five fixtures.
-  - The daemon loads `secret:` references through the backend `Load`.
   - `SecretMounts`: each `secret:` reference of `sag.yaml` and `sag-master-key`. Layer 8 adds the `storage.aws.credentials` reference and the `aws-sm:` skip.
 - Tests first: `internal/secret/podman/podman_test.go` with a fake runner: `TestPutValueOnStdinOnly`, `TestPutExistsReturnsErrExists`, `TestDeleteAbsentIsNil`, `TestMetadataNoShowsecret`, `TestListFiltersLabels`, `TestErrorsHoldNoValue`; `config_test.go`: `TestEmptyResourcesAccepted`, `TestAbsentResourcesAccepted`; `mounts_test.go`: `TestSecretMountsSecretRefs`, `TestSecretMountsMasterKey`.
 - Integration: `internal/podman/inspect_integration_test.go`: `TestContainerInspectListsSecrets`.
