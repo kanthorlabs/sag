@@ -90,8 +90,8 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 		FindPodman:   hoststate.FindPodman,
 
 		PlanDeps:      defaultPlanDeps(hoststate.FindPodman),
-		PlanTailscale: func(_ context.Context, _ *State) error { return nil },
-		PlanPort:      func(_ context.Context, _ *State) error { return nil },
+		PlanTailscale: defaultPlanTailscale,
+		PlanPort:      defaultPlanPort,
 
 		ResolveYesNo: prompt.ResolveYesNo,
 		Asker:        asker,
@@ -341,6 +341,9 @@ func (d Deps) planOnce(ctx context.Context, s *State) error {
 	}
 
 	s.TailscaleState.Address = fresh.TailscaleIP
+	if s.Answers.PodmanPath == "" {
+		s.Answers.PodmanPath = fresh.PodmanPath
+	}
 
 	if err := d.PlanDeps(ctx, s); err != nil {
 		return err
