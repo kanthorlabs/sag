@@ -61,6 +61,22 @@ jobs:
           name: ac-report-pg${{ matrix.pg }}
           path: e2e/report/
 
+  devx-unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
+        with:
+          go-version-file: go.mod
+      - run: go vet -tags devxtest ./...
+      - run: go vet -tags devxe2e ./e2e/devx/...
+      - run: go test -count=1 -tags devxtest ./internal/testhook/...
+
   ac35:
     needs: [unit, build-macos, e2e]
     if: always()

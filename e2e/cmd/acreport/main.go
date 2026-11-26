@@ -51,9 +51,14 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stderr, probe))
 }
 
+const devxSuite = "devx"
+
 func run(args []string, stderr io.Writer, probe func() buildInfo) int {
 	if len(args) > 0 && args[0] == mergeCommand {
 		return runMerge(args[1:], stderr)
+	}
+	if len(args) >= 2 && args[0] == "-suite" && args[1] == devxSuite {
+		return runDevx(args[2:], stderr, probe)
 	}
 	flags := flag.NewFlagSet("acreport", flag.ContinueOnError)
 	flags.SetOutput(stderr)
