@@ -18,7 +18,7 @@ func DXAC28_ServiceStopStart(t *testing.T, ctx context.Context) {
 	home := os.Getenv("HOME")
 	caPath := filepath.Join(dxh.CfgDir(home), "ca.pem")
 
-	out, err := runSAG(ctx, "service", "stop")
+	out, err := runSAG(t, ctx, "service", "stop")
 	if err != nil {
 		t.Fatalf("service stop: %v\n%s", err, out)
 	}
@@ -31,7 +31,7 @@ func DXAC28_ServiceStopStart(t *testing.T, ctx context.Context) {
 		t.Fatal("/healthz returned 200 after service stop")
 	}
 
-	out, err = runSAG(ctx, "service", "start")
+	out, err = runSAG(t, ctx, "service", "start")
 	if err != nil {
 		t.Fatalf("service start: %v\n%s", err, out)
 	}

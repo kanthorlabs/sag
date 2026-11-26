@@ -17,7 +17,7 @@ func DXAC27_Autostart(t *testing.T, ctx context.Context) {
 	home := os.Getenv("HOME")
 	uid := fmt.Sprintf("%d", os.Getuid())
 
-	out, err := runSAG(ctx, "bootstrap",
+	out, err := runSAG(t, ctx, "bootstrap",
 		"--autostart", "no",
 		"--agent-setup", "claude-code=no",
 		"--agent-setup", "pi=no")
@@ -32,7 +32,7 @@ func DXAC27_Autostart(t *testing.T, ctx context.Context) {
 		t.Fatal("launchctl shows agent after --autostart no")
 	}
 
-	out, err = runSAG(ctx, "bootstrap",
+	out, err = runSAG(t, ctx, "bootstrap",
 		"--autostart", "yes",
 		"--agent-setup", "claude-code=no",
 		"--agent-setup", "pi=no")
@@ -58,7 +58,7 @@ func DXAC27_Autostart(t *testing.T, ctx context.Context) {
 
 	r := dxh.NewRunner()
 
-	_, err = runSAG(ctx, "service", "stop")
+	_, err = runSAG(t, ctx, "service", "stop")
 	if err != nil {
 		t.Fatalf("service stop: %v", err)
 	}

@@ -1,11 +1,9 @@
 package dxh
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,7 +28,7 @@ func EnsureBootstrapped(t *testing.T) {
 		return
 	}
 
-	if err := ensureBootstrapRunFn(ctx, r); err != nil {
+	if err := ensureBootstrapRunFn(ctx, NewProductRunner(t)); err != nil {
 		t.Fatalf("EnsureBootstrapped: %v", err)
 	}
 }
@@ -66,15 +64,10 @@ func defaultBootstrapRun(ctx context.Context, r Runner) error {
 }
 
 func findSagBin() (string, error) {
-	if bin := os.Getenv("SAG_TEST_BIN"); bin != "" {
-		return bin, nil
-	}
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	p, err := TestBinary()
 	if err != nil {
-		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
+		return "", err
 	}
-	root := string(bytes.TrimSpace(out))
-	p := filepath.Join(root, "bin", "sag-devxtest")
 	if _, err := os.Stat(p); err != nil {
 		return "", fmt.Errorf("sag-devxtest not found at %s; build with make build-devxtest", p)
 	}

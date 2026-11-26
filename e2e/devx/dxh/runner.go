@@ -3,6 +3,7 @@ package dxh
 import (
 	"context"
 	"os/exec"
+	"testing"
 )
 
 type Runner interface {
@@ -30,4 +31,9 @@ func (r osRunner) Output(ctx context.Context, name string, args ...string) ([]by
 		cmd.Env = env
 	}
 	return cmd.Output()
+}
+
+func NewProductRunner(t *testing.T) Runner {
+	t.Helper()
+	return NewGroupRunner(t.TempDir(), t.TempDir())
 }

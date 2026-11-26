@@ -52,7 +52,10 @@ func TestDevxMain(t *testing.T) {
 		})
 	})
 
-	dxh.RunGroup(t, ctx, r, tcfg, "base", nil, func(t *testing.T) {})
+	dxh.RunGroup(t, ctx, r, tcfg, "base", nil, func(t *testing.T) {
+		t.Run("DXAC01_Bootstrap", func(t *testing.T) { DXAC01_Bootstrap(t, ctx) })
+		t.Run("DXAC02_ContainerAndCert", func(t *testing.T) { DXAC02_ContainerAndCert(t, ctx) })
+	})
 
 	dxh.RunGroup(t, ctx, r, tcfg, "noterm", nil, func(t *testing.T) {
 		t.Run("DXAC04_BootstrapNoTerminal", func(t *testing.T) {
@@ -65,7 +68,10 @@ func TestDevxMain(t *testing.T) {
 		testDXAC36_HostGuards(t, ctx, groupDir, binDir)
 	})
 
-	dxh.RunGroup(t, ctx, r, tcfg, "service", nil, func(t *testing.T) {})
+	dxh.RunGroup(t, ctx, r, tcfg, "service", nil, func(t *testing.T) {
+		t.Run("DXAC27_Autostart", func(t *testing.T) { DXAC27_Autostart(t, ctx) })
+		t.Run("DXAC28_ServiceStopStart", func(t *testing.T) { DXAC28_ServiceStopStart(t, ctx) })
+	})
 }
 
 func testHarnessSkeleton(t *testing.T, ctx context.Context, groupDir, binDir string) {

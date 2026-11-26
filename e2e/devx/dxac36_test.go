@@ -69,5 +69,15 @@ func testDXAC36_HostGuards(t *testing.T, ctx context.Context, groupDir, binDir s
 		if !strings.Contains(string(exitErr.Stderr), "another process holds the lock") {
 			t.Fatalf("bootstrap with lock held: stderr %q does not name the lock", exitErr.Stderr)
 		}
+
+		for _, args := range [][]string{{"service", "start"}, {"service", "stop"}} {
+			_, err = gr.Output(ctx, sagDevxtest, args...)
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+				t.Fatalf("%v with lock held: %v; want exit 1", args, err)
+			}
+			if !strings.Contains(string(exitErr.Stderr), "another process holds the lock") {
+				t.Fatalf("%v with lock held: stderr %q does not name the lock", args, exitErr.Stderr)
+			}
+		}
 	})
 }
