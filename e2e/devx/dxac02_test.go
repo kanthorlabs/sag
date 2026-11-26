@@ -8,13 +8,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/asn1"
+	"encoding/json"
 	"encoding/pem"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
@@ -23,6 +23,24 @@ import (
 )
 
 var oidNameConstraints = asn1.ObjectIdentifier{2, 5, 29, 30}
+
+type inspectResult struct {
+	HostConfig struct {
+		LogConfig struct {
+			Type   string            `json:"Type"`
+			Config map[string]string `json:"Config"`
+		} `json:"LogConfig"`
+		PortBindings map[string][]struct {
+			HostIp   string `json:"HostIp"`
+			HostPort string `json:"HostPort"`
+		} `json:"PortBindings"`
+	} `json:"HostConfig"`
+	Config struct {
+		Secrets []struct {
+			Name string `json:"Name"`
+		} `json:"Secrets"`
+	} `json:"Config"`
+}
 
 func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 	t.Helper()
@@ -35,45 +53,40 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 		t.Fatalf("podman exec sag config check: %v\n%s", err, out)
 	}
 
-	out, err = r.Output(ctx, "podman", "container", "inspect", "sag", "--format", "{{.HostConfig.LogConfig.Type}}")
+	out, err = r.Output(ctx, "podman", "container", "inspect", "sag", "--format", "{{json .}}")
 	if err != nil {
-		t.Fatalf("podman inspect log driver: %v", err)
+		t.Fatalf("podman container inspect sag: %v", err)
 	}
-	if strings.TrimSpace(string(out)) != "k8s-file" {
+	var inspected []inspectResult
+	if err := json.Unmarshal(out, &inspected); err != nil || len(inspected) != 1 {
+		t.Fatalf("podman container inspect parse: %v", err)
+	}
+	c := inspected[0]
+
+	if c.HostConfig.LogConfig.Type != "k8s-file" {
 		t.Fatal("log driver is not k8s-file")
 	}
-
-	out, err = r.Output(ctx, "podman", "container", "inspect", "sag",
-		"--format", "{{index .HostConfig.LogConfig.Config \"max-size\"}}")
-	if err != nil {
-		t.Fatalf("podman inspect log max-size: %v", err)
-	}
-	if strings.TrimSpace(string(out)) != "10mb" {
+	if c.HostConfig.LogConfig.Config["max-size"] != "10mb" {
 		t.Fatal("log max-size is not 10mb")
 	}
 
-	root := repoRoot(t)
-
-	devCfg, err := config.Load(filepath.Join(root, "deploy", "dev", "sag.yaml"))
+	home := os.Getenv("HOME")
+	cfgDir := dxh.CfgDir(home)
+	sagCfg, err := config.Load(filepath.Join(cfgDir, "sag.yaml"))
 	if err != nil {
-		t.Fatalf("load deploy/dev/sag.yaml: %v", err)
+		t.Fatalf("load <cfg>/sag.yaml: %v", err)
 	}
-
-	wantSecrets := len(deploy.SecretMounts(devCfg))
-	out, err = r.Output(ctx, "podman", "container", "inspect", "sag", "--format", "{{len .Secrets}}")
-	if err != nil {
-		t.Fatalf("podman inspect secrets: %v", err)
-	}
-	gotSecrets := 0
-	for _, c := range strings.TrimSpace(string(out)) {
-		if c >= '0' && c <= '9' {
-			gotSecrets = gotSecrets*10 + int(c-'0')
-		}
-	}
+	wantSecrets := len(deploy.SecretMounts(sagCfg))
+	gotSecrets := len(c.Config.Secrets)
 	if gotSecrets != wantSecrets {
 		t.Fatalf("secret count = %d; want %d", gotSecrets, wantSecrets)
 	}
 
+	root := repoRoot(t)
+	devCfg, err := config.Load(filepath.Join(root, "deploy", "dev", "sag.yaml"))
+	if err != nil {
+		t.Fatalf("load deploy/dev/sag.yaml: %v", err)
+	}
 	golden, err := os.ReadFile(filepath.Join(root, "deploy", "sag.container"))
 	if err != nil {
 		t.Fatalf("read deploy/sag.container: %v", err)
@@ -88,8 +101,7 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 		t.Fatal("Quadlet output for deploy/dev/sag.yaml does not match deploy/sag.container")
 	}
 
-	home := os.Getenv("HOME")
-	caPath := filepath.Join(dxh.CfgDir(home), "ca.pem")
+	caPath := filepath.Join(cfgDir, "ca.pem")
 	caBytes, err := os.ReadFile(caPath)
 	if err != nil {
 		t.Fatalf("read ca.pem: %v", err)
@@ -108,13 +120,10 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 		}
 	}
 
+	caPool := x509.NewCertPool()
+	caPool.AppendCertsFromPEM(caBytes)
 	tlsCfg := &tls.Config{
-		InsecureSkipVerify: false,
-		RootCAs: func() *x509.CertPool {
-			pool := x509.NewCertPool()
-			pool.AppendCertsFromPEM(caBytes)
-			return pool
-		}(),
+		RootCAs:    caPool,
 		ServerName: "localhost",
 	}
 	conn, err := tls.Dial("tcp", "127.0.0.1:8443", tlsCfg)
@@ -132,7 +141,6 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 	sort.Slice(wantIPs, func(i, j int) bool {
 		return wantIPs[i].String() < wantIPs[j].String()
 	})
-
 	if len(serverCert.DNSNames) != len(wantDNS) || serverCert.DNSNames[0] != wantDNS[0] {
 		t.Fatal("server cert DNS SANs do not match expected names")
 	}
@@ -145,14 +153,12 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 		}
 	}
 
-	out, err = r.Output(ctx, "podman", "container", "inspect", "sag", "--format",
-		"{{range .HostConfig.PortBindings}}{{range .}}{{.HostIp}}:{{.HostPort}}{{end}}{{end}}")
-	if err != nil {
-		t.Fatalf("podman inspect port bindings: %v", err)
-	}
-	binding := strings.TrimSpace(string(out))
-	if !strings.HasPrefix(binding, "127.0.0.1:") {
-		t.Fatal("port binding host IP is not 127.0.0.1")
+	for _, bindings := range c.HostConfig.PortBindings {
+		for _, b := range bindings {
+			if b.HostIp != "127.0.0.1" {
+				t.Fatal("port binding host IP is not 127.0.0.1")
+			}
+		}
 	}
 }
 

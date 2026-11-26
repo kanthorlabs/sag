@@ -241,11 +241,11 @@ func TestUnchangedPlistNoReload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bootstrapCalled := false
+	var launchctlCalls []string
 	d := deps{
 		launchctlRun: func(_ context.Context, args ...string) ([]byte, error) {
-			if len(args) > 0 && args[0] == "bootstrap" {
-				bootstrapCalled = true
+			if len(args) > 0 {
+				launchctlCalls = append(launchctlCalls, args[0])
 			}
 			return nil, nil
 		},
@@ -267,8 +267,8 @@ func TestUnchangedPlistNoReload(t *testing.T) {
 	if changed {
 		t.Error("expected changed=false when plist unchanged")
 	}
-	if bootstrapCalled {
-		t.Error("launchctl bootstrap called when plist unchanged")
+	if len(launchctlCalls) > 0 {
+		t.Errorf("launchctl called when plist unchanged: %v", launchctlCalls)
 	}
 	if !strings.Contains(out.String(), "ok autostart") {
 		t.Errorf("expected ok autostart line, got: %q", out.String())
