@@ -42,7 +42,7 @@ func TestContainerInspectListsSecrets(t *testing.T) {
 		"--name", containerName,
 		"--network", run.Network,
 		"--secret", secretName,
-		"docker.io/library/busybox:latest",
+		"docker.io/library/busybox:1.37.0-musl",
 		"sh", "-c", "sleep 3600",
 	)
 	if err != nil {
@@ -52,7 +52,7 @@ func TestContainerInspectListsSecrets(t *testing.T) {
 		t.Fatalf("podman run exit %d: %s", res.ExitCode, res.Stderr)
 	}
 	t.Cleanup(func() {
-		testenv.Podman(context.Background(), nil, "stop", "--time", "0", containerName) //nolint
+		_, _ = testenv.Podman(context.Background(), nil, "stop", "--time", "0", containerName)
 	})
 
 	r := Runner{Path: podmanPath}
@@ -76,11 +76,8 @@ func TestContainerInspectListsSecrets(t *testing.T) {
 			found = true
 		}
 	}
-	if found {
-		t.Logf("RESULT: podman container inspect lists secrets on this machine")
-	} else {
-		t.Logf("RESULT: podman container inspect does NOT list secrets on this machine")
-		t.Logf("NOTE: secrets[].mounted will be excluded from D4.2 as per PRD-devx 8")
+	if !found {
+		t.Fatalf("secret %q not in container inspect result; secrets: %v", secretName, info.Secrets)
 	}
 }
 

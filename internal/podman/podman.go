@@ -3,11 +3,25 @@ package podman
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
+
+type RunError struct {
+	ExitCode int
+	Stderr   string
+}
+
+func (e *RunError) Error() string {
+	return fmt.Sprintf("exit status %d: %s", e.ExitCode, e.Stderr)
+}
+
+var ErrEmptyInspect = errors.New("podman inspect returned empty list")
 
 type Runner struct {
 	Path string
@@ -16,7 +30,19 @@ type Runner struct {
 func (r Runner) Run(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, r.Path, args...)
 	cmd.Stdin = stdin
-	return cmd.Output()
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, runError(err)
+	}
+	return out, nil
+}
+
+func runError(err error) *RunError {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return &RunError{ExitCode: exit.ExitCode(), Stderr: strings.TrimSpace(string(exit.Stderr))}
+	}
+	return &RunError{ExitCode: -1, Stderr: err.Error()}
 }
 
 type runner struct {
@@ -24,12 +50,7 @@ type runner struct {
 }
 
 func fromRunner(r Runner) runner {
-	return runner{exec: func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, r.Path, args...)
-		cmd.Stdin = stdin
-		out, err := cmd.Output()
-		return out, err
-	}}
+	return runner{exec: r.Run}
 }
 
 func (r Runner) SecretCreate(ctx context.Context, name string, value io.Reader, labels map[string]string) error {
@@ -40,7 +61,7 @@ func (r Runner) SecretInspect(ctx context.Context, name string) (SecretInfo, err
 	return fromRunner(r).SecretInspect(ctx, name)
 }
 
-func (r Runner) SecretList(ctx context.Context) ([]SecretInfo, error) {
+func (r Runner) SecretList(ctx context.Context) ([]string, error) {
 	return fromRunner(r).SecretList(ctx)
 }
 
@@ -54,8 +75,13 @@ func (r Runner) ContainerInspect(ctx context.Context, name string) (ContainerInf
 
 func (r runner) SecretCreate(ctx context.Context, name string, value io.Reader, labels map[string]string) error {
 	args := []string{"secret", "create"}
-	for k, v := range labels {
-		args = append(args, "--label", k+"="+v)
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "--label", k+"="+labels[k])
 	}
 	args = append(args, name, "-")
 	_, err := r.exec(ctx, value, args...)
@@ -72,25 +98,28 @@ func (r runner) SecretInspect(ctx context.Context, name string) (SecretInfo, err
 		return SecretInfo{}, err
 	}
 	if len(infos) == 0 {
-		return SecretInfo{}, io.EOF
+		return SecretInfo{}, ErrEmptyInspect
 	}
 	return infos[0].toSecretInfo(), nil
 }
 
-func (r runner) SecretList(ctx context.Context) ([]SecretInfo, error) {
-	out, err := r.exec(ctx, nil, "secret", "ls", "--format", "json")
+func (r runner) SecretList(ctx context.Context) ([]string, error) {
+	out, err := r.exec(ctx, nil, "secret", "ls", "--format", "{{.Name}}")
 	if err != nil {
 		return nil, err
 	}
-	var raw []rawSecretInfo
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, err
+	return parseNames(out), nil
+}
+
+func parseNames(b []byte) []string {
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		name := strings.TrimSpace(line)
+		if name != "" {
+			names = append(names, name)
+		}
 	}
-	infos := make([]SecretInfo, len(raw))
-	for i, r := range raw {
-		infos[i] = r.toSecretInfo()
-	}
-	return infos, nil
+	return names
 }
 
 func (r runner) SecretRemove(ctx context.Context, name string) error {
@@ -108,7 +137,7 @@ func (r runner) ContainerInspect(ctx context.Context, name string) (ContainerInf
 		return ContainerInfo{}, err
 	}
 	if len(infos) == 0 {
-		return ContainerInfo{}, io.EOF
+		return ContainerInfo{}, ErrEmptyInspect
 	}
 	return infos[0].toContainerInfo(), nil
 }
@@ -119,13 +148,11 @@ type rawSecretInfo struct {
 		Name   string            `json:"Name"`
 		Labels map[string]string `json:"Labels"`
 	} `json:"Spec"`
-	CreatedAt string `json:"CreatedAt"`
-	UpdatedAt string `json:"UpdatedAt"`
+	CreatedAt time.Time `json:"CreatedAt"`
+	UpdatedAt time.Time `json:"UpdatedAt"`
 }
 
 func (r rawSecretInfo) toSecretInfo() SecretInfo {
-	created, _ := time.Parse(time.RFC3339Nano, r.CreatedAt)
-	updated, _ := time.Parse(time.RFC3339Nano, r.UpdatedAt)
 	labels := r.Spec.Labels
 	if labels == nil {
 		labels = map[string]string{}
@@ -133,8 +160,8 @@ func (r rawSecretInfo) toSecretInfo() SecretInfo {
 	return SecretInfo{
 		ID:        r.ID,
 		Spec:      SecretSpec{Name: r.Spec.Name, Labels: labels},
-		CreatedAt: created,
-		UpdatedAt: updated,
+		CreatedAt: r.CreatedAt,
+		UpdatedAt: r.UpdatedAt,
 	}
 }
 
@@ -167,4 +194,3 @@ func (r rawContainerInfo) toContainerInfo() ContainerInfo {
 	name = strings.TrimPrefix(name, "/")
 	return ContainerInfo{ID: r.Id, Name: name, Secrets: secrets}
 }
-

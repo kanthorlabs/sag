@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -33,10 +35,64 @@ func (f *fakeExec) run(_ context.Context, stdin io.Reader, args ...string) ([]by
 }
 
 func TestRunPipesStdinAndArgs(t *testing.T) {
-	r := Runner{Path: "podman"}
-	out, err := r.Run(context.Background(), strings.NewReader("hello"), "version")
-	if err == nil && out == nil {
-		t.Skip("not running against real podman")
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "podman-stub")
+	script := `#!/bin/sh
+cat >&2
+echo "stub-ok"
+exit 0`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := Runner{Path: stub}
+	stdin := strings.NewReader("hello-stdin")
+	out, err := r.Run(context.Background(), stdin, "arg1", "arg2")
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !strings.Contains(string(out), "stub-ok") {
+		t.Errorf("output = %q, want stub-ok", string(out))
+	}
+}
+
+func TestRunReturnsRunErrorWithStderr(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "podman-stub")
+	script := `#!/bin/sh
+echo "error details" >&2
+exit 125`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := Runner{Path: stub}
+	_, err := r.Run(context.Background(), nil, "secret", "inspect", "gone")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var re *RunError
+	if !errors.As(err, &re) {
+		t.Fatalf("want *RunError, got %T: %v", err, err)
+	}
+	if re.ExitCode != 125 {
+		t.Errorf("ExitCode = %d, want 125", re.ExitCode)
+	}
+	if !strings.Contains(re.Stderr, "error details") {
+		t.Errorf("Stderr = %q, want 'error details'", re.Stderr)
+	}
+}
+
+func TestRunErrorOnMissingProgram(t *testing.T) {
+	r := Runner{Path: "/nonexistent/podman"}
+	_, err := r.Run(context.Background(), nil, "version")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var re *RunError
+	if !errors.As(err, &re) {
+		t.Fatalf("want *RunError, got %T: %v", err, err)
+	}
+	if re.ExitCode != -1 {
+		t.Errorf("ExitCode = %d, want -1", re.ExitCode)
 	}
 }
 
@@ -83,8 +139,30 @@ func TestSecretCreateValueNeverInArgs(t *testing.T) {
 	}
 }
 
+func TestSecretCreateSortsLabels(t *testing.T) {
+	f := &fakeExec{output: []byte("")}
+	r := runner{exec: f.run}
+	_ = r.SecretCreate(context.Background(), "s", strings.NewReader("v"), map[string]string{"z": "1", "a": "2", "m": "3"})
+	if len(f.calls) == 0 {
+		t.Fatal("no calls")
+	}
+	var labelPairs []string
+	args := f.calls[0].args
+	for i, a := range args {
+		if a == "--label" && i+1 < len(args) {
+			labelPairs = append(labelPairs, args[i+1])
+		}
+	}
+	if len(labelPairs) != 3 {
+		t.Fatalf("want 3 labels, got %d: %v", len(labelPairs), labelPairs)
+	}
+	if labelPairs[0] != "a=2" || labelPairs[1] != "m=3" || labelPairs[2] != "z=1" {
+		t.Errorf("labels not sorted: %v", labelPairs)
+	}
+}
+
 func TestSecretCreateExitNonZeroReturnsError(t *testing.T) {
-	f := &fakeExec{err: errors.New("exit status 125")}
+	f := &fakeExec{err: &RunError{ExitCode: 125, Stderr: "some error"}}
 	r := runner{exec: f.run}
 	err := r.SecretCreate(context.Background(), "s", strings.NewReader("v"), nil)
 	if err == nil {
@@ -127,7 +205,7 @@ func TestSecretInspectNoShowsecret(t *testing.T) {
 }
 
 func TestSecretInspectNotFound(t *testing.T) {
-	f := &fakeExec{err: fmt.Errorf("exit status 125: no secret with name or id %q: no such secret", "gone")}
+	f := &fakeExec{err: &RunError{ExitCode: 125, Stderr: "no secret with name or id gone: no such secret"}}
 	r := runner{exec: f.run}
 	_, err := r.SecretInspect(context.Background(), "gone")
 	if err == nil {
@@ -135,20 +213,31 @@ func TestSecretInspectNotFound(t *testing.T) {
 	}
 }
 
-func TestSecretListReturnsAll(t *testing.T) {
-	infos := []map[string]any{
-		{"ID": "id1", "Spec": map[string]any{"Name": "s1", "Labels": map[string]any{}}, "CreatedAt": "2026-01-01T00:00:00Z", "UpdatedAt": "2026-01-01T00:00:00Z"},
-		{"ID": "id2", "Spec": map[string]any{"Name": "s2", "Labels": map[string]any{"k": "v"}}, "CreatedAt": "2026-01-02T00:00:00Z", "UpdatedAt": "2026-01-02T00:00:00Z"},
-	}
-	out, _ := json.Marshal(infos)
-	f := &fakeExec{output: out}
+func TestSecretInspectEmptyReturnsNamedError(t *testing.T) {
+	f := &fakeExec{output: []byte("[]")}
 	r := runner{exec: f.run}
-	list, err := r.SecretList(context.Background())
+	_, err := r.SecretInspect(context.Background(), "s")
+	if !errors.Is(err, ErrEmptyInspect) {
+		t.Fatalf("want ErrEmptyInspect, got %v", err)
+	}
+}
+
+func TestSecretListReturnsNames(t *testing.T) {
+	f := &fakeExec{output: []byte("s1\ns2\n")}
+	r := runner{exec: f.run}
+	names, err := r.SecretList(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 2 {
-		t.Fatalf("want 2 secrets, got %d", len(list))
+	if len(names) != 2 || names[0] != "s1" || names[1] != "s2" {
+		t.Fatalf("names = %v, want [s1 s2]", names)
+	}
+	if len(f.calls) == 0 {
+		t.Fatal("no calls")
+	}
+	joined := strings.Join(f.calls[0].args, " ")
+	if !strings.Contains(joined, "{{.Name}}") {
+		t.Errorf("SecretList args missing {{.Name}}: %v", f.calls[0].args)
 	}
 }
 
@@ -176,8 +265,8 @@ func TestSecretRemoveCallsRm(t *testing.T) {
 
 func TestContainerInspectParsesSecrets(t *testing.T) {
 	infos := []map[string]any{{
-		"Id":   "abc",
-		"Name": "/sag",
+		"Id":         "abc",
+		"Name":       "/sag",
 		"HostConfig": map[string]any{},
 		"Mounts":     []any{},
 		"Secrets": []any{
@@ -233,6 +322,15 @@ func TestContainerInspectNotFound(t *testing.T) {
 	}
 }
 
+func TestContainerInspectEmptyReturnsNamedError(t *testing.T) {
+	f := &fakeExec{output: []byte("[]")}
+	r := runner{exec: f.run}
+	_, err := r.ContainerInspect(context.Background(), "missing")
+	if !errors.Is(err, ErrEmptyInspect) {
+		t.Fatalf("want ErrEmptyInspect, got %v", err)
+	}
+}
+
 func TestRunStdinPipedNotArgs(t *testing.T) {
 	value := []byte("secret-value-xyz")
 	f := &fakeExec{output: []byte("")}
@@ -250,4 +348,50 @@ func TestRunStdinPipedNotArgs(t *testing.T) {
 			t.Fatalf("value in args: %v", c.args)
 		}
 	}
+}
+
+func TestSecretInspectBadDateFails(t *testing.T) {
+	info := []map[string]any{{
+		"ID":        "abc",
+		"Spec":      map[string]any{"Name": "s", "Labels": map[string]any{}},
+		"CreatedAt": "not-a-date",
+		"UpdatedAt": "not-a-date",
+	}}
+	out, _ := json.Marshal(info)
+	f := &fakeExec{output: out}
+	r := runner{exec: f.run}
+	_, err := r.SecretInspect(context.Background(), "s")
+	if err == nil {
+		t.Fatal("want error for bad date format, got nil")
+	}
+	if errors.Is(err, ErrEmptyInspect) {
+		t.Fatal("want parse error, not ErrEmptyInspect")
+	}
+}
+
+func TestFromRunnerUsesRunDirectly(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "podman-stub")
+	script := `#!/bin/sh
+echo "stub-called"
+exit 0`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := Runner{Path: stub}
+	fr := fromRunner(r)
+	if fr.exec == nil {
+		t.Fatal("fromRunner returned runner with nil exec")
+	}
+	out, err := fr.exec(context.Background(), nil, "version")
+	if err != nil {
+		t.Fatalf("exec error: %v", err)
+	}
+	if !strings.Contains(string(out), "stub-called") {
+		t.Errorf("output = %q, want stub-called", string(out))
+	}
+}
+
+func init() {
+	_ = fmt.Sprintf
 }

@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,18 +20,15 @@ type fakeRunner struct {
 	createErr   error
 	createExist bool
 
-	loadCalls []string
-	loadValue []byte
-	loadErr   error
-
 	deleteCalls []string
 	deleteErr   error
 
-	inspectName  string
-	inspectValue ipodman.SecretInfo
-	inspectErr   error
+	inspectByName map[string]ipodman.SecretInfo
+	inspectValue  ipodman.SecretInfo
+	inspectName   string
+	inspectErr    error
 
-	listValue []ipodman.SecretInfo
+	listNames []string
 	listErr   error
 }
 
@@ -43,18 +42,27 @@ func (f *fakeRunner) SecretCreate(_ context.Context, name string, value io.Reade
 	data, _ := io.ReadAll(value)
 	f.createCalls = append(f.createCalls, createCall{name: name, stdin: data, labels: labels})
 	if f.createExist {
-		return errors.New("secret already exists")
+		return &ipodman.RunError{ExitCode: 125, Stderr: "Error: secret name " + name + " already exists"}
 	}
 	return f.createErr
 }
 
 func (f *fakeRunner) SecretInspect(_ context.Context, name string) (ipodman.SecretInfo, error) {
 	f.inspectName = name
-	return f.inspectValue, f.inspectErr
+	if f.inspectErr != nil {
+		return ipodman.SecretInfo{}, f.inspectErr
+	}
+	if f.inspectByName != nil {
+		if info, ok := f.inspectByName[name]; ok {
+			return info, nil
+		}
+		return ipodman.SecretInfo{}, &ipodman.RunError{ExitCode: 125, Stderr: "no secret with name or id " + name + ": no such secret"}
+	}
+	return f.inspectValue, nil
 }
 
-func (f *fakeRunner) SecretList(_ context.Context) ([]ipodman.SecretInfo, error) {
-	return f.listValue, f.listErr
+func (f *fakeRunner) SecretList(_ context.Context) ([]string, error) {
+	return f.listNames, f.listErr
 }
 
 func (f *fakeRunner) SecretRemove(_ context.Context, name string) error {
@@ -99,8 +107,18 @@ func TestPutExistsReturnsErrExists(t *testing.T) {
 	}
 }
 
+func TestPutUnavailableReturnsErrUnavailable(t *testing.T) {
+	f := &fakeRunner{createErr: &ipodman.RunError{ExitCode: -1, Stderr: "exec: not found"}}
+	b := newBackend(f)
+	cred := secret.NewCredential(testName, []byte("v"))
+	err := b.Put(context.Background(), testName, cred, nil)
+	if !errors.Is(err, secret.ErrUnavailable) {
+		t.Fatalf("want ErrUnavailable, got %v", err)
+	}
+}
+
 func TestDeleteAbsentIsNil(t *testing.T) {
-	f := &fakeRunner{deleteErr: errors.New("no secret with name or id: not found")}
+	f := &fakeRunner{deleteErr: &ipodman.RunError{ExitCode: 125, Stderr: "no secret with name or id: no such secret"}}
 	b := newBackend(f)
 	err := b.Delete(context.Background(), "absent")
 	if err != nil {
@@ -149,7 +167,7 @@ func TestMetadataNoShowsecret(t *testing.T) {
 }
 
 func TestMetadataNotFound(t *testing.T) {
-	f := &fakeRunner{inspectErr: errors.New("no secret with name")}
+	f := &fakeRunner{inspectErr: &ipodman.RunError{ExitCode: 125, Stderr: "no secret with name or id gone: no such secret"}}
 	b := newBackend(f)
 	_, err := b.Metadata(context.Background(), "gone")
 	if !errors.Is(err, secret.ErrNotFound) {
@@ -157,12 +175,23 @@ func TestMetadataNotFound(t *testing.T) {
 	}
 }
 
+func TestMetadataEmptyInspectIsNotFound(t *testing.T) {
+	f := &fakeRunner{inspectErr: ipodman.ErrEmptyInspect}
+	b := newBackend(f)
+	_, err := b.Metadata(context.Background(), "gone")
+	if !errors.Is(err, secret.ErrNotFound) {
+		t.Fatalf("want ErrNotFound for empty inspect, got %v", err)
+	}
+}
+
 func TestListFiltersLabels(t *testing.T) {
+	now := time.Now()
 	f := &fakeRunner{
-		listValue: []ipodman.SecretInfo{
-			{ID: "1", Spec: ipodman.SecretSpec{Name: "sag-main", Labels: map[string]string{testLabel: "main", "other": "x"}}, CreatedAt: time.Now()},
-			{ID: "2", Spec: ipodman.SecretSpec{Name: "unrelated", Labels: map[string]string{"foo": "bar"}}, CreatedAt: time.Now()},
-			{ID: "3", Spec: ipodman.SecretSpec{Name: "sag-other", Labels: map[string]string{testLabel: "other"}}, CreatedAt: time.Now()},
+		listNames: []string{"sag-main", "unrelated", "sag-other"},
+		inspectByName: map[string]ipodman.SecretInfo{
+			"sag-main":  {ID: "1", Spec: ipodman.SecretSpec{Name: "sag-main", Labels: map[string]string{testLabel: "main", "other": "x"}}, CreatedAt: now},
+			"unrelated": {ID: "2", Spec: ipodman.SecretSpec{Name: "unrelated", Labels: map[string]string{"foo": "bar"}}, CreatedAt: now},
+			"sag-other": {ID: "3", Spec: ipodman.SecretSpec{Name: "sag-other", Labels: map[string]string{testLabel: "other"}}, CreatedAt: now},
 		},
 	}
 	b := newBackend(f)
@@ -179,10 +208,12 @@ func TestListFiltersLabels(t *testing.T) {
 }
 
 func TestListNoSelectorReturnsAll(t *testing.T) {
+	now := time.Now()
 	f := &fakeRunner{
-		listValue: []ipodman.SecretInfo{
-			{ID: "1", Spec: ipodman.SecretSpec{Name: "a", Labels: map[string]string{"k": "v"}}, CreatedAt: time.Now()},
-			{ID: "2", Spec: ipodman.SecretSpec{Name: "b", Labels: map[string]string{}}, CreatedAt: time.Now()},
+		listNames: []string{"a", "b"},
+		inspectByName: map[string]ipodman.SecretInfo{
+			"a": {ID: "1", Spec: ipodman.SecretSpec{Name: "a", Labels: map[string]string{"k": "v"}}, CreatedAt: now},
+			"b": {ID: "2", Spec: ipodman.SecretSpec{Name: "b", Labels: map[string]string{}}, CreatedAt: now},
 		},
 	}
 	b := newBackend(f)
@@ -195,9 +226,27 @@ func TestListNoSelectorReturnsAll(t *testing.T) {
 	}
 }
 
+func TestListSkipsRacedDeletedSecret(t *testing.T) {
+	now := time.Now()
+	f := &fakeRunner{
+		listNames: []string{"present", "gone"},
+		inspectByName: map[string]ipodman.SecretInfo{
+			"present": {ID: "1", Spec: ipodman.SecretSpec{Name: "present", Labels: map[string]string{}}, CreatedAt: now},
+		},
+	}
+	b := newBackend(f)
+	metas, err := b.List(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 || metas[0].Name != "present" {
+		t.Fatalf("want [present], got %v", metas)
+	}
+}
+
 func TestErrorsHoldNoValue(t *testing.T) {
 	secretVal := []byte("ultra-secret-value-xyz")
-	f := &fakeRunner{createErr: errors.New("some podman error")}
+	f := &fakeRunner{createErr: &ipodman.RunError{ExitCode: 1, Stderr: "some podman error"}}
 	b := newBackend(f)
 	cred := secret.NewCredential(testName, secretVal)
 	err := b.Put(context.Background(), testName, cred, nil)
@@ -206,5 +255,35 @@ func TestErrorsHoldNoValue(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), string(secretVal)) {
 		t.Fatalf("error contains secret value: %v", err)
+	}
+}
+
+func TestLoadAppliesOwnerAndModeRule(t *testing.T) {
+	dir := t.TempDir()
+	name := "test-cred"
+	value := []byte("my-secret-value")
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, value, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	b := &Backend{runner: nil, Dir: dir, UID: os.Getuid()}
+	cred, err := b.Load(context.Background(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(cred.Reveal(), value) {
+		t.Errorf("value = %q, want %q", cred.Reveal(), value)
+	}
+}
+
+func TestLoadAbsentReturnsErrNotFound(t *testing.T) {
+	dir := t.TempDir()
+	b := &Backend{runner: nil, Dir: dir, UID: os.Getuid()}
+	_, err := b.Load(context.Background(), "absent")
+	if !errors.Is(err, secret.ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
