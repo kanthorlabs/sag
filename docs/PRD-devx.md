@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 3 |
+| Status | Revision 4 |
 | Date | 2026-11-26 |
 | Base | `docs/PRD.md` revision 16, tag `sag-layer-6` |
 
@@ -19,7 +19,8 @@ devx v1 targets developer machines only:
 - Each other OS, architecture, or distribution gets exit 1 from `sag bootstrap` with the message `unsupported platform <os>/<arch>`.
 - An Ubuntu release whose `podman` package is older than the pin gets exit 1 from `sag bootstrap` (section 5.3).
 - A server install uses PRD 13.5 (`deploy/sag.container`). devx does not change the server path, except the log flags in section 13.
-- The endpoint listens on `127.0.0.1:8443` only. A Tailscale address and a Tailscale certificate are out of scope.
+- The endpoint listens on `127.0.0.1:8443`. With the Tailscale answer `yes`, it also listens on the Tailscale IPv4 address of the host (section 5.8).
+- A certificate from `tailscale cert` is out of scope.
 - devx v1 supports two agent harnesses: Claude Code 2.1.332 and pi 1.6.1 (section 12).
 - Out of scope: an uninstall command, a self-update, a master key reset, a change of the `agents` list of a resource, a credential replacement command.
 
@@ -86,7 +87,7 @@ SAG runs under the current OS user. devx creates no service account, no `sudoers
 | Configuration directory `<cfg>` | `$XDG_CONFIG_HOME/sag` when the variable is set, otherwise `~/.config/sag`. Mode 0700. |
 | `<cfg>/sag.yaml` | Mode 0644. |
 | `<cfg>/ca.pem` | Endpoint CA certificate, mode 0644. |
-| `<cfg>/answers.json` | Stored answers and the absolute path of `podman`, mode 0600. |
+| `<cfg>/answers.json` | Stored answers, the absolute path of `podman`, and the Tailscale address of the certificate, mode 0600. |
 | `<cfg>/lock` | Lock file, mode 0600. |
 | Start at login, macOS | LaunchAgent `~/Library/LaunchAgents/net.kanthorlabs.sag.plist` |
 | Start at login, Ubuntu | Quadlet file `~/.config/containers/systemd/sag.container` of the user manager |
@@ -105,11 +106,13 @@ SAG runs under the current OS user. devx creates no service account, no `sudoers
 
 - No devx command prints, logs, or writes a credential value. The value goes from `/dev/tty` or standard input to the backend, and to the container.
 - Thus a credential value does not reach the agent context through a `sag` command or through MCP.
-- No devx command prints or logs a JWT that `sag agent setup` issues. The JWT goes only into the MCP configuration file of the harness.
+- No devx command prints or logs a JWT that `sag agent setup` issues. Agent setup writes the JWT only into the MCP configuration file of the harness.
+- Claude Code copies its MCP configuration file to `<dir>/backups`. `claude mcp get sag` prints the JWT.
 - An agent with a shell in the same account can read or delete each Podman secret with `podman` directly. The `sag credential delete` check stops only an agent that uses `sag`.
 - `sag credential delete` reads the typed resource name from the controlling terminal. It stops an agent that runs `sag` through a tool without a terminal. It does not stop an agent that opens a pseudo-terminal or runs `podman secret rm`.
 - The same limit applies to the AWS backend. T8 reads the Podman secret `sag-aws-credentials` and then reads each AWS secret that this key can read.
 - T8 reads the JWT of each harness from its MCP configuration file. The file mode 0600 stops only other OS users.
+- With the Tailscale answer `yes`, each tailnet device that the Tailscale ACLs allow reaches port 8443. The JWT check of PRD 11.2 applies to each request.
 
 ### 2.4 Agent command controls
 
@@ -120,6 +123,7 @@ Section 12.7 adds Claude Code deny rules and the pi extension `sag-guard.ts`. Bo
 - The rules and the guard cover no read of a secret, for example `podman secret inspect --showsecret`.
 - The rules and the guard cover no other pseudo-terminal tool, for example `expect` or `python`.
 - The guard matches command text. An agent that builds the command text at run time, for example from two parts or from base64, bypasses the guard.
+- T8 can remove a control: it edits `permissions.deny` or deletes `sag-guard.ts`. The next session then has no control.
 
 ## 3. Pins
 
@@ -177,6 +181,7 @@ The workflow `.github/workflows/release.yml` has the permissions `contents: writ
 | Dev build (`make build`) | Empty | `docker.io/kanthorlabs/sag:main`, with the line `warn image dev build; pulls the main tag` |
 
 - `sag` pulls the image only when the image is absent from the local Podman store.
+- `sag` writes the dev build `warn` line only when it pulls the image.
 - A developer gets a newer dev image with `podman pull docker.io/kanthorlabs/sag:main`, then `sag service start`.
 - `sag version` prints the version and the image reference.
 - devx v1 has no self-update. A new release is a new manual install.
@@ -205,7 +210,7 @@ sag bootstrap
 ### 5.1 Synopsis
 
 ```
-sag bootstrap [--auto-approve <name>@<version>]... [--autostart yes|no]
+sag bootstrap [--auto-approve <name>@<version>]... [--autostart yes|no] [--tailscale yes|no]
     [--agent-setup <harness>=yes|no]... [--deny-rules yes|no] [--shell-profile yes|no] [--guard yes|no]
 ```
 
@@ -215,19 +220,22 @@ Bootstrap runs these steps in this order. Each step first reads the current stat
 
 1. Refuse UID 0, a container, and an unsupported platform.
 2. Select the pins for the OS and the architecture.
-3. Plan: read the state and collect each needed answer of section 5.4. If an answer is needed and no source gives it, exit 3. A plan conflict of section 5.3 or section 12.3 gives exit 1. Both exits occur before any change.
+3. Plan: read the state and collect each needed answer of section 5.4. If bootstrap needs an answer and no source gives it, exit 3. A plan conflict of section 5.3 or section 12.3 gives exit 1. Both exits occur before any change.
 4. Create `<cfg>` with mode 0700 when it is absent. Take the lock `<cfg>/lock`. If another process holds it, exit 1.
 5. Read the state again and plan again. A new needed answer without a source gives exit 3.
 6. For each dependency, apply the dependency rule (section 5.3). On macOS, when no Podman machine exists, run `podman machine init`. When the machine is stopped, run `podman machine start`.
 7. Pull the image of section 4.3 when it is absent.
 8. Create the secret `sag-master-key` when it is absent (section 5.6).
-9. Create or renew the endpoint certificate (section 5.7).
+9. Read the Tailscale address (section 5.8). Create or renew the endpoint certificate (section 5.7).
 10. Create `<cfg>/sag.yaml` when it is absent: `version`, `server`, `auth`, and an empty `resources` map.
 11. Apply the start at login (section 5.5).
-12. When the container `sag` does not run, or step 8 to step 11 changed an item, run `sag service start` (section 6). Otherwise read `GET /healthz` with `<cfg>/ca.pem` and write `ok sag`.
+12. Run `sag service start` (section 6) in each of these cases: the container `sag` does not run, step 8 to step 11 changed an item, or the published addresses of the container differ from section 5.8. Otherwise read `GET /healthz` with `<cfg>/ca.pem` and write `ok sag`.
 13. For each harness with the answer `yes`, run the steps of `sag agent setup` (section 12) with the answers of the plan.
-14. Print the endpoint `https://localhost:8443/mcp` and the next command: `sag credential create <name> --kind postgres --agent claude-code --agent pi`. For each detected harness without setup, print `sag agent setup <harness>`.
+14. Print the endpoint `https://localhost:8443/mcp` and the next command: `sag credential create <name> --kind postgres`, with one `--agent <sub>` for each harness that agent setup completed. Without a completed harness, the command holds `--agent <sub>`. For each detected harness without setup, print `sag agent setup <harness>`. With a Tailscale address, print the steps of section 5.8 for a second tailnet machine.
 
+- The bootstrap plan omits the conflict "The container `sag` does not run" of section 12.3, because step 12 starts SAG.
+- Bootstrap checks the `NODE_EXTRA_CA_CERTS` rule of section 12.5 in step 13, after step 9.
+- On a `NODE_EXTRA_CA_CERTS` conflict, agent setup of that harness changes no file and prints the bundle command. Bootstrap completes the other steps and exits 1.
 - On a host without `<cfg>`, an exit in step 3 leaves no `<cfg>`.
 - Step 13 runs in the bootstrap process under the lock of step 4.
 - A second run on a ready host writes only `ok` lines, asks nothing, does not restart SAG, and exits 0.
@@ -276,13 +284,15 @@ Approval:
 | Install of an absent item, macOS | `--auto-approve podman@5.5.1` | `Install podman 5.5.1 from <locator>? [y/N]` | The item is absent. |
 | Install of an absent item, Ubuntu | `--auto-approve podman@4.9.3` | `Install podman from apt (candidate <apt version>, pin 4.9.3)? [y/N]` | The item is absent. |
 | Start at login | `--autostart yes\|no` | `Start SAG at login? [y/N]` | `answers.json` has no `autostart` value. |
-| Agent setup | `--agent-setup <harness>=yes\|no` | `Set up SAG for <harness> in <absolute config directory>? [y/N]` | The harness is detected, and `answers.json` has no `agent_setup.<harness>` value. |
+| Tailscale address | `--tailscale yes\|no` | `Serve SAG also on the Tailscale address of this host? [y/N]` | The `tailscale` command is in `PATH`, and `answers.json` has no `tailscale` value. |
+| Agent setup | `--agent-setup <harness>=yes\|no` | `Set up SAG for <harness> in <absolute config directory>? [y/N]` | Bootstrap detects the harness, and `answers.json` has no `agent_setup` value for the harness and its absolute config directory. |
 | Answers of agent setup | `--deny-rules`, `--shell-profile`, `--guard` | Section 12.3 | The harness has the agent setup answer `yes`. |
 
-- `<harness>` is `claude-code` or `pi`. A harness is detected when its binary, `claude` or `pi`, is in `PATH`.
+- `<harness>` is `claude-code` or `pi`. Bootstrap detects a harness when its binary, `claude` or `pi`, is in `PATH`.
 - The config directory of a harness is in section 12.2.
-- A flag replaces the stored answer. Bootstrap writes each answer of `--autostart` and `--agent-setup` to `answers.json`. Agent setup stores its own answers (section 12.3).
-- Bootstrap asks only when the answer is needed and no flag gives it.
+- A flag replaces the stored answer. Bootstrap writes each answer of `--autostart`, `--tailscale`, and `--agent-setup` to `answers.json`. Agent setup stores its own answers (section 12.3).
+- `answers.json` keys each `agent_setup` answer by the harness and the absolute path of its config directory.
+- Bootstrap asks only when it needs the answer and no flag gives it.
 - With no terminal and no flag for a needed answer, bootstrap exits 3. The message names the flag.
 - Bootstrap stores no install approval.
 
@@ -307,10 +317,11 @@ Approval:
 ### 5.7 Endpoint certificate
 
 - Bootstrap creates a CA key and a CA certificate with `crypto/x509`, valid for 397 days.
-- The CA certificate has a critical name constraints extension. It permits only the DNS name `localhost` and the IP ranges `127.0.0.1/32` and `::1/128`.
-- Thus the CA trust that `NODE_EXTRA_CA_CERTS` adds covers only the endpoint names.
-- Bootstrap signs one server certificate for `localhost`, `127.0.0.1`, and `::1`, with the same validity.
-- Bootstrap discards the CA key after it signs.
+- The CA certificate has no name constraints extension.
+- Bootstrap signs one server certificate with the same validity. Its names are `localhost`, `127.0.0.1`, `::1`, and the Tailscale address of section 5.8 when bootstrap has one.
+- The CA key exists only in memory and never goes to a file.
+- Bootstrap discards the CA key after it signs. Thus no party can sign a second certificate with this CA.
+- A process that trusts `<cfg>/ca.pem` trusts each name of a certificate that this CA signs. Only the one server certificate exists.
 - The server certificate becomes the secret `sag-tls-cert`. The server key becomes the secret `sag-tls-key`.
 - Each value goes to the standard input of `podman secret create <name> -`. The server key never goes to a file, an argument, or an output.
 - The CA certificate goes to `<cfg>/ca.pem`.
@@ -321,15 +332,48 @@ Bootstrap creates the three items in this order:
 2. Remove `sag-tls-cert` and `sag-tls-key` when they exist.
 3. Create `sag-tls-cert` and `sag-tls-key`.
 4. Rename `<cfg>/ca.pem.new` to `<cfg>/ca.pem`.
+5. Write the Tailscale address of the new server certificate to `answers.json` as `tailscale_ip`. When the certificate has no Tailscale address, remove `tailscale_ip`.
 
 Bootstrap runs this sequence in each of these cases:
 
 - One of `sag-tls-cert`, `sag-tls-key`, and `<cfg>/ca.pem` is absent.
 - `<cfg>/ca.pem.new` exists.
 - Less than 30 days remain on `<cfg>/ca.pem`.
+- Bootstrap has a Tailscale address, and `answers.json` has no `tailscale_ip` or another `tailscale_ip`.
+- The Tailscale answer is `no`, and `answers.json` has a `tailscale_ip`.
 
 - Thus a second run repairs a stopped run.
 - After a new certificate, step 12 restarts SAG. Each agent client then needs a restart. The path `<cfg>/ca.pem` does not change, so no agent configuration changes.
+- A Tailscale outage at bootstrap does not trigger the sequence. The certificate keeps its Tailscale address.
+
+### 5.8 Tailscale address
+
+- With the Tailscale answer `yes` and no `tailscale` command in `PATH`, bootstrap writes `warn tailscale command absent; loopback only` and continues.
+- With the answer `yes`, bootstrap runs `tailscale ip -4`. The first line of the output is the Tailscale address.
+- When `tailscale ip -4` exits non-zero or prints no IPv4 address, bootstrap writes `warn tailscale down; loopback only until the next run` and continues.
+- With the answer `no`, bootstrap does not run `tailscale`.
+
+Publish set:
+
+| Publish | Condition |
+|---|---|
+| `127.0.0.1:8443:8443` | Always. |
+| `<tailscale IP>:8443:8443` | The answer is `yes`, and `tailscale ip -4` prints the address `tailscale_ip` of `answers.json`. |
+
+- No publish uses `0.0.0.0` or another address.
+- The `podman run` arguments hold one `-p` flag for each publish. The Quadlet file holds one `PublishPort=` line for each publish.
+- `sag service start` runs `tailscale ip -4` at each start when the answer is `yes`. When the output differs from `tailscale_ip`, it writes `warn tailscale address <state>; loopback only; run sag bootstrap` and publishes loopback only. `<state>` is `down` or `changed`.
+- On macOS, the Podman machine forwards each published port through gvproxy. gvproxy listens on the host address of the publish. Thus the Tailscale publish listens on the Tailscale interface of the macOS host `[unverified]`. DX-AC52 proves it on the macOS development machine.
+- On Ubuntu, rootless Podman binds the Tailscale address on the host. The start at login fails while that address is absent. systemd then tries again every 10 s (R27).
+
+Agent on a second tailnet machine. Bootstrap prints these steps with the Tailscale address:
+
+1. On the second machine, install `sag` with the steps of section 4.4, without `sag bootstrap`.
+2. On the second machine, create `<cfg>` with mode 0700. Copy `<cfg>/ca.pem` of the SAG host to `<cfg>/ca.pem` of the second machine by hand.
+3. On the SAG host, list the `sub` of the agent with `sag credential create <name> --kind <kind> --agent <sub>`.
+4. On the SAG host, run `sag jwt generate <sub>` on a terminal.
+5. On the second machine, run `sag agent setup <harness> --url https://<tailscale IP>:8443/mcp` and type the JWT at the hidden prompt (section 12.4).
+6. After each certificate renewal, copy `<cfg>/ca.pem` again.
 
 ## 6. `sag service start` and `sag service stop`
 
@@ -347,6 +391,7 @@ sag service stop
 - `start` waits up to 30 s for `GET /healthz`. A timeout gives exit 1 and the last 50 lines of the daemon log.
 - `start` and `stop` take the lock `<cfg>/lock`.
 - On macOS, the run arguments include `--restart=on-failure`.
+- `start` applies the publish set of section 5.8.
 
 ## 7. `sag credential create`
 
@@ -464,7 +509,7 @@ sag credential inspect <name> [--json]
 - An unreachable backend gives a `warn` line on standard error and exit 0.
 - `--json` of list: `{"credentials": [<object>]}`. `--json` of inspect: one object. The object has exactly the fields of the table.
 - Inspect of an unknown name gives exit 1 with `resource <name> not found`.
-- Build step 1 confirms that `podman container inspect` of Podman 4.9.3 lists the secrets of the container. When it does not, `secrets[].mounted` is not part of v1, and DX-AC20 reads the Quadlet file.
+- Build step 1 confirms that `podman container inspect` of Podman 4.9.3 lists the secrets of the container. When it does not, `secrets[].mounted` is not part of v1, and DX-AC20 reads the Quadlet file. In that case DX-AC2 counts the `Secret=` lines of the Quadlet file.
 
 ## 9. `sag credential delete`
 
@@ -481,7 +526,7 @@ sag credential delete <name>
 
 - A resource owns each secret that its `sag.yaml` entry references and that has the label `sag.resource=<name>`.
 - A resource also owns each secret with the label `sag.resource=<name>` that no entry references. A failed create leaves such a secret.
-- devx manages only the secrets of `sag credential create`. A referenced secret without the label is not owned.
+- devx manages only the secrets of `sag credential create`. A resource does not own a referenced secret without the label.
 
 ### 9.3 Flow
 
@@ -495,7 +540,7 @@ sag credential delete <name>
 6. Remove `resources.<name>` from `sag.yaml` with a temporary file and a rename.
 7. When the container ran at step 5, run `sag service start`. Otherwise keep SAG stopped and, on Ubuntu, write the Quadlet file.
 8. `Delete` each owned secret.
-9. For each referenced secret that is not owned, print `skip <secret name> not created by sag; not removed`.
+9. For each referenced secret that the resource does not own, print `skip <secret name> not created by sag; not removed`.
 
 - `delete` is idempotent. A second `delete` after a failure completes the steps that remain.
 - `delete` of a resource without an approval record succeeds.
@@ -599,8 +644,8 @@ storage:
     credentials: secret:sag-aws-credentials
 ```
 
-- `storage.aws.region` is required when a reference starts with `aws-sm:`.
-- `storage.aws.credentials` is required in the same case. It references a Podman secret.
+- A reference that starts with `aws-sm:` needs `storage.aws.region`.
+- The same reference also needs `storage.aws.credentials`. It references a Podman secret.
 - The value of that secret is an AWS shared credentials file with one `[default]` profile. The operator creates it with `podman secret create`.
 - The daemon builds its AWS configuration with the standard credential chain of the AWS SDK for Go v2: `config.LoadDefaultConfig` with `config.WithRegion` and `config.WithSharedCredentialsFiles(["/run/secrets/<name>"])`.
 - The host commands use `config.LoadDefaultConfig` with `config.WithRegion` and the default chain of the operator.
@@ -624,11 +669,14 @@ storage:
 ### 12.1 Synopsis
 
 ```
-sag agent setup claude-code [--sub <sub>] [--deny-rules yes|no]
-sag agent setup pi [--sub <sub>] [--shell-profile yes|no] [--guard yes|no]
+sag agent setup claude-code [--sub <sub>] [--url <url>] [--deny-rules yes|no]
+sag agent setup pi [--sub <sub>] [--url <url>] [--shell-profile yes|no] [--guard yes|no]
 ```
 
 - The default `sub` is `claude-code` for Claude Code and `pi` for pi.
+- The default URL is `https://localhost:8443/mcp`. This is the local mode.
+- `--url <url>` selects the remote mode for an agent on a second tailnet machine (section 5.8). The URL has the scheme `https`, a host, the port 8443, and the path `/mcp`. Another form gives exit 2.
+- In the remote mode, agent setup does not use Podman or the container. The JWT comes from a hidden prompt (section 12.4).
 - `--sub <sub>` replaces the default. A value that does not match `^[a-z][a-z0-9-]{0,62}$` gives exit 2.
 - An unknown harness name gives exit 2.
 - Bootstrap runs the same steps in its step 13, under its own lock.
@@ -655,9 +703,8 @@ Steps:
 | Skill | `<dir>/skills/sag/SKILL.md` | `<dir>/skills/sag/SKILL.md` |
 | CA trust | `env.NODE_EXTRA_CA_CERTS` in `<dir>/settings.json` | One `export` line in the shell profile |
 | Command control | `permissions.deny` in `<dir>/settings.json` | `<dir>/extensions/sag-guard.ts` |
-| Verify command | `claude mcp list` | `pi mcp list` |
+| Verify command | `claude mcp list` | `pi mcp list --json` |
 
-- On the machine of Ulrich, `$CLAUDE_CONFIG_DIR/.claude.json` holds the key `mcpServers` and has mode 0600 `[read]`.
 - The shell profile of pi depends on the base name of `$SHELL`:
 
 | Shell | Profile |
@@ -670,38 +717,53 @@ Steps:
 
 | Answer | Flag | Prompt | Needed when |
 |---|---|---|---|
-| Claude Code deny rules | `--deny-rules yes\|no` | `Add 3 deny rules to <absolute path of settings.json>? [y/N]` | A rule of section 12.7 is absent, and `answers.json` has no `deny_rules` value. |
-| pi shell profile | `--shell-profile yes\|no` | `Add "export NODE_EXTRA_CA_CERTS=<cfg>/ca.pem" to <absolute path of the profile>? [y/N]` | The line is absent, and `answers.json` has no `shell_profile` value. |
-| pi guard | `--guard yes\|no` | `Install <absolute path of sag-guard.ts> to block SAG secret commands in bash? [y/N]` | The guard file is absent, and `answers.json` has no `guard` value. |
+| Claude Code deny rules | `--deny-rules yes\|no` | `Add 3 deny rules to <absolute path of settings.json>? [y/N]` | A rule of section 12.7 is absent, and `answers.json` has no `deny_rules` value for that `settings.json`. |
+| pi shell profile | `--shell-profile yes\|no` | `Add "export NODE_EXTRA_CA_CERTS=<cfg>/ca.pem" to <absolute path of the profile>? [y/N]` | The line is absent, and `answers.json` has no `shell_profile` value for that profile. |
+| pi guard | `--guard yes\|no` | `Install <absolute path of sag-guard.ts> to block SAG secret commands in bash? [y/N]` | The guard file is absent, and `answers.json` has no `guard` value for that guard file. |
 
 - A flag replaces the stored answer. Agent setup writes each answer to `answers.json`.
-- Agent setup asks only when the answer is needed and no flag gives it.
+- `answers.json` keys each answer by the absolute path of the file that the answer approves.
+- Agent setup asks only when it needs the answer and no flag gives it.
 - With no terminal and no flag for a needed answer, agent setup exits 3. The message names the flag.
 - Without a `yes` answer, agent setup does not change the file of that answer.
 
 Plan conflicts. Each conflict gives one `fail` line and exit 1 before any change:
 
 - The harness binary, `claude` or `pi`, is not in `PATH`.
-- The container `sag` does not run.
+- In the local mode, the container `sag` does not run. The bootstrap plan omits this conflict (section 5.2).
+- In the remote mode, `<cfg>/ca.pem` is absent.
 - The MCP configuration file or `<dir>/settings.json` exists and is not valid JSON.
 - `mcpServers.sag` exists with a `command` key or with another `url`. The line is `fail mcp-server sag in <path> has another form; remove it`.
 - `<dir>/skills/sag/SKILL.md` exists without the marker of section 12.6.
 - `<dir>/extensions/sag-guard.ts` exists, and its line 1 is not the marker of section 12.7.
-- `NODE_EXTRA_CA_CERTS` has a value that section 12.5 does not accept.
+- `NODE_EXTRA_CA_CERTS` has a value that section 12.5 does not accept. Bootstrap checks this conflict in its step 13.
 - The shell profile answer is `yes`, and `$SHELL` is not `zsh` or `bash`. The line tells the operator to add the `export` line by hand and to run again with `--shell-profile no`.
 
 ### 12.4 MCP registration and JWT
 
-- Agent setup registers SAG only as a remote streamable-HTTP MCP server at `https://localhost:8443/mcp`.
+- Agent setup registers SAG only as a remote streamable-HTTP MCP server at the URL of section 12.1.
 - Agent setup never writes a `command` entry or a stdio entry. No harness can start SAG. SAG starts only through `sag service start` or the start at login.
-- Claude Code entry: `{"type": "http", "url": "https://localhost:8443/mcp", "headers": {"Authorization": "Bearer <JWT>"}}`.
-- pi entry: `{"url": "https://localhost:8443/mcp", "headers": {"Authorization": "Bearer <JWT>"}}`.
-- Agent setup writes the MCP configuration file directly. It never calls `claude mcp add` or `pi mcp add`, because their header flag puts the JWT in an argument.
-- Write rule: change only `mcpServers.sag`. Keep each other key and value. Write a temporary file with mode 0600 in the same directory, then rename it. The final file has mode 0600.
-- When `mcpServers.sag` has the same `url` and an `Authorization` header, agent setup keeps the entry and writes `ok mcp-server`.
-- When the verification of a kept entry fails, agent setup issues a new JWT, writes the entry, and verifies one more time.
+- Claude Code entry: `{"type": "http", "url": "<url>", "headers": {"Authorization": "Bearer <JWT>"}}`.
+- pi entry: `{"url": "<url>", "headers": {"Authorization": "Bearer <JWT>"}, "exposure": "direct"}`.
+- Agent setup writes the MCP configuration file directly. It never calls `claude mcp add` or `pi mcp add`. The reason: `claude mcp add --header` puts the JWT in an argument.
 
-JWT issue:
+JSON write rule. Sections 12.4, 12.5, and 12.7 use it for each harness file:
+
+- Change only the named key. Decode only the top level and each object on the path of that key. Keep each other value as its raw bytes.
+- Write a temporary file in the same directory, then rename it.
+- The new file keeps the mode of the old file. A new file gets mode 0600. The MCP configuration file always ends with mode 0600.
+- When the path is a symbolic link, write the target of the link. The link stays.
+- Create an absent `<dir>` with mode 0700.
+
+Kept entry:
+
+- When `mcpServers.sag` has the same `url` and an `Authorization` header, agent setup decodes the `sub` claim of the kept JWT.
+- Agent setup then sends one MCP `initialize` request with the kept JWT to the URL. The trust is `<cfg>/ca.pem`.
+- When the `sub` is equal and SAG does not answer 401, agent setup keeps the entry and writes `ok mcp-server`.
+- Otherwise agent setup gets a new JWT and writes the entry.
+- A failed verification of section 12.8 never gets a new JWT.
+
+JWT issue, local mode:
 
 - Agent setup runs `podman exec sag sag agent issue <sub>` without `-t`. It reads the JWT from the standard output pipe of that process.
 - `sag agent issue <sub>` issues a JWT with the claims of PRD 11.2. The `name` claim is `<sub>`.
@@ -711,12 +773,17 @@ JWT issue:
 - `sag credential create` keeps `--agent` explicit and required.
 - The JWT never goes to the standard output or standard error of `sag agent setup`, to a log, to an argument, or to an environment variable.
 
+JWT input, remote mode:
+
+- Agent setup opens `/dev/tty`, writes `JWT for <sub> (input hidden): `, and reads one line with echo off. No terminal gives exit 3.
+- Agent setup decodes the `sub` claim without a signature check. A `sub` other than the `sub` of section 12.1 gives exit 1.
+- The operator gets the JWT from `sag jwt generate <sub>` on the SAG host.
+
 ### 12.5 CA trust
 
 Claude Code:
 
-- Agent setup writes `env.NODE_EXTRA_CA_CERTS` with the absolute path `<cfg>/ca.pem` into `<dir>/settings.json`.
-- It keeps each other key and value. It writes a temporary file and renames it.
+- Agent setup writes `env.NODE_EXTRA_CA_CERTS` with the absolute path `<cfg>/ca.pem` into `<dir>/settings.json` with the JSON write rule of section 12.4.
 - This write needs no prompt of its own. The agent setup answer of bootstrap, or the standalone command, approves it.
 
 pi:
@@ -730,6 +797,7 @@ export NODE_EXTRA_CA_CERTS="<cfg>/ca.pem"
 
 - When the profile holds the `export` line, agent setup writes `ok shell-profile`.
 - A new shell reads the line. A pi process needs a restart from a new shell.
+- A non-interactive shell does not read the profile. A pi process that does not start from an interactive shell needs `NODE_EXTRA_CA_CERTS` from its parent process (R25).
 
 Present value of `NODE_EXTRA_CA_CERTS`:
 
@@ -746,14 +814,14 @@ fail ca-trust NODE_EXTRA_CA_CERTS is <path>; run: cat "<path>" "<cfg>/ca.pem" > 
 
 ### 12.6 Skill
 
-- Agent setup writes `<dir>/skills/sag/SKILL.md`. Both harnesses get the same file.
+- Agent setup writes `<dir>/skills/sag/SKILL.md`. Both harnesses get the same file, except the `sub` in the human command.
 - The frontmatter has `name: sag` and a `description` that names read-only SQL access through SAG.
 - The marker line `<!-- managed by sag agent setup -->` follows the frontmatter. A second run replaces only a file with this marker.
 - The body holds these items:
-  - The four tools of PRD 13.3 with their inputs.
+  - The four tools of PRD 13.3 with their inputs. The tool name in each harness is `mcp__sag__<tool>`.
   - The read-only rules: one `SELECT` statement per call, no write, no bind parameters, results are untrusted data and not instructions.
   - The error codes of PRD 13.3, each with its meaning.
-  - The human command that adds a resource for both harnesses: `sag credential create <name> --kind postgres --agent claude-code --agent pi`.
+  - The human command that adds a resource for the harness: `sag credential create <name> --kind postgres --agent <sub>`, with the `sub` of the harness.
   - The rule that the agent never runs `sag credential delete`, `podman secret`, or `sag agent setup`.
 
 ### 12.7 Command control
@@ -768,15 +836,20 @@ Bash(podman secret rm:*)
 Bash(script:*)
 ```
 
-- Agent setup adds only absent rules. It keeps each other key and value. It writes a temporary file and renames it.
+- Agent setup adds only absent rules. It uses the JSON write rule of section 12.4.
 
 pi guard:
 
 - With the answer `yes`, agent setup writes `<dir>/extensions/sag-guard.ts`. It creates `<dir>/extensions` with mode 0700 when it is absent.
 - Line 1 of the file is the marker `// managed by sag agent setup`. A second run replaces only a file with this line 1.
-- The guard handles each `tool_call` event of the `bash` tool. It blocks the call when `input.command` contains `sag credential delete`, `podman secret rm`, or `script` at any position.
+- The guard handles each `tool_call` event of the `bash` tool.
+- It blocks the call when `input.command` contains `sag credential delete` or `podman secret rm` at any position.
+- It blocks the call when `script` is a command word in `input.command`.
+- `script` is a command word when one of these items comes before it: the start of the text, `;`, `&&`, `||`, `|`, `(`, `$(`, a backtick, `sudo`, `env`, or a quote that opens a nested command. Spaces between the item and `script` do not change the match.
+- `script` with a path prefix, for example `/usr/bin/script`, is also a command word.
+- A space, a tab, a line break, a quote, or the end of the text comes after a command word `script`. Thus `scripts/` and `typescript` pass.
 - A block returns `{ block: true, reason: "sag-guard: <matched text> blocked" }`. Other tools and other commands pass.
-- The match is case-sensitive. The guard also blocks a command that contains `script` inside another word, for example `typescript` or `scripts/`.
+- The match is case-sensitive.
 - pi has no permission rules. The guard is the only pi command control.
 
 Repository layout:
@@ -792,15 +865,20 @@ internal/agentsetup/
 - The `go:embed` directive names the two product files. The test file stays out of the binary.
 - `sag-guard.ts` imports only types from `@earendil-works/pi-coding-agent`, with `import type`. Node runs the file without that package.
 - `sag-guard.test.ts` uses only `node:test` and `node:assert`. It calls the default export with a test `pi` object and checks the result of the `tool_call` handler.
-- CI runs `node --test internal/agentsetup/assets/pi/` with Node 24 and its default type strip.
+- CI runs `node --test "internal/agentsetup/assets/pi/*.test.ts"` with Node 24 and its default type strip.
+- A Go unit test checks that the skill body holds each tool name and each error code of PRD 13.3. The test reads them from the Go constants.
 
 ### 12.8 Verification
 
-- After the writes, agent setup runs `claude mcp list` or `pi mcp list` with a timeout of 60 s.
-- The child environment holds `NODE_EXTRA_CA_CERTS=<cfg>/ca.pem`. It holds no JWT.
-- The result is the line of the server `sag` in the output. The exit code alone does not decide: `pi mcp list` exits 1 when another enabled server is not connected.
-- When `sag` is connected, agent setup writes `ok verify <harness>`. Otherwise it writes `fail verify <harness>` with the output line of `sag` and exits 1. The writes stay.
-- Build step 5 records the output form of both commands for Claude Code 2.1.332 and pi 1.6.1.
+- After the writes, agent setup runs `claude mcp list` or `pi mcp list --json` with a timeout of 60 s.
+- The child runs in a new empty temporary directory. Its environment holds no JWT.
+- For Claude Code, the child environment holds no `NODE_EXTRA_CA_CERTS`. Thus the check proves the value of `settings.json`.
+- For pi, the child environment holds `NODE_EXTRA_CA_CERTS=<cfg>/ca.pem`.
+- The check starts each MCP server in the configuration of the harness.
+- Claude Code result: the output line that starts with `sag: `. `claude mcp list` exits 0 also when a server fails.
+- pi result: the `state` of the element of `servers` with the `name` `sag`. `pi mcp list --json` exits 1 when another enabled server is not connected.
+- When `sag` is connected, agent setup writes `ok verify <harness>`. Otherwise it writes `fail verify <harness>` with the result of `sag` and exits 1. The writes stay.
+- Build step 5 records the connected form of the `sag` line of `claude mcp list` 2.1.332 and the connected `state` value of `pi mcp list --json` 1.6.1.
 - The last line is `ok agent <harness>; restart <harness>`. For pi, the line adds `from a new shell`.
 
 ## 13. Container flags
@@ -811,8 +889,9 @@ internal/agentsetup/
 - `internal/deploy` builds the `podman run` arguments and the Quadlet file from `ContainerFlags` and `sag.yaml`.
 - The secret mounts are each `secret:` reference of `sag.yaml`, the `storage.aws.credentials` reference, and `sag-master-key`. An `aws-sm:` reference gets no mount.
 - In the Quadlet file, the log flags are `LogDriver=k8s-file` and `PodmanArgs=--log-opt=max-size=10mb`.
+- `internal/deploy` builds the publish flags from the publish set of section 5.8.
 - The e2e harness, `sag service start`, and the Quadlet output use `internal/deploy`.
-- `deploy/sag.container` is a golden file. A unit test compares it with the Quadlet output for `deploy/dev/sag.yaml`.
+- `deploy/sag.container` is a golden file. A unit test compares it with the Quadlet output for `deploy/dev/sag.yaml` and the Tailscale answer `no`.
 - The devx Quadlet file mounts `<cfg>/sag.yaml` and uses the image of section 4.3 with `Pull=never`.
 
 ## 14. Removal of the development scripts
@@ -848,9 +927,10 @@ devx has no uninstall command. Do these steps in this order to remove the devx s
 6. Run `podman secret rm sag-master-key sag-tls-cert sag-tls-key`. If `sag-aws-credentials` exists, remove it.
 7. Run `podman rmi` for each `docker.io/kanthorlabs/sag` image.
 8. Remove `<cfg>`.
-9. For Claude Code, remove `mcpServers.sag` from the MCP configuration file. Remove `env.NODE_EXTRA_CA_CERTS` and the deny rules of section 12.7 from `<dir>/settings.json`. Remove `<dir>/skills/sag`.
-10. For pi, remove `mcpServers.sag` from `<dir>/mcp.json`. Remove `<dir>/skills/sag` and `<dir>/extensions/sag-guard.ts`. Remove the two lines of section 12.5 from the shell profile.
-11. To remove the state of the old scripts, run `scripts/dev-down.sh` from a commit before the removal.
+9. For Claude Code, run `claude mcp remove sag -s user`. Remove `env.NODE_EXTRA_CA_CERTS` and the deny rules of section 12.7 from `<dir>/settings.json`. Remove `<dir>/skills/sag`. Remove each file of `<dir>/backups` that holds `mcpServers.sag`.
+10. For pi, run `pi mcp remove sag`. Remove `<dir>/skills/sag` and `<dir>/extensions/sag-guard.ts`. Remove the two lines of section 12.5 from the shell profile.
+11. On each second tailnet machine, do step 9 and step 10. Then remove `<cfg>`.
+12. To remove the state of the old scripts, run `scripts/dev-down.sh` from a commit before the removal.
 
 Podman and the Podman machine stay installed.
 
@@ -861,12 +941,12 @@ Podman and the Podman machine stay installed.
 | 2 G1 | Credentials stay inside the SAG container or in a SecureStorage backend. On a developer machine, section 2.3 of this addendum limits G1. |
 | 4 Personas | The operator uses the devx host commands to create secrets, write `sag.yaml`, issue JWTs, approve extensions, set up agent harnesses, and read the audit log. |
 | 5 | Add `github.com/aws/aws-sdk-go-v2/config`, `github.com/aws/aws-sdk-go-v2/service/secretsmanager`, and `golang.org/x/term` (hidden terminal read of section 7.3). |
-| 6 | Add the log flags of section 13 to the container constraints. "The operator runs CLI commands inside the container with `podman exec`" also allows the host forms of section 1.2. "The daemon reads `sag.yaml` and all secrets at start" applies to `secret:` references; section 11.4 applies to `aws-sm:` references. |
-| 6.1 | The macOS development certificate comes from `sag bootstrap` (section 5.7). Its CA has name constraints for `localhost`, `127.0.0.1`, and `::1`. `NODE_EXTRA_CA_CERTS` points to `<cfg>/ca.pem` through section 12.5. |
+| 6 | Add the log flags of section 13 to the container constraints. devx publishes `127.0.0.1:8443` and, with the Tailscale answer `yes`, the Tailscale IPv4 address of the host (section 5.8). "The operator runs CLI commands inside the container with `podman exec`" also allows the host forms of section 1.2. "The daemon reads `sag.yaml` and all secrets at start" applies to `secret:` references; section 11.4 applies to `aws-sm:` references. |
+| 6.1 | The development certificate on macOS and Ubuntu comes from `sag bootstrap` (section 5.7). Its CA has no name constraints extension, and no file holds the CA key. The server certificate names `localhost`, `127.0.0.1`, `::1`, and the Tailscale address of section 5.8. `NODE_EXTRA_CA_CERTS` points to `<cfg>/ca.pem` through section 12.5. The `tailscale cert` row applies to a server install only. |
 | 7.1 | On a developer machine, the agent runs on the container host in the account of the operator. Section 2 of this addendum applies. |
 | 7.3 | Add T8. |
 | 7.4 TB2, TB4 | Add the devx host commands as the operator path. Add the AWS backend as a secret source. |
-| 7.6 | R8 applies only to a manual mkcert setup. Add R11 to R25 of section 18. Operator guidance: on a developer machine, `sag agent setup` writes the JWT into the user-level MCP configuration file of the harness. |
+| 7.6 | R8 applies only to a manual mkcert setup. Add R11 to R28 of section 18. Operator guidance: on a developer machine, `sag agent setup` writes the JWT into the user-level MCP configuration file of the harness. |
 | 9.1 | Hint text: `resource <name> has risky objects <list>; to approve, run: sag extension approve <name>`. |
 | 9.2 | Command `sag extension approve <resource>`. `sag extension revoke` exits 0 when no approval record exists, after it writes the tombstone. |
 | 10.2 | The scrubber adds a credential at the time that `Load` returns it. The scrubber also holds the value of the `storage.aws.credentials` file. |
@@ -876,7 +956,7 @@ Podman and the Podman machine stay installed.
 | 13.1 | Add the commands of section 1.1. |
 | 13.2 | On a developer machine, `sag agent setup` registers SAG (section 12). A manual registration writes the entry into the MCP configuration file. It never passes the JWT as a command argument. |
 | 13.4 | `resources` can be empty. An absent `resources` key equals an empty map. Add `storage.aws.region`, `storage.aws.credentials`, and the `aws-sm:` reference. AC1 keeps its five fixtures. |
-| 13.5 | The Quadlet file gets the log keys of section 13. Step 3 text: "The committed file follows the golden input `deploy/dev/sag.yaml` and needs `sag-orders` and `sag-dev-pg-ca`. No devx command creates these secrets." |
+| 13.5 | The Quadlet file gets the log keys of section 13 and one `PublishPort=` line for each publish of section 5.8. Step 3 text: "The committed file follows the golden input `deploy/dev/sag.yaml` and needs `sag-orders` and `sag-dev-pg-ca`. No devx command creates these secrets." |
 | 15.2 | Add a reference to the build order of section 19. |
 
 Code facts that change with the PRD:
@@ -890,58 +970,68 @@ Code facts that change with the PRD:
 
 ## 17. Acceptance criteria
 
-Each criterion has one e2e test, except DX-AC44, which is a Node test. Section 17.1 names the environments.
+Each criterion has one e2e test, except DX-AC44, which is a Node test, and DX-AC49, which is a Go unit test. Section 17.1 names the environments.
 
-| ID | Criterion | Environment |
-|---|---|---|
-| DX-AC1 | `bootstrap --autostart yes`, with no harness binary in `PATH`, exits 0. `GET /healthz` with `<cfg>/ca.pem` returns 200. `systemctl --user list-dependencies default.target` holds `sag.service`. | Ubuntu CI |
-| DX-AC2 | For the container from DX-AC1, `podman exec sag sag config check` exits 0. The secret count of `podman container inspect sag` equals the mount count of section 13. `podman inspect` shows log driver `k8s-file` with `max-size` 10mb. The Quadlet output for `deploy/dev/sag.yaml` equals `deploy/sag.container`. `<cfg>/ca.pem` has a critical name constraints extension that permits exactly `localhost`, `127.0.0.1/32`, and `::1/128`. | Ubuntu CI |
-| DX-AC3 | A second `bootstrap` without a terminal and without flags exits 0 and writes only `ok` lines. The `CreatedAt` of `sag-master-key` and the start time of the container do not change. A JWT from before the run still authenticates. | Ubuntu CI |
-| DX-AC4 | On a host without `<cfg>`, `bootstrap` without a terminal and without flags exits 3 within 30 s. The message names `--autostart`. No secret and no `<cfg>` exist after the run. | Ubuntu CI |
-| DX-AC5 | With Podman removed, `bootstrap --auto-approve podman@4.9.3 --autostart no` installs Podman and exits 0. `newuidmap` is in `PATH`. | Ubuntu CI, separate job |
-| DX-AC6 | Without a terminal and without a pre-approval, an absent test item gives exit 3 and no install. With `--auto-approve <item>@<other version>`, `bootstrap` writes the `ignored` `warn` line and exits 3. | Ubuntu CI, test pins |
-| DX-AC7 | A `release` test item with a wrong SHA-256 gives exit 1. The artifact is absent from the download directory, and the test install command does not run. With the correct SHA-256, the test install command runs one time on the path of the verified file. | Ubuntu CI, test pins |
-| DX-AC8 | An installed item newer than the test pin gives one `warn` line and exit 0. An installed item older than the test pin gives exit 1, and no `<cfg>` exists after the run. An `apt` test item whose candidate is older than the test pin gives exit 1 and no install. The installed version does not change. | Ubuntu CI, test pins |
-| DX-AC9 | `credential create canary` with a canary DSN typed on a pseudo-terminal exits 0. The DSN host is `host.containers.internal` with the published port of a PostgreSQL container. `sag resource test canary` passes. | Ubuntu CI, PostgreSQL container |
-| DX-AC10 | After DX-AC9, a search for the canary password, host, user, and database finds no match. The search covers the command output, the pseudo-terminal echo, `<cfg>`, `answers.json`, and the Quadlet file. It also covers `podman logs sag`, the audit file, `podman container inspect sag`, `podman secret inspect` of each secret, and the user journal. | Ubuntu CI |
-| DX-AC11 | `create` exits 1 for a DSN with `?sslmode=disable`, with two hosts, and without a database. It also exits 1 for an invalid name and for a name in use. No new secret exists. No message holds a canary part. | Ubuntu CI |
-| DX-AC12 | `create` with a DSN to a closed port exits 1, and no secret exists. With `--accept-failed-check`, it exits 0 with one `warn` line, and the secret exists. | Ubuntu CI |
-| DX-AC13 | A DSN with host `127.0.0.1` gives the loopback `warn` line. The line holds no canary part. | Ubuntu CI |
-| DX-AC14 | `create --stdin` with a piped DSN exits 0. Input of 64 KiB plus one byte gives exit 1. Input with a NUL byte gives exit 1. A piped DSN without `--stdin` and without a terminal gives exit 3. | Ubuntu CI |
-| DX-AC15 | `create` exits 1 when `sag-res-<name>.conn` exists before the call. The value of that secret does not change. | Ubuntu CI |
-| DX-AC16 | A test hook makes step 3 of `create` fail after step 1. `create` exits 1. The new secret is absent, `sag.yaml` is unchanged, and `/healthz` returns 200. | Ubuntu CI, test build |
-| DX-AC17 | `credential list` and `credential inspect canary`, in text and with `--json`, show the fields of section 8. They contain no canary part. The JSON object has exactly the field set of section 8. | Ubuntu CI |
-| DX-AC18 | `credential delete canary` without a terminal exits 3. After the attempt, the secret exists and `sag resource test canary` passes. | Ubuntu CI |
-| DX-AC19 | `credential delete canary --yes` exits 2. A wrong typed name on a pseudo-terminal gives exit 3. After each attempt, the secret exists. | Ubuntu CI |
-| DX-AC20 | `credential delete canary` with the typed name on a pseudo-terminal exits 0. The secrets are absent, and `sag.yaml` has no `canary`. The container has no mount of the secrets, and the revoke tombstone exists. | Ubuntu CI |
-| DX-AC21 | `delete` succeeds for a resource without an approval record, and with the container stopped. | Ubuntu CI |
-| DX-AC22 | A test hook makes step 8 of `delete` fail. A second `delete` exits 0 and removes the secrets that remain. | Ubuntu CI, test build |
-| DX-AC23 | For a resource whose referenced secret has no `sag.resource` label, `delete` prints the `skip` line. The secret still exists. | Ubuntu CI |
-| DX-AC24 | Host `sag jwt generate claude-code-dev` without a terminal exits 3. On a pseudo-terminal with standard output redirected to a file, it exits 3 and the file is empty. With `--json`, it exits 2. On a pseudo-terminal, it prints a JWT that authenticates at `/mcp`. | Ubuntu CI |
-| DX-AC25 | `sag logs daemon` prints the line `sag starting`. After one `tools/call`, `sag logs audit` prints one line with its `request_id`. Both commands exit 0 in a process without a controlling terminal. | Ubuntu CI |
-| DX-AC26 | With a `settings.json` that holds other keys, `agent setup claude-code --deny-rules yes` adds the three rules and keeps the other keys. A second run adds no duplicate. `--deny-rules no` leaves the rules unchanged. | Ubuntu CI, harness stubs |
-| DX-AC27 | `bootstrap --autostart no` writes a Quadlet file without `[Install]`, and `list-dependencies default.target` does not hold `sag.service`. `--autostart yes` writes it with `WantedBy=default.target`. | Ubuntu CI |
-| DX-AC28 | After `sag service stop`, the container does not run and `/healthz` fails. After `sag service start`, `/healthz` returns 200. | Ubuntu CI |
-| DX-AC29 | With a test certificate validity of 20 days, `credential list` writes the expiry `warn` line. `bootstrap` then replaces `<cfg>/ca.pem`, and `/healthz` returns 200 with the new file. A test hook stops a renewal after step 3 of section 5.7. The next `bootstrap` exits 0, removes `<cfg>/ca.pem.new`, and `/healthz` returns 200 with `<cfg>/ca.pem`. | Ubuntu CI, test build |
-| DX-AC30 | A binary with an embedded test digest pulls the image by that digest. A binary without a digest writes the dev build `warn` line. | Ubuntu CI, test build, local registry |
-| DX-AC31 | A resource with `connection: aws-sm:<name>` passes `sag resource test`. `create --backend aws-sm`, `list`, and `delete` work on the AWS backend. The tags of each created AWS secret are exactly the three labels of section 7.5. | Ubuntu CI, LocalStack |
-| DX-AC32 | Three resources reference `aws-sm:` secrets, one resource references a Podman secret, and the AWS endpoint drops packets. `/healthz` returns 200 within 30 s after `sag service start`. The Podman resource is served, and each AWS resource returns `resource_unavailable`. Within 120 s after the endpoint returns, each AWS resource is served. | Ubuntu CI, LocalStack |
-| DX-AC33 | The product binary ignores each `SAG_TEST_*` variable. Its symbol table has no `devxtest` symbol. No non-test source file contains `--showsecret`. | Ubuntu CI, build check |
-| DX-AC34 | On macOS with an installed Podman, `bootstrap --autostart yes --agent-setup claude-code=no --agent-setup pi=no` writes an `ok` or `warn` line for Podman and does not change it. `answers.json` holds the absolute `podman_path`. `/healthz` returns 200. `launchctl print gui/<uid>/net.kanthorlabs.sag` shows the agent. After `sag service stop`, `launchctl kickstart -k gui/<uid>/net.kanthorlabs.sag` gives `/healthz` 200 within 30 s. | macOS dev machine |
-| DX-AC35 | On macOS, `credential create`, `list`, and `delete` behave as DX-AC9, DX-AC17, and DX-AC20. | macOS dev machine |
-| DX-AC36 | Each host command as UID 0 exits 1. `sag agent issue a`, `sag credential check`, and `sag serve` on the host exit 2. A host command exits 1 while another process holds `<cfg>/lock`. | Ubuntu CI |
-| DX-AC37 | `create --tls-ca <file>` against a PostgreSQL with a private CA exits 0, and `sag resource test` passes. The CA secret has the label `sag.role=tls_ca`. A test hook makes step 3 fail after step 2, and both new secrets are absent. `delete` removes both secrets. | Ubuntu CI, TLS PostgreSQL container |
-| DX-AC38 | A test flag marks `podman` absent, and a test flag stops `bootstrap` before the install command. `bootstrap` downloads the pinned pkg, accepts its SHA-256, exits 0, and prints the path of the verified file. `installer` does not run. With a wrong test SHA-256, `bootstrap` exits 1 and the file is absent. | macOS dev machine, test build |
-| DX-AC39 | With `CLAUDE_CONFIG_DIR` set to a test directory whose `.claude.json` and `settings.json` hold other keys, `agent setup claude-code --deny-rules no` exits 0. `.claude.json` has mode 0600, keeps the other keys, and has `mcpServers.sag` with `type` `http`, the endpoint URL, an `Authorization` header, and no `command` key. `settings.json` has `env.NODE_EXTRA_CA_CERTS` equal to `<cfg>/ca.pem`. `skills/sag/SKILL.md` exists. The JWT of the entry authenticates at `/mcp` with `sub` `claude-code`. The stub `claude` received `mcp list`. Without `CLAUDE_CONFIG_DIR`, the entry goes to `~/.claude.json` and the skill to `~/.claude/skills/sag/SKILL.md`. | Ubuntu CI, harness stubs |
-| DX-AC40 | After DX-AC39 and DX-AC41, a search for each issued JWT finds no match outside the MCP configuration files. The search covers the output of `agent setup`, the arguments and environment of each child process, `podman logs sag`, the audit file, `<cfg>`, and the user journal. | Ubuntu CI, harness stubs |
-| DX-AC41 | With `PI_CODING_AGENT_DIR` set to a test directory and `SHELL=/bin/bash`, `agent setup pi --shell-profile yes --guard yes` exits 0. `mcp.json` has mode 0600 and `mcpServers.sag` with `url` and `headers`, and no `command` key. The skill exists. `extensions/sag-guard.ts` exists with the marker in line 1. `~/.bashrc` holds the `export` line one time. A second run without a terminal and without flags writes only `ok` lines. | Ubuntu CI, harness stubs |
-| DX-AC42 | With `NODE_EXTRA_CA_CERTS` set to another file, `agent setup pi` exits 1, prints the bundle command, and changes no file. After the bundle command and `NODE_EXTRA_CA_CERTS` set to the bundle, `agent setup pi` exits 0. The same holds for `env.NODE_EXTRA_CA_CERTS` in the `settings.json` of Claude Code. | Ubuntu CI, harness stubs |
-| DX-AC43 | Without a terminal and without flags, `agent setup claude-code` exits 3 and names `--deny-rules`. `agent setup pi` exits 3 and names `--shell-profile`. A `mcpServers.sag` entry with a `command` key gives exit 1. A `sag-guard.ts` without the marker gives exit 1. A stub that reports `sag` as not connected gives exit 1. No file changes on an exit in the plan. | Ubuntu CI, harness stubs |
-| DX-AC44 | `node --test internal/agentsetup/assets/pi/` passes. The tests show that the guard blocks a `bash` call that contains `sag credential delete x`, `sh -c "podman secret rm x"`, or `/usr/bin/script`. The guard passes `ls -la` and each call of another tool. | Ubuntu CI, Node 24 |
-| DX-AC45 | With no resource that lists `claude-code`, `agent setup claude-code` exits 0. With its JWT, `list_resources` returns an empty list. After `credential create x --agent claude-code`, `list_resources` returns `x`. Host `sag jwt generate claude-code` on a pseudo-terminal still exits 1 for an unlisted `sub`. `--sub Bad` gives exit 2. | Ubuntu CI, harness stubs |
-| DX-AC46 | With the stubs `claude` and `pi` in `PATH`, `bootstrap --autostart no --agent-setup claude-code=yes --agent-setup pi=no --deny-rules no` sets up only Claude Code. Without a terminal and without `--agent-setup`, `bootstrap` exits 3 and names `--agent-setup`. | Ubuntu CI, harness stubs |
-| DX-AC47 | With Claude Code 2.1.332, after `agent setup claude-code --deny-rules yes`, `claude mcp list` shows `sag` connected. `claude -p` from a shell without `NODE_EXTRA_CA_CERTS` lists the resources. A Bash tool call `sag credential delete x` gets a deny. | macOS dev machine |
-| DX-AC48 | With pi 1.6.1, after `agent setup pi --shell-profile yes --guard yes`, `pi mcp list` from a new shell shows `sag` connected. In a pi session, a `bash` tool call `podman secret rm x` gets a block from `sag-guard`. | macOS dev machine |
+- The column "Run" names where the criterion runs: `CI` or `Dev machine`.
+- A `Dev machine` criterion runs on the macOS development machine of Ulrich only. No GitHub Actions job runs it.
+- The `Dev machine` criteria form four groups: macOS, Podman install and machine, real harnesses, and Tailscale.
+- The AC report records the result of each `Dev machine` criterion: pass or fail, the date, and the versions of macOS, Podman, the harness, and Tailscale.
+- CI tests the logic of these features with harness stubs and a fake `tailscale` command. No CI job installs a harness.
+
+| ID | Criterion | Environment | Run |
+|---|---|---|---|
+| DX-AC1 | `bootstrap --autostart yes`, with no harness binary in `PATH`, exits 0. `GET /healthz` with `<cfg>/ca.pem` returns 200. `systemctl --user list-dependencies default.target` holds `sag.service`. | Ubuntu CI | CI |
+| DX-AC2 | For the container from DX-AC1, `podman exec sag sag config check` exits 0. The secret count of `podman container inspect sag` equals the mount count of section 13. `podman inspect` shows log driver `k8s-file` with `max-size` 10mb. The Quadlet output for `deploy/dev/sag.yaml` equals `deploy/sag.container`. `<cfg>/ca.pem` has no name constraints extension. The server certificate of the endpoint names exactly `localhost`, `127.0.0.1`, and `::1`. | Ubuntu CI | CI |
+| DX-AC3 | A second `bootstrap` without a terminal and without flags exits 0 and writes only `ok` lines. The `CreatedAt` of `sag-master-key` and the start time of the container do not change. A JWT from before the run still authenticates. | Ubuntu CI | CI |
+| DX-AC4 | On a host without `<cfg>`, `bootstrap` without a terminal and without flags exits 3 within 30 s. The message names `--autostart`. No secret and no `<cfg>` exist after the run. | Ubuntu CI | CI |
+| DX-AC5 | With Podman removed, `bootstrap --auto-approve podman@4.9.3 --autostart no` installs Podman and exits 0. `newuidmap` is in `PATH`. | Ubuntu CI, separate job | CI |
+| DX-AC6 | Without a terminal and without a pre-approval, an absent test item gives exit 3 and no install. With `--auto-approve <item>@<other version>`, `bootstrap` writes the `ignored` `warn` line and exits 3. | Ubuntu CI, test pins | CI |
+| DX-AC7 | A `release` test item with a wrong SHA-256 gives exit 1. The artifact is absent from the download directory, and the test install command does not run. With the correct SHA-256, the test install command runs one time on the path of the verified file. | Ubuntu CI, test pins | CI |
+| DX-AC8 | An installed item newer than the test pin gives one `warn` line and exit 0. An installed item older than the test pin gives exit 1, and no `<cfg>` exists after the run. An `apt` test item whose candidate is older than the test pin gives exit 1 and no install. The installed version does not change. | Ubuntu CI, test pins | CI |
+| DX-AC9 | `credential create canary` with a canary DSN typed on a pseudo-terminal exits 0. The DSN host is `host.containers.internal` with the published port of a PostgreSQL container. `sag resource test canary` passes. | Ubuntu CI, PostgreSQL container | CI |
+| DX-AC10 | After DX-AC9, a search for the canary password, host, user, and database finds no match. The search covers the command output, the pseudo-terminal echo, `<cfg>`, `answers.json`, and the Quadlet file. It also covers `podman logs sag`, the audit file, `podman container inspect sag`, `podman secret inspect` of each secret, and the user journal. No file in `$HOME` or the temporary directory holds a private key that matches the public key of `<cfg>/ca.pem`. | Ubuntu CI | CI |
+| DX-AC11 | `create` exits 1 for a DSN with `?sslmode=disable`, with two hosts, and without a database. It also exits 1 for an invalid name and for a name in use. No new secret exists. No message holds a canary part. | Ubuntu CI | CI |
+| DX-AC12 | `create` with a DSN to a closed port exits 1, and no secret exists. With `--accept-failed-check`, it exits 0 with one `warn` line, and the secret exists. | Ubuntu CI | CI |
+| DX-AC13 | A DSN with host `127.0.0.1` gives the loopback `warn` line. The line holds no canary part. | Ubuntu CI | CI |
+| DX-AC14 | `create --stdin` with a piped DSN exits 0. Input of 64 KiB plus one byte gives exit 1. Input with a NUL byte gives exit 1. A piped DSN without `--stdin` and without a terminal gives exit 3. | Ubuntu CI | CI |
+| DX-AC15 | `create` exits 1 when `sag-res-<name>.conn` exists before the call. The value of that secret does not change. | Ubuntu CI | CI |
+| DX-AC16 | A test hook makes step 3 of `create` fail after step 1. `create` exits 1. The new secret is absent, `sag.yaml` is unchanged, and `/healthz` returns 200. | Ubuntu CI, test build | CI |
+| DX-AC17 | `credential list` and `credential inspect canary`, in text and with `--json`, show the fields of section 8. They contain no canary part. The JSON object has exactly the field set of section 8. | Ubuntu CI | CI |
+| DX-AC18 | `credential delete canary` without a terminal exits 3. After the attempt, the secret exists and `sag resource test canary` passes. | Ubuntu CI | CI |
+| DX-AC19 | `credential delete canary --yes` exits 2. A wrong typed name on a pseudo-terminal gives exit 3. After each attempt, the secret exists. | Ubuntu CI | CI |
+| DX-AC20 | `credential delete canary` with the typed name on a pseudo-terminal exits 0. The secrets are absent, and `sag.yaml` has no `canary`. The container has no mount of the secrets, and the revoke tombstone exists. | Ubuntu CI | CI |
+| DX-AC21 | `delete` succeeds for a resource without an approval record, and with the container stopped. | Ubuntu CI | CI |
+| DX-AC22 | A test hook makes step 8 of `delete` fail. A second `delete` exits 0 and removes the secrets that remain. | Ubuntu CI, test build | CI |
+| DX-AC23 | For a resource whose referenced secret has no `sag.resource` label, `delete` prints the `skip` line. The secret still exists. | Ubuntu CI | CI |
+| DX-AC24 | Host `sag jwt generate claude-code-dev` without a terminal exits 3. On a pseudo-terminal with standard output redirected to a file, it exits 3 and the file is empty. With `--json`, it exits 2. On a pseudo-terminal, it prints a JWT that authenticates at `/mcp`. | Ubuntu CI | CI |
+| DX-AC25 | `sag logs daemon` prints the line `sag starting`. After one `tools/call`, `sag logs audit` prints one line with its `request_id`. Both commands exit 0 in a process without a controlling terminal. | Ubuntu CI | CI |
+| DX-AC26 | With a `settings.json` that holds other keys, `agent setup claude-code --deny-rules yes` adds the three rules and keeps the other keys. A second run adds no duplicate. `--deny-rules no` leaves the rules unchanged. | Ubuntu CI, harness stubs | CI |
+| DX-AC27 | `bootstrap --autostart no` writes a Quadlet file without `[Install]`, and `list-dependencies default.target` does not hold `sag.service`. `--autostart yes` writes it with `WantedBy=default.target`. | Ubuntu CI | CI |
+| DX-AC28 | After `sag service stop`, the container does not run and `/healthz` fails. After `sag service start`, `/healthz` returns 200. | Ubuntu CI | CI |
+| DX-AC29 | With a test certificate validity of 20 days, `credential list` writes the expiry `warn` line. `bootstrap` then replaces `<cfg>/ca.pem`, and `/healthz` returns 200 with the new file. A test hook stops a renewal after step 3 of section 5.7. The next `bootstrap` exits 0, removes `<cfg>/ca.pem.new`, and `/healthz` returns 200 with `<cfg>/ca.pem`. | Ubuntu CI, test build | CI |
+| DX-AC30 | A binary with an embedded test digest pulls the image by that digest. A binary without a digest writes the dev build `warn` line. | Ubuntu CI, test build, local registry | CI |
+| DX-AC31 | A resource with `connection: aws-sm:<name>` passes `sag resource test`. `create --backend aws-sm`, `list`, and `delete` work on the AWS backend. The tags of each created AWS secret are exactly the three labels of section 7.5. | Ubuntu CI, LocalStack | CI |
+| DX-AC32 | Three resources reference `aws-sm:` secrets, one resource references a Podman secret, and the AWS endpoint drops packets. `/healthz` returns 200 within 30 s after `sag service start`. The Podman resource is served, and each AWS resource returns `resource_unavailable`. Within 120 s after the endpoint returns, each AWS resource is served. | Ubuntu CI, LocalStack | CI |
+| DX-AC33 | The product binary ignores each `SAG_TEST_*` variable. Its symbol table has no `devxtest` symbol. No non-test source file contains `--showsecret`. | Ubuntu CI, build check | CI |
+| DX-AC34 | On macOS with an installed Podman, `bootstrap --autostart yes --agent-setup claude-code=no --agent-setup pi=no` writes an `ok` or `warn` line for Podman and does not change it. `answers.json` holds the absolute `podman_path`. `/healthz` returns 200. `launchctl print gui/<uid>/net.kanthorlabs.sag` shows the agent. After `sag service stop`, `launchctl kickstart -k gui/<uid>/net.kanthorlabs.sag` gives `/healthz` 200 within 30 s. | macOS dev machine | Dev machine |
+| DX-AC35 | On macOS, `credential create`, `list`, and `delete` behave as DX-AC9, DX-AC17, and DX-AC20. The PostgreSQL container uses a free host port. | macOS dev machine | Dev machine |
+| DX-AC36 | Each host command as UID 0 exits 1. `sag agent issue a`, `sag credential check`, and `sag serve` on the host exit 2. A host command exits 1 while another process holds `<cfg>/lock`. | Ubuntu CI | CI |
+| DX-AC37 | `create --tls-ca <file>` against a PostgreSQL with a private CA exits 0, and `sag resource test` passes. The CA secret has the label `sag.role=tls_ca`. A test hook makes step 3 fail after step 2, and both new secrets are absent. `delete` removes both secrets. | Ubuntu CI, TLS PostgreSQL container | CI |
+| DX-AC38 | A test flag marks `podman` absent, and a test flag stops `bootstrap` before the install command. `bootstrap` downloads the pinned pkg, accepts its SHA-256, exits 0, and prints the path of the verified file. `installer` does not run. With a wrong test SHA-256, `bootstrap` exits 1 and the file is absent. | macOS dev machine, test build | Dev machine |
+| DX-AC39 | With `CLAUDE_CONFIG_DIR` set to a test directory whose `.claude.json` and `settings.json` hold other keys, `agent setup claude-code --deny-rules no` exits 0. `.claude.json` has mode 0600 and has `mcpServers.sag` with `type` `http`, the endpoint URL, an `Authorization` header, and no `command` key. Each other value of `.claude.json` equals the input byte by byte; the input holds one integer above 2^53 and one escaped character. `settings.json` is a symbolic link with mode 0600; the link stays, and its target has `env.NODE_EXTRA_CA_CERTS` equal to `<cfg>/ca.pem` and mode 0600. `skills/sag/SKILL.md` holds the marker and `--agent claude-code`. The JWT of the entry authenticates at `/mcp` with `sub` `claude-code`. The stub `claude` received `mcp list` in an empty directory, with no `NODE_EXTRA_CA_CERTS` in its environment. Without `CLAUDE_CONFIG_DIR`, the entry goes to `~/.claude.json` and the skill to `~/.claude/skills/sag/SKILL.md`. | Ubuntu CI, harness stubs | CI |
+| DX-AC40 | After DX-AC39 and DX-AC41, a search for each issued JWT finds no match outside the MCP configuration files. The search covers the output of `agent setup`, the arguments and environment of each child process, `podman logs sag`, the audit file, `<cfg>`, and the user journal. | Ubuntu CI, harness stubs | CI |
+| DX-AC41 | With `PI_CODING_AGENT_DIR` set to a test directory and `SHELL=/bin/bash`, `agent setup pi --shell-profile yes --guard yes` exits 0. `mcp.json` has mode 0600 and `mcpServers.sag` with `url`, `headers`, `exposure` `direct`, and no `command` key. The skill holds the marker and `--agent pi`. `extensions/sag-guard.ts` exists with the marker in line 1. `~/.bashrc` holds the `export` line one time. The stub `pi` received `mcp list --json` with `NODE_EXTRA_CA_CERTS=<cfg>/ca.pem`. A second run without a terminal and without flags writes only `ok` lines. With `SHELL=/bin/zsh` and `ZDOTDIR` set to a test directory, the line goes to `$ZDOTDIR/.zshrc`. | Ubuntu CI, harness stubs | CI |
+| DX-AC42 | With `NODE_EXTRA_CA_CERTS` set to another file, `agent setup pi` exits 1, prints the bundle command, and changes no file. After the bundle command and `NODE_EXTRA_CA_CERTS` set to the bundle, `agent setup pi` exits 0. The same holds for `env.NODE_EXTRA_CA_CERTS` in the `settings.json` of Claude Code. | Ubuntu CI, harness stubs | CI |
+| DX-AC43 | Without a terminal and without flags, `agent setup claude-code` exits 3 and names `--deny-rules`. `agent setup pi` exits 3 and names `--shell-profile`. A `mcpServers.sag` entry with a `command` key gives exit 1. A `sag-guard.ts` without the marker gives exit 1. A `SKILL.md` without the marker gives exit 1. A `settings.json` that is not valid JSON gives exit 1. `SHELL=/bin/fish` with `--shell-profile yes` gives exit 1. A stub that reports `sag` as not connected gives exit 1. No file changes on an exit in the plan. | Ubuntu CI, harness stubs | CI |
+| DX-AC44 | `node --test "internal/agentsetup/assets/pi/*.test.ts"` passes. The tests show that the guard blocks a `bash` call with `sag credential delete x`, `sh -c "podman secret rm x"`, `script -q`, `/usr/bin/script`, `sh -c "script ..."`, or `sudo script`. The guard passes `ls -la`, `ls scripts/`, `npx typescript`, `go test ./e2e/...`, and each call of another tool. | Ubuntu CI, Node 24 | CI |
+| DX-AC45 | With no resource that lists `claude-code`, `agent setup claude-code` exits 0. With its JWT, `list_resources` returns an empty list. After `credential create x --agent claude-code`, `list_resources` returns `x`. Host `sag jwt generate claude-code` on a pseudo-terminal still exits 1 for an unlisted `sub`. `--sub Bad` gives exit 2. `podman exec -t sag sag agent issue x` exits 3 and prints no JWT. A second `agent setup claude-code` keeps the entry byte by byte. With `--sub other`, it writes a JWT with `sub` `other`. After an `auth.version` increment and a restart, it writes a new JWT that authenticates. | Ubuntu CI, harness stubs | CI |
+| DX-AC46 | The host has no `<cfg>` and no container `sag`. The stubs `claude` and `pi` are in `PATH`. `bootstrap --autostart no --agent-setup claude-code=yes --agent-setup pi=no --deny-rules no` exits 0 and sets up only Claude Code. The next command holds `--agent claude-code` and no `--agent pi`. Without a terminal and without `--agent-setup`, `bootstrap` exits 3 and names `--agent-setup`. With `NODE_EXTRA_CA_CERTS` set to another file, a first `bootstrap` gives `/healthz` 200, prints the bundle command, changes no harness file, and exits 1. | Ubuntu CI, harness stubs | CI |
+| DX-AC47 | With Claude Code 2.1.332, after `agent setup claude-code --deny-rules yes`, `claude mcp list` from a shell without `NODE_EXTRA_CA_CERTS` shows `sag` connected. `claude -p --output-format json` from the same shell lists the resources. For a prompt that asks for the Bash tool call `sag credential delete x`, the JSON output has a match in `permission_denials`. | macOS dev machine | Dev machine |
+| DX-AC48 | With pi 1.6.1, after `agent setup pi --shell-profile yes --guard yes`, `pi mcp list --json` from a new shell shows `sag` connected. For a prompt that asks for the `bash` tool call `podman secret rm x`, `pi --mode json` prints a tool result with a reason that starts with `sag-guard:`. | macOS dev machine | Dev machine |
+| DX-AC49 | The skill body holds each tool name and each error code of PRD 13.3. The test reads them from the Go constants. | Ubuntu CI, Go unit test | CI |
+| DX-AC50 | A fake `tailscale` in `PATH` prints a test address. `bootstrap --tailscale yes` exits 0. The server certificate names `localhost`, `127.0.0.1`, `::1`, and the test address. The Quadlet file holds `PublishPort=127.0.0.1:8443:8443` and `PublishPort=<test address>:8443:8443` and no `0.0.0.0`. `/healthz` on the test address returns 200. When the fake prints another address, the next `bootstrap` renews the certificate. When the fake exits 1, `bootstrap` writes the `tailscale down` `warn` line, keeps the certificate, and publishes loopback only. Without a `tailscale` command, `--tailscale yes` gives the `tailscale command absent` `warn` line and loopback only. With the fake and without a terminal and a `--tailscale` flag, `bootstrap` exits 3 and names `--tailscale`. | Ubuntu CI, fake `tailscale` | CI |
+| DX-AC51 | `agent setup claude-code --url https://<test address>:8443/mcp` with a JWT typed on a pseudo-terminal exits 0. The entry has that `url`. No `podman` child process runs. Without a terminal, it exits 3. A JWT with another `sub` gives exit 1. `--url http://<test address>:8443/mcp` gives exit 2. | Ubuntu CI, harness stubs, fake `tailscale` | CI |
+| DX-AC52 | On macOS with Tailscale up, `bootstrap --tailscale yes` exits 0. `curl --cacert <cfg>/ca.pem https://<tailscale IP>:8443/healthz` returns 200. `lsof -nP -iTCP:8443 -sTCP:LISTEN` shows listeners only on `127.0.0.1` and the Tailscale address. | macOS dev machine, Tailscale | Dev machine |
 
 ### 17.1 Test environment
 
@@ -952,8 +1042,9 @@ Ubuntu CI:
 - The DX tests use the real `HOME` of the runner, because the user manager and rootless Podman read it. They run in series, because the container name `sag` and port 8443 are global.
 - The section 15 teardown runs between test groups. DX-AC1 to DX-AC4 run first, in this order.
 - An agent setup test sets `CLAUDE_CONFIG_DIR` or `PI_CODING_AGENT_DIR` to a test directory, except the default path case of DX-AC39. A test that changes `~/.bashrc` restores the file after the test.
-- Harness stubs: CI has no Claude Code and no pi. The test files `claude` and `pi` in a test `PATH` directory record their arguments and environment. They print a `sag` line with the state that the test sets.
-- DX-AC44 runs in a CI step with `actions/setup-node` and Node 24.
+- Harness stubs: CI has no Claude Code and no pi. The test files `claude` and `pi` in a test `PATH` directory record their arguments, environment, and working directory. They print a `sag` result with the state that the test sets.
+- Fake `tailscale`: a test file `tailscale` in a test `PATH` directory prints a test address from `100.64.0.0/10` for `ip -4`, or exits 1. The job adds the test address to a `dummy` interface, so rootless Podman can bind it.
+- DX-AC44 runs in a CI step with `actions/setup-node` and Node 24. DX-AC49 runs with `go test`.
 - The build tag `devxtest` enables `SAG_TEST_PINS`, `SAG_TEST_IMAGE`, `SAG_TEST_CERT_DAYS`, `SAG_TEST_ABSENT`, `SAG_TEST_STOP_BEFORE_INSTALL`, and the failure hooks of DX-AC16, DX-AC22, DX-AC29, and DX-AC37. The product binary has no such path.
 - Test pins hold a `release` item that a local HTTP server serves, and the apt package `hello`.
 - The test-pin criteria and DX-AC5 run in jobs separate from the other criteria.
@@ -961,17 +1052,21 @@ Ubuntu CI:
 - A unit test checks the argument list of each child process of `create`, `delete`, `bootstrap`, and `agent setup`. No argument holds the canary or a JWT.
 - The Ubuntu CI criteria need a push by Ulrich, the same as AC35.
 
-macOS:
+macOS development machine:
 
-- macOS criteria run on the macOS development machine of Ulrich only. No GitHub Actions job runs devx on macOS.
+- The `Dev machine` criteria run here only. No GitHub Actions job runs devx on macOS.
 - The machine has Podman 5.5.1 and a Podman machine. DX-AC38 thus stops before `installer`.
-- DX-AC34, DX-AC35, DX-AC47, and DX-AC48 change the user state. Section 15 removes it.
+- Preconditions: no container `sag` exists, and port 8443 is free. Remove the container of the old development scripts first.
+- The binary is a test build. `SAG_TEST_IMAGE` names a local image, because the `main` image does not exist before the merge.
+- Run each criterion from a terminal outside a Claude Code session, because a Claude Code session rewrites `.claude.json` (R24).
+- The PostgreSQL container of DX-AC35 uses a free host port.
+- DX-AC34, DX-AC35, DX-AC47, DX-AC48, and DX-AC52 change the user state. Section 15 removes it.
 - The installer run, `podman machine init`, and `podman machine start` have no e2e test. Section 18.1 covers them.
 
 ## 18. Residual risks
 
 - **R11.** T8 reads and deletes each Podman secret with `podman` in the account of the operator. The devx checks stop only an agent that uses `sag`.
-- **R12.** T8 bypasses a Claude Code deny rule with `sh -c`, another wrapper, or an absolute path. The deny rules and the pi guard cover no secret read, for example `podman secret inspect --showsecret`, and no other pseudo-terminal tool, for example `expect` or `python`.
+- **R12.** T8 bypasses a Claude Code deny rule with `sh -c`, another wrapper, or an absolute path. The deny rules and the pi guard cover no secret read, for example `podman secret inspect --showsecret`, and no other pseudo-terminal tool, for example `expect` or `python`. T8 can remove the deny rules and the guard file. The next session then has no control.
 - **R13.** T8 reads `sag-aws-credentials` and then reads each AWS secret that this key can read.
 - **R14.** T8 can replace `~/.local/bin/sag` after the install. The attestation proves the binary only at install time.
 - **R15.** `credential create` needs no confirmation. T8 can register resources and restart SAG. T8 can also edit `<cfg>/sag.yaml` to add a `sub`, issue a JWT through a pseudo-terminal, and replace `<cfg>/ca.pem`.
@@ -984,7 +1079,10 @@ macOS:
 - **R22.** The Podman 5.5 line gets no new security fixes. The macOS pin rises only after the e2e suite and the check list pass on the new version.
 - **R23.** T8 reads the JWT of each harness from its MCP configuration file. T8 can also run `sag agent setup` or `podman exec sag sag agent issue <sub>` and get a JWT for each `sub`.
 - **R24.** A Claude Code process that runs during agent setup can write `.claude.json` from its own state and remove `mcpServers.sag`. The verification detects a lost entry only at setup time.
-- **R25.** The pi guard blocks each `bash` command that contains `script`, also a command without risk, for example `npx typescript`.
+- **R25.** A pi process that does not start from an interactive shell does not read the shell profile. Without `NODE_EXTRA_CA_CERTS` from its parent, its TLS connection to SAG fails, and the verification of section 12.8 still passes.
+- **R26.** With the Tailscale answer `yes`, each tailnet device that the Tailscale ACLs allow reaches port 8443. The JWT check is the only SAG control for these devices.
+- **R27.** On Ubuntu, the start at login fails while the Tailscale address is absent. systemd tries again every 10 s, and SAG serves no address, also not `127.0.0.1`, until Tailscale is up.
+- **R28.** Only the macOS development machine proves the real harness formats, the macOS Podman install, and the Tailscale publish through gvproxy. This proof comes in build step 8. CI tests their logic with stubs and a fake `tailscale`.
 
 ### 18.1 Manual check list (macOS)
 
@@ -1004,11 +1102,11 @@ Do not start a step before each criterion of the previous step passes.
 | Step | Content | Criteria |
 |---|---|---|
 | 1 | `internal/deploy`, log flags, empty `resources`, Podman SecureStorage backend. Confirm the secret list of `podman container inspect` on Podman 4.9.3. | AC32 and AC33 of PRD 15.2 pass with `internal/deploy`. |
-| 2 | `bootstrap` and `service` on Ubuntu, pins, certificate. Confirm that `apt-get install -y podman` installs `uidmap` on Ubuntu 24.04. | DX-AC1 to DX-AC8, DX-AC27 to DX-AC29, DX-AC33, DX-AC36 |
+| 2 | `bootstrap` and `service` on Ubuntu, pins, certificate, Tailscale address. Confirm that `apt-get install -y podman` installs `uidmap` on Ubuntu 24.04. | DX-AC1 to DX-AC8, DX-AC27 to DX-AC29, DX-AC33, DX-AC36, DX-AC50 |
 | 3 | `credential create`, `list`, `inspect`, `credential check` | DX-AC9 to DX-AC17, DX-AC37 |
 | 4 | `credential delete`, host forms, `logs`, `audit read` | DX-AC18 to DX-AC25 |
-| 5 | `agent setup`, `agent issue`, skill, pi guard, bootstrap step 13. Record the output form of `claude mcp list` and `pi mcp list`. | DX-AC26, DX-AC39 to DX-AC46 |
+| 5 | `agent setup` in the local and remote modes, `agent issue`, skill, pi guard, bootstrap step 13. Record the connected forms of section 12.8. | DX-AC26, DX-AC39 to DX-AC46, DX-AC49, DX-AC51 |
 | 6 | Release workflow, image selection | DX-AC30 |
 | 7 | AWS Secrets Manager backend | DX-AC31, DX-AC32 |
-| 8 | macOS | DX-AC34, DX-AC35, DX-AC38, DX-AC47, DX-AC48, section 18.1 |
+| 8 | macOS, real harnesses, Tailscale on macOS | DX-AC34, DX-AC35, DX-AC38, DX-AC47, DX-AC48, DX-AC52, section 18.1 |
 | 9 | Removal of the development scripts (section 14) | None |
