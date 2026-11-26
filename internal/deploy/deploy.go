@@ -40,6 +40,10 @@ type LogFlags struct {
 	MaxSize string
 }
 
+func (f LogFlags) Args() []string {
+	return []string{"--log-driver", f.Driver, "--log-opt", "max-size=" + f.MaxSize}
+}
+
 type RunOpts struct {
 	Image         string
 	ConfigSource  string
@@ -106,23 +110,21 @@ func (f ProductFlags) Secret(source, target, mode string) string {
 	return source + ",type=" + f.SecretType + ",target=" + target + ",uid=" + strconv.Itoa(f.SecretUID) + ",mode=" + mode
 }
 
-func allSecretNames(cfg *config.Config) []string {
-	names := []string{secret.MasterKeyName}
-	return append(names, cfg.SecretNames()...)
-}
-
 func RunArgs(cfg *config.Config, opts RunOpts) []string {
 	p := DefaultFlags.Product
 	l := DefaultFlags.LogFlags
 
-	args := []string{"run", "-d", "--name", "sag"}
+	args := []string{"run", "-d", "--replace", "--name", "sag"}
 	args = append(args, "--log-driver", l.Driver)
 	args = append(args, "--log-opt", "max-size="+l.MaxSize)
 	args = append(args, p.SecurityArgs()...)
 	args = append(args, "-p", p.Publish(p.ContainerPort))
 	args = append(args, "-v", p.ConfigVolume(opts.ConfigSource))
 	args = append(args, "-v", p.StateVolume(stateVolumeName))
-	for _, name := range allSecretNames(cfg) {
+	if opts.RestartPolicy != "" {
+		args = append(args, "--restart="+opts.RestartPolicy)
+	}
+	for _, name := range SecretMounts(cfg) {
 		args = append(args, "--secret", p.Secret(name, name, ""))
 	}
 	args = append(args, opts.Image)
@@ -156,7 +158,7 @@ func Quadlet(cfg *config.Config, opts RunOpts) string {
 	fmt.Fprintln(&b, "PodmanArgs=--log-opt=max-size="+l.MaxSize)
 	fmt.Fprintln(&b, "Volume="+p.ConfigVolume(opts.ConfigSource))
 	fmt.Fprintln(&b, "Volume="+p.StateVolume(stateVolumeName))
-	for _, name := range allSecretNames(cfg) {
+	for _, name := range SecretMounts(cfg) {
 		fmt.Fprintln(&b, "Secret="+p.Secret(name, name, ""))
 	}
 	fmt.Fprintln(&b)

@@ -9,7 +9,7 @@ import (
 )
 
 func SecretMounts(cfg *config.Config) []string {
-	names := map[string]struct{}{secret.MasterKeyName: {}}
+	names := map[string]struct{}{}
 	if cfg.Server.TLSCert != "" {
 		names[string(cfg.Server.TLSCert)] = struct{}{}
 	}
@@ -24,5 +24,7 @@ func SecretMounts(cfg *config.Config) []string {
 			names[string(r.TLSCA)] = struct{}{}
 		}
 	}
-	return slices.Sorted(maps.Keys(names))
+	delete(names, secret.MasterKeyName)
+	rest := slices.Sorted(maps.Keys(names))
+	return append([]string{secret.MasterKeyName}, rest...)
 }
