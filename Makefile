@@ -19,8 +19,8 @@ REPORT := e2e/report
 DEVX_IMAGE := localhost/sag:devx-e2e
 LDFLAGS := -X github.com/kanthorlabs/sag/internal/cli.Version=$(VERSION)
 E2E_TEST := $(GO) test -tags e2e -json -count=1 -timeout 30m
-REPO_ROOT := $(shell git rev-parse --show-toplevel)
-DEVX_LOCK := $(REPO_ROOT)/.dev/claims/devx-e2e.lock
+SHARED_ROOT := $(patsubst %/.git,%,$(shell git rev-parse --path-format=absolute --git-common-dir))
+DEVX_LOCK := $(SHARED_ROOT)/.dev/claims/devx-e2e.lock
 
 .PHONY: build build-devxtest image image-conformance test test-integration e2e e2e-devx e2e-matrix contract-check dev-up dev-down
 
@@ -67,7 +67,7 @@ e2e-matrix: test image image-conformance
 	$(GO) run ./e2e/cmd/acreport -layer $(LAYER) -skip '$(AC_SKIP)' $(foreach m,$(PGS),-in $(REPORT)/pg$(m)/events.json) -out $(REPORT)
 
 e2e-devx:
-	@mkdir -p "$(REPO_ROOT)/.dev/claims"; \
+	@mkdir -p "$(SHARED_ROOT)/.dev/claims"; \
 	owner="$(DEVX_LOCK)/owner"; \
 	pid=$$(cat "$$owner" 2>/dev/null | awk '{print $$1}'); \
 	if [ -n "$$pid" ] && ! kill -0 "$$pid" 2>/dev/null; then \

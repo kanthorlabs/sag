@@ -34,7 +34,11 @@ func TestDevxMain(t *testing.T) {
 			return pathExists(filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist"))
 		},
 	}
-	markerFile := filepath.Join("..", "..", ".dev", "local", "devx-run-active")
+	devDir, err := dxh.SharedDevDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerFile := filepath.Join(devDir, "local", "devx-run-active")
 
 	cleanup := dxh.SuiteEntry(t, r, pcfg, tcfg, markerFile)
 	defer cleanup()
