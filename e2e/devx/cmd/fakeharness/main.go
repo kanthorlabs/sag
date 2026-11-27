@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -35,6 +36,8 @@ func run(stdout, stderr io.Writer, argv []string) int {
 		return runClaude(stdout, stderr, dir, argv[1:])
 	case "pi":
 		return runPi(stdout, stderr, dir, argv[1:])
+	case "podman":
+		return runPodman(stdout, stderr, argv[1:])
 	default:
 		fmt.Fprintf(stderr, "fakeharness: unknown harness name %q\n", name)
 		return 1
@@ -95,6 +98,31 @@ func runClaude(stdout, stderr io.Writer, dir string, args []string) int {
 	}
 	fmt.Fprintf(stderr, "fakeharness claude: unknown command %v\n", args)
 	return 1
+}
+
+func runPodman(stdout, stderr io.Writer, args []string) int {
+	realPath := ""
+	for _, candidate := range []string{"/opt/podman/bin/podman", "/opt/homebrew/bin/podman"} {
+		if _, err := os.Stat(candidate); err == nil {
+			realPath = candidate
+			break
+		}
+	}
+	if realPath == "" {
+		fmt.Fprintf(stderr, "fakeharness podman: real podman not found\n")
+		return 1
+	}
+	cmd := exec.Command(realPath, args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.Env = os.Environ()
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode()
+		}
+		return 1
+	}
+	return 0
 }
 
 func runPi(stdout, stderr io.Writer, dir string, args []string) int {

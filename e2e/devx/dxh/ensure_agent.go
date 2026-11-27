@@ -125,7 +125,7 @@ func BuildFakeHarness(root, binDir string) error {
 	if err != nil {
 		return fmt.Errorf("go build fakeharness: %w\n%s", err, data)
 	}
-	for _, name := range []string{"claude", "pi"} {
+	for _, name := range []string{"claude", "pi", "podman"} {
 		link := filepath.Join(binDir, name)
 		_ = os.Remove(link)
 		if err := os.Symlink(out, link); err != nil {

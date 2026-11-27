@@ -27,8 +27,8 @@ func DXAC40_JWTNoLeak(t *testing.T, ctx context.Context) {
 	cfgDir := dxh.CfgDir(home)
 
 	jwts := dxac40CollectJWTs(t)
-	if len(jwts) == 0 {
-		t.Fatal("DXAC40: no JWTs found in MCP configuration files; EnsureAgentSetup must create them")
+	if len(jwts) < 2 {
+		t.Fatalf("DXAC40: found %d JWT(s); EnsureAgentSetup must create one per harness (claude-code and pi)", len(jwts))
 	}
 
 	sources := dxac40CollectSources(t, ctx, home, cfgDir)
@@ -60,7 +60,7 @@ func DXAC40_JWTNoLeak(t *testing.T, ctx context.Context) {
 		if _, isMCP := mcpSources[srcName]; isMCP {
 			for _, jwt := range jwts {
 				if !strings.Contains(content, jwt) {
-					t.Logf("DXAC40: positive control: JWT not found in MCP source %s (not an error if keys changed)", srcName)
+					t.Errorf("DXAC40: positive control: JWT not found in MCP source %s", srcName)
 				}
 			}
 		}
@@ -122,6 +122,10 @@ func dxac40ExtractJWT(t *testing.T, mcpFile, topKey, serverKey string) string {
 
 func dxac40CollectSources(t *testing.T, ctx context.Context, home, cfgDir string) map[string]string {
 	t.Helper()
+	bin, err := dxh.TestBinary()
+	if err != nil {
+		t.Fatalf("DXAC40: test binary: %v", err)
+	}
 	sources := map[string]string{}
 
 	agentOut := ""
@@ -137,12 +141,12 @@ func dxac40CollectSources(t *testing.T, ctx context.Context, home, cfgDir string
 		recordPath := filepath.Join(dxh.ActiveAgentBinDir, "stub_records.json")
 		data, err := os.ReadFile(recordPath)
 		if err != nil {
-			t.Errorf("DXAC40: stub_records.json not found at %s: %v", recordPath, err)
-		} else if len(data) == 0 {
-			t.Error("DXAC40: stub_records.json is empty; fakeharness must have been called")
-		} else {
-			sources["stub_records"] = string(data)
+			t.Fatalf("DXAC40: stub_records.json not found at %s: %v", recordPath, err)
 		}
+		if len(data) == 0 {
+			t.Fatal("DXAC40: stub_records.json is empty; fakeharness must have been called")
+		}
+		sources["stub_records"] = string(data)
 	}
 
 	r := dxh.NewRunner()
@@ -152,15 +156,8 @@ func dxac40CollectSources(t *testing.T, ctx context.Context, home, cfgDir string
 		sources["podman logs sag"] = string(podmanLogsOut)
 	}
 
-	auditCopy := t.TempDir()
-	if out, err := r.Output(ctx, "podman", "cp", "sag:/var/lib/sag/audit", auditCopy); err == nil {
-		_ = out
-		auditFiles, err := dxac40ReadDirFiles(filepath.Join(auditCopy, "audit"))
-		if err == nil {
-			for name, content := range auditFiles {
-				sources["audit "+filepath.Base(name)] = content
-			}
-		}
+	if auditOut, err := r.Output(ctx, "podman", "exec", "sag", bin, "audit", "read"); err == nil {
+		sources["audit read"] = string(auditOut)
 	}
 
 	serviceLogPath := filepath.Join(home, "Library", "Logs", "sag", "service.log")
