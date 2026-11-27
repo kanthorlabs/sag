@@ -66,11 +66,11 @@ func DXAC24_HostJWTGenerate(t *testing.T, ctx context.Context) {
 
 	t.Run("no_terminal_exit3", func(t *testing.T) {
 		code, combined := dxac24RunSetsid(t, ctx, sagBin, "jwt", "generate", "claude-code-dev")
-		if code != 3 {
-			t.Fatalf("DXAC24-A: exit = %d; want 3; output: %s", code, combined)
-		}
 		if strings.Contains(combined, "eyJ") {
 			t.Fatalf("DXAC24-A: output contains a token; want none")
+		}
+		if code != 3 {
+			t.Fatalf("DXAC24-A: exit = %d; want 3; output: %s", code, combined)
 		}
 	})
 
@@ -97,12 +97,15 @@ func DXAC24_HostJWTGenerate(t *testing.T, ctx context.Context) {
 			t.Fatalf("DXAC24-B: read output file: %v", err)
 		}
 		if len(content) != 0 {
-			t.Fatalf("DXAC24-B: output file = %q; want empty", string(content))
+			t.Fatalf("DXAC24-B: output file has %d bytes; want empty", len(content))
 		}
 	})
 
 	t.Run("json_flag_exit2", func(t *testing.T) {
 		code, combined := dxac24RunSetsid(t, ctx, sagBin, "jwt", "generate", "--json", "claude-code-dev")
+		if strings.Contains(combined, "eyJ") {
+			t.Fatalf("DXAC24-C: output contains a token; want none")
+		}
 		if code != 2 {
 			t.Fatalf("DXAC24-C: exit = %d; want 2; output: %s", code, combined)
 		}
