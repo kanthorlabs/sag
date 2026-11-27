@@ -19,6 +19,10 @@ var credentialTests = map[string]func(*testing.T, context.Context){}
 
 var certTests = map[string]func(*testing.T, context.Context){}
 
+var deleteTests = map[string]func(*testing.T, context.Context){}
+
+var hostformsTests = map[string]func(*testing.T, context.Context){}
+
 func TestDevxMain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -118,6 +122,44 @@ func TestDevxMain(t *testing.T) {
 		for _, name := range certOrder {
 			name := name
 			fn := certTests[name]
+			t.Run(name, func(t *testing.T) {
+				if fn == nil {
+					t.Fatal("not implemented")
+				}
+				fn(t, ctx)
+			})
+		}
+	})
+
+	deleteOrder := []string{
+		"DXAC18_DeleteNoTerminal",
+		"DXAC19_DeleteConfirm",
+		"DXAC20_Delete",
+		"DXAC21_DeleteStopped",
+		"DXAC22_DeleteResume",
+		"DXAC23_DeleteForeignSecret",
+	}
+	dxh.RunGroup(t, ctx, r, tcfg, "delete", tagImage, func(t *testing.T) {
+		for _, name := range deleteOrder {
+			name := name
+			fn := deleteTests[name]
+			t.Run(name, func(t *testing.T) {
+				if fn == nil {
+					t.Fatal("not implemented")
+				}
+				fn(t, ctx)
+			})
+		}
+	})
+
+	hostformsOrder := []string{
+		"DXAC24_HostJWTGenerate",
+		"DXAC25_Logs",
+	}
+	dxh.RunGroup(t, ctx, r, tcfg, "hostforms", tagImage, func(t *testing.T) {
+		for _, name := range hostformsOrder {
+			name := name
+			fn := hostformsTests[name]
 			t.Run(name, func(t *testing.T) {
 				if fn == nil {
 					t.Fatal("not implemented")
