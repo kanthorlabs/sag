@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,7 +30,12 @@ func DXAC12_ConnectionCheck(t *testing.T, ctx context.Context) {
 	}
 
 	closedPort := freePort(t)
-	dsn12 := "postgres://testuser:testpass@host.containers.internal:" + portString(closedPort) + "/testdb"
+	dsn12 := (&url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword("testuser", "testpass"),
+		Host:   net.JoinHostPort("host.containers.internal", portString(closedPort)),
+		Path:   "/testdb",
+	}).String()
 
 	t.Run("exit_1_no_secret", func(t *testing.T) {
 		name := "dxac12a"

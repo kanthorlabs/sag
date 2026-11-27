@@ -6,8 +6,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
@@ -23,6 +26,11 @@ func DXAC16_CreateRollback(t *testing.T, ctx context.Context) {
 	t.Helper()
 	dxh.EnsureCanary(t)
 
+	uid := fmt.Sprintf("%d", os.Getuid())
+	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+		t.Fatalf("DXAC16: wait launch agent idle: %v", err)
+	}
+
 	r := dxh.NewRunner()
 	port, err := canaryPGPort(ctx, r)
 	if err != nil {
@@ -30,13 +38,24 @@ func DXAC16_CreateRollback(t *testing.T, ctx context.Context) {
 	}
 
 	canary := dxh.ActiveCanaryParts
-	dsn := []byte(fmt.Sprintf("postgresql://%s:%s@host.containers.internal:%s/%s",
-		canary.User, canary.Password, port, canary.Database))
+	dsn := (&url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(canary.User, canary.Password),
+		Host:   "host.containers.internal:" + port,
+		Path:   "/" + canary.Database,
+	}).String()
 
 	const name = "mydb-16"
 	connSecret := "sag-res-" + name + ".conn"
 
-	code, combined := runSAGWithInputAndEnv(t, ctx, dsn,
+	home := os.Getenv("HOME")
+	sagYAML := filepath.Join(dxh.CfgDir(home), "sag.yaml")
+	yamlBefore, err := os.ReadFile(sagYAML)
+	if err != nil {
+		t.Fatalf("DXAC16: read sag.yaml before: %v", err)
+	}
+
+	code, combined := runSAGWithInputAndEnv(t, ctx, []byte(dsn),
 		[]string{"SAG_TEST_FAIL_CRED_CREATE=1"},
 		"credential", "create", name,
 		"--kind", "postgres",
@@ -45,11 +64,27 @@ func DXAC16_CreateRollback(t *testing.T, ctx context.Context) {
 		"--tls", "disable",
 	)
 	if code != 1 {
-		t.Fatalf("DXAC16: forced rollback: exit %d; want 1; output: %s", code, combined)
+		t.Fatalf("DXAC16: forced rollback: exit %d; want 1", code)
+	}
+	if !strings.Contains(combined, "test hook: fail at step 3") {
+		t.Fatalf("DXAC16: output does not contain hook message")
 	}
 
 	if secretExists(ctx, t, connSecret) {
 		t.Fatalf("DXAC16: rollback left secret %s behind", connSecret)
+	}
+
+	yamlAfter, err := os.ReadFile(sagYAML)
+	if err != nil {
+		t.Fatalf("DXAC16: read sag.yaml after: %v", err)
+	}
+	if !bytes.Equal(yamlBefore, yamlAfter) {
+		t.Fatalf("DXAC16: sag.yaml changed after rollback")
+	}
+
+	caPath := filepath.Join(dxh.CfgDir(home), "ca.pem")
+	if err := healthzOK(ctx, caPath); err != nil {
+		t.Fatalf("DXAC16: /healthz after rollback: %v", err)
 	}
 }
 

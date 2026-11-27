@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,7 +58,8 @@ func defaultBootstrapRun(ctx context.Context, r Runner) error {
 	if err != nil {
 		return fmt.Errorf("bootstrap: %w\n%s", err, out)
 	}
-	return nil
+	uid := strconv.Itoa(os.Getuid())
+	return WaitLaunchAgentIdle(ctx, NewRunner(), uid)
 }
 
 func findSagBin() (string, error) {

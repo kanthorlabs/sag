@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,10 +19,11 @@ const (
 	canaryResourceName = "canary"
 	canaryPGAgent      = "pi"
 	canaryPGContainer  = "sag-canary-pg"
-	canaryPGSecretName = "canary-pg-password"
 	canaryPGImage      = "docker.io/library/postgres:17.12-bookworm"
 	canaryPGPort       = "5432/tcp"
+	canaryPGSecretName = "canary-pg-password"
 	canaryReadyTimeout = 90 * time.Second
+	CanaryPrompt       = "PostgreSQL DSN for canary (input hidden): "
 )
 
 var (
@@ -60,16 +62,16 @@ func defaultCanaryCreate(ctx context.Context, r Runner, t *testing.T) error {
 		return err
 	}
 
-	password, err := randomCanaryPassword()
+	pwdHex, err := randomHex()
 	if err != nil {
-		return fmt.Errorf("generate password: %w", err)
+		return fmt.Errorf("generate pwd: %w", err)
 	}
 
-	if err := createCanaryPGSecret(ctx, password); err != nil {
+	if err := createCanaryPGSecret(ctx, pwdHex); err != nil {
 		return err
 	}
 
-	suffix, err := randomCanaryPassword()
+	suffix, err := randomHex()
 	if err != nil {
 		return fmt.Errorf("generate name suffix: %w", err)
 	}
@@ -88,14 +90,19 @@ func defaultCanaryCreate(ctx context.Context, r Runner, t *testing.T) error {
 		return err
 	}
 
-	dsn := buildCanaryDSN(user, password, port, database)
+	dsn := buildCanaryDSN(user, pwdHex, port, database)
 
 	parts, err := parseCanaryDSN(dsn)
 	if err != nil {
 		return fmt.Errorf("parse canary DSN: %w", err)
 	}
 
-	if err := runCanaryCredentialCreate(ctx, t, dsn); err != nil {
+	uid := strconv.Itoa(os.Getuid())
+	if err := WaitLaunchAgentIdle(ctx, r, uid); err != nil {
+		return fmt.Errorf("wait launch agent idle before canary create: %w", err)
+	}
+
+	if err := runCanaryCredentialCreate(ctx, t, dsn, parts); err != nil {
 		return err
 	}
 
@@ -103,7 +110,7 @@ func defaultCanaryCreate(ctx context.Context, r Runner, t *testing.T) error {
 	return nil
 }
 
-func randomCanaryPassword() (string, error) {
+func randomHex() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -111,13 +118,13 @@ func randomCanaryPassword() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func createCanaryPGSecret(ctx context.Context, password string) error {
+func createCanaryPGSecret(ctx context.Context, pwd string) error {
 	cmd := exec.CommandContext(ctx, "podman", "secret", "create",
 		"--label", "sag.devx-e2e=1",
 		canaryPGSecretName, "-")
-	cmd.Stdin = strings.NewReader(password)
+	cmd.Stdin = strings.NewReader(pwd)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("create pg password secret: %w\n%s", err, out)
+		return fmt.Errorf("create pg pwd secret: %w\n%s", err, out)
 	}
 	return nil
 }
@@ -162,8 +169,14 @@ func canaryPGHostPort(ctx context.Context, r Runner) (string, error) {
 	return "", fmt.Errorf("unexpected port output: %q", line)
 }
 
-func buildCanaryDSN(user, password, port, database string) string {
-	return fmt.Sprintf("postgresql://%s:%s@host.containers.internal:%s/%s", user, password, port, database)
+func buildCanaryDSN(user, pwd, port, database string) string {
+	u := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(user, pwd),
+		Host:   "host.containers.internal:" + port,
+		Path:   "/" + database,
+	}
+	return u.String()
 }
 
 func parseCanaryDSN(dsn string) (CanaryParts, error) {
@@ -171,19 +184,16 @@ func parseCanaryDSN(dsn string) (CanaryParts, error) {
 	if err != nil {
 		return CanaryParts{}, err
 	}
-	var password string
-	if u.User != nil {
-		password, _ = u.User.Password()
-	}
+	pwd, _ := u.User.Password()
 	return CanaryParts{
-		Password: password,
+		Password: pwd,
 		Host:     u.Hostname(),
 		User:     u.User.Username(),
 		Database: strings.TrimPrefix(u.Path, "/"),
 	}, nil
 }
 
-func runCanaryCredentialCreate(ctx context.Context, t *testing.T, dsn string) error {
+func runCanaryCredentialCreate(ctx context.Context, t *testing.T, dsn string, parts CanaryParts) error {
 	t.Helper()
 	bin, err := TestBinary()
 	if err != nil {
@@ -191,24 +201,40 @@ func runCanaryCredentialCreate(ctx context.Context, t *testing.T, dsn string) er
 	}
 	groupDir := t.TempDir()
 	binDir := t.TempDir()
-	env, err := ChildEnv(os.Environ(), groupDir)
-	if err != nil {
-		return err
-	}
-	env = append(env, "PATH="+TestPATH(binDir))
 
-	cmd := exec.CommandContext(ctx, bin,
+	tty, err := StartTTY(ctx, groupDir, binDir, bin,
 		"credential", "create", canaryResourceName,
 		"--kind", "postgres",
 		"--agent", canaryPGAgent,
-		"--stdin",
 		"--tls", "disable",
 	)
-	cmd.Env = env
-	cmd.Stdin = strings.NewReader(dsn)
-	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("sag credential create canary: %w\n%s", err, out)
+		return fmt.Errorf("start TTY for canary create: %w", err)
+	}
+
+	tty.Redact(dsn, parts.Password, parts.Host, parts.User, parts.Database)
+
+	if err := tty.Expect(ctx, CanaryPrompt); err != nil {
+		return fmt.Errorf("canary create prompt: %w", err)
+	}
+
+	if err := tty.WaitEchoOff(ctx); err != nil {
+		return fmt.Errorf("wait echo off before send: %w", err)
+	}
+
+	if err := tty.Send(dsn + "\n"); err != nil {
+		return fmt.Errorf("send canary DSN: %w", err)
+	}
+
+	code, err := tty.Wait(ctx)
+	transcript := tty.RawOutput()
+	ActiveCanaryTranscript = []byte(transcript)
+
+	if err != nil {
+		return fmt.Errorf("canary create wait: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("sag credential create canary: exit %d", code)
 	}
 	return nil
 }
