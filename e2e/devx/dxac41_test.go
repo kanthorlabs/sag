@@ -3,6 +3,7 @@
 package devx_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -56,11 +57,11 @@ func DXAC41_PiSetup(t *testing.T, ctx context.Context) {
 	cfgDir := dxh.CfgDir(home)
 
 	t.Run("bash_case", func(t *testing.T) {
-		dxac41BashCase(t, ctx, bin, binDir, cfgDir)
+		dxac41BashCase(t, ctx, bin, binDir, fakeBinDir, cfgDir)
 	})
 
 	t.Run("zsh_case", func(t *testing.T) {
-		dxac41ZshCase(t, ctx, bin, binDir, cfgDir)
+		dxac41ZshCase(t, ctx, bin, binDir, fakeBinDir, cfgDir)
 	})
 
 	t.Run("second_run_ok_only", func(t *testing.T) {
@@ -68,19 +69,13 @@ func DXAC41_PiSetup(t *testing.T, ctx context.Context) {
 	})
 }
 
-func dxac41BashCase(t *testing.T, ctx context.Context, bin, binDir, cfgDir string) {
+func dxac41BashCase(t *testing.T, ctx context.Context, bin, binDir, fakeBinDir, cfgDir string) {
 	t.Helper()
 
 	testHome := dxac41BuildTestHome(t, cfgDir)
 	piDir := t.TempDir()
 
-	env := dxac41BaseEnv(piDir, binDir)
-	for i, e := range env {
-		if strings.HasPrefix(e, "HOME=") {
-			env[i] = "HOME=" + testHome
-			break
-		}
-	}
+	env := dxac41BaseEnvForHome(t, testHome, piDir, binDir)
 	env = append(env, "SHELL=/bin/bash")
 
 	code, out := dxac41RunSetsid(ctx, bin, env, "agent", "setup", "pi",
@@ -95,20 +90,27 @@ func dxac41BashCase(t *testing.T, ctx context.Context, bin, binDir, cfgDir strin
 		t.Fatalf("DXAC41 bash: read .bash_profile: %v", err)
 	}
 	exportLine := `export NODE_EXTRA_CA_CERTS="` + filepath.Join(cfgDir, "ca.pem") + `"`
-	if !strings.Contains(string(data), exportLine) {
-		t.Errorf("DXAC41 bash: .bash_profile does not contain export line; got %q", data)
+	profileStr := string(data)
+	if !strings.Contains(profileStr, exportLine) {
+		t.Errorf("DXAC41 bash: .bash_profile does not contain export line; got %q", profileStr)
 	}
-	if strings.Count(string(data), exportLine) != 1 {
-		t.Errorf("DXAC41 bash: export line appears %d times; want 1", strings.Count(string(data), exportLine))
+	if strings.Count(profileStr, exportLine) != 1 {
+		t.Errorf("DXAC41 bash: export line appears %d times; want 1", strings.Count(profileStr, exportLine))
 	}
 
-	mcp := dxac41ReadMCP(t, filepath.Join(piDir, "mcp.json"))
-	dxac41AssertPiMCP(t, mcp)
+	mcpPath := filepath.Join(piDir, "mcp.json")
+	dxac41AssertMCPMode(t, mcpPath)
+	mcp := dxac41ReadMCP(t, mcpPath)
+	dxac41AssertPiMCP(t, "bash", mcp)
+	dxac41AssertSkill(t, piDir, "bash")
+	dxac41AssertGuardMarker(t, filepath.Join(piDir, "extensions", "sag-guard.ts"))
+	dxac41AssertStubReceived(t, fakeBinDir, cfgDir, "bash")
 
-	guardPath := filepath.Join(piDir, "extensions", "sag-guard.ts")
-	if _, err := os.Stat(guardPath); err != nil {
-		t.Fatalf("DXAC41 bash: sag-guard.ts not created: %v", err)
+	code2, out2 := dxac41RunSetsid(ctx, bin, env, "agent", "setup", "pi")
+	if code2 != 0 {
+		t.Fatalf("DXAC41 bash: second run: exit %d\n%s", code2, out2)
 	}
+	dxac41AssertOnlyOkLines(t, "bash second run", out2)
 }
 
 func dxac41BuildTestHome(t *testing.T, cfgDir string) string {
@@ -159,12 +161,12 @@ func dxac41BuildTestHome(t *testing.T, cfgDir string) string {
 	return testHome
 }
 
-func dxac41ZshCase(t *testing.T, ctx context.Context, bin, binDir, cfgDir string) {
+func dxac41ZshCase(t *testing.T, ctx context.Context, bin, binDir, fakeBinDir, cfgDir string) {
 	t.Helper()
 	piDir := t.TempDir()
 	zdotdir := t.TempDir()
 
-	env := dxac41BaseEnv(piDir, binDir)
+	env := dxac41BaseEnv(t, piDir, binDir)
 	env = append(env, "SHELL=/bin/zsh")
 	env = append(env, "ZDOTDIR="+zdotdir)
 
@@ -180,12 +182,27 @@ func dxac41ZshCase(t *testing.T, ctx context.Context, bin, binDir, cfgDir string
 		t.Fatalf("DXAC41 zsh: read $ZDOTDIR/.zshrc: %v", err)
 	}
 	exportLine := `export NODE_EXTRA_CA_CERTS="` + filepath.Join(cfgDir, "ca.pem") + `"`
-	if !strings.Contains(string(data), exportLine) {
-		t.Errorf("DXAC41 zsh: .zshrc does not contain export line; got %q", data)
+	profileStr := string(data)
+	if !strings.Contains(profileStr, exportLine) {
+		t.Errorf("DXAC41 zsh: .zshrc does not contain export line; got %q", profileStr)
+	}
+	if strings.Count(profileStr, exportLine) != 1 {
+		t.Errorf("DXAC41 zsh: export line appears %d times; want 1", strings.Count(profileStr, exportLine))
 	}
 
-	mcp := dxac41ReadMCP(t, filepath.Join(piDir, "mcp.json"))
-	dxac41AssertPiMCP(t, mcp)
+	mcpPath := filepath.Join(piDir, "mcp.json")
+	dxac41AssertMCPMode(t, mcpPath)
+	mcp := dxac41ReadMCP(t, mcpPath)
+	dxac41AssertPiMCP(t, "zsh", mcp)
+	dxac41AssertSkill(t, piDir, "zsh")
+	dxac41AssertGuardMarker(t, filepath.Join(piDir, "extensions", "sag-guard.ts"))
+	dxac41AssertStubReceived(t, fakeBinDir, cfgDir, "zsh")
+
+	code2, out2 := dxac41RunSetsid(ctx, bin, env, "agent", "setup", "pi")
+	if code2 != 0 {
+		t.Fatalf("DXAC41 zsh: second run: exit %d\n%s", code2, out2)
+	}
+	dxac41AssertOnlyOkLines(t, "zsh second run", out2)
 }
 
 func dxac41SecondRunOkOnly(t *testing.T, ctx context.Context, bin, binDir, cfgDir string) {
@@ -193,7 +210,7 @@ func dxac41SecondRunOkOnly(t *testing.T, ctx context.Context, bin, binDir, cfgDi
 	piDir := t.TempDir()
 	zdotdir := t.TempDir()
 
-	env := dxac41BaseEnv(piDir, binDir)
+	env := dxac41BaseEnv(t, piDir, binDir)
 	env = append(env, "SHELL=/bin/zsh")
 	env = append(env, "ZDOTDIR="+zdotdir)
 
@@ -207,18 +224,153 @@ func dxac41SecondRunOkOnly(t *testing.T, ctx context.Context, bin, binDir, cfgDi
 	if code2 != 0 {
 		t.Fatalf("DXAC41 second-run: second run: exit %d\n%s", code2, out2)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out2), "\n") {
+	dxac41AssertOnlyOkLines(t, "second run", out2)
+}
+
+func dxac41AssertOnlyOkLines(t *testing.T, label, output string) {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		if !strings.HasPrefix(line, "ok ") {
-			t.Errorf("DXAC41 second-run: non-ok line in output: %q", line)
+			t.Errorf("DXAC41 %s: non-ok line: %q", label, line)
 		}
 	}
 }
 
-func dxac41BaseEnv(piDir, binDir string) []string {
+func dxac41AssertMCPMode(t *testing.T, mcpPath string) {
+	t.Helper()
+	info, err := os.Stat(mcpPath)
+	if err != nil {
+		t.Fatalf("DXAC41: stat mcp.json: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("DXAC41: mcp.json mode = %o; want 0600", info.Mode().Perm())
+	}
+}
+
+func dxac41AssertPiMCP(t *testing.T, label string, top map[string]interface{}) {
+	t.Helper()
+	servers, ok := top["mcpServers"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("DXAC41 %s: mcpServers missing or wrong type", label)
+	}
+	sag, ok := servers["sag"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("DXAC41 %s: mcpServers.sag missing or wrong type", label)
+	}
+	url, _ := sag["url"].(string)
+	if url == "" {
+		t.Errorf("DXAC41 %s: mcpServers.sag.url is empty", label)
+	}
+	if _, hasCmd := sag["command"]; hasCmd {
+		t.Errorf("DXAC41 %s: mcpServers.sag has command key; must not", label)
+	}
+	if sag["exposure"] != "direct" {
+		t.Errorf("DXAC41 %s: mcpServers.sag.exposure = %v; want 'direct'", label, sag["exposure"])
+	}
+	headers, ok := sag["headers"].(map[string]interface{})
+	if !ok {
+		t.Errorf("DXAC41 %s: mcpServers.sag.headers missing or wrong type", label)
+	} else {
+		auth, _ := headers["Authorization"].(string)
+		if !strings.HasPrefix(auth, "Bearer ") {
+			t.Errorf("DXAC41 %s: mcpServers.sag.headers.Authorization = %q; want 'Bearer ...'", label, auth)
+		}
+	}
+}
+
+func dxac41AssertSkill(t *testing.T, piDir, label string) {
+	t.Helper()
+	skillPath := filepath.Join(piDir, "skills", "sag", "SKILL.md")
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("DXAC41 %s: read SKILL.md: %v", label, err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "<!-- managed by sag agent setup -->") {
+		t.Errorf("DXAC41 %s: SKILL.md does not contain marker", label)
+	}
+	if !strings.Contains(content, "--agent pi") {
+		t.Errorf("DXAC41 %s: SKILL.md does not contain '--agent pi'", label)
+	}
+}
+
+func dxac41AssertGuardMarker(t *testing.T, guardPath string) {
+	t.Helper()
+	f, err := os.Open(guardPath)
+	if err != nil {
+		t.Fatalf("DXAC41: open sag-guard.ts: %v", err)
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	if !sc.Scan() {
+		t.Fatal("DXAC41: sag-guard.ts is empty")
+	}
+	line1 := sc.Text()
+	if line1 != "// managed by sag agent setup" {
+		t.Errorf("DXAC41: sag-guard.ts line 1 = %q; want '// managed by sag agent setup'", line1)
+	}
+}
+
+func dxac41AssertStubReceived(t *testing.T, fakeBinDir, cfgDir, label string) {
+	t.Helper()
+	recordPath := filepath.Join(fakeBinDir, "stub_records.json")
+	data, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Logf("DXAC41 %s: stub_records.json not found (expected until D6.1 merges): %v", label, err)
+		return
+	}
+	want := filepath.Join(cfgDir, "ca.pem")
+	found := false
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec struct {
+			Argv []string          `json:"argv"`
+			Env  map[string]string `json:"env"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if len(rec.Argv) == 3 && rec.Argv[0] == "mcp" && rec.Argv[1] == "list" && rec.Argv[2] == "--json" {
+			if rec.Env["NODE_EXTRA_CA_CERTS"] == want {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		t.Errorf("DXAC41 %s: stub pi did not receive 'mcp list --json' with NODE_EXTRA_CA_CERTS=%q", label, want)
+	}
+}
+
+func dxac41BaseEnvForHome(t *testing.T, home, piDir, binDir string) []string {
+	t.Helper()
+	var env []string
+	for _, e := range os.Environ() {
+		key, _, _ := strings.Cut(e, "=")
+		switch key {
+		case "TMPDIR", "USER", "LANG":
+			env = append(env, e)
+		default:
+			if strings.HasPrefix(key, "SAG_TEST_") {
+				env = append(env, e)
+			}
+		}
+	}
+	env = append(env, "HOME="+home)
+	env = append(env, "CLAUDE_CONFIG_DIR="+t_tmpDir41())
+	env = append(env, "PI_CODING_AGENT_DIR="+piDir)
+	env = append(env, "PATH="+dxh.TestPATH(binDir))
+	return env
+}
+
+func dxac41BaseEnv(t *testing.T, piDir, binDir string) []string {
+	t.Helper()
 	var env []string
 	for _, e := range os.Environ() {
 		key, _, _ := strings.Cut(e, "=")
@@ -265,27 +417,6 @@ func dxac41ReadMCP(t *testing.T, mcpFile string) map[string]interface{} {
 		t.Fatalf("DXAC41: parse mcp.json: %v", err)
 	}
 	return top
-}
-
-func dxac41AssertPiMCP(t *testing.T, top map[string]interface{}) {
-	t.Helper()
-	servers, ok := top["mcpServers"].(map[string]interface{})
-	if !ok {
-		t.Fatal("DXAC41: mcpServers missing or wrong type")
-	}
-	sag, ok := servers["sag"].(map[string]interface{})
-	if !ok {
-		t.Fatal("DXAC41: mcpServers.sag missing or wrong type")
-	}
-	if sag["url"] == "" {
-		t.Error("DXAC41: mcpServers.sag.url is empty")
-	}
-	if _, hasCmd := sag["command"]; hasCmd {
-		t.Error("DXAC41: mcpServers.sag has command key; must not")
-	}
-	if sag["exposure"] != "direct" {
-		t.Errorf("DXAC41: mcpServers.sag.exposure = %v; want 'direct'", sag["exposure"])
-	}
 }
 
 func t_tmpDir41() string {

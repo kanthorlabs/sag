@@ -17,6 +17,14 @@ import (
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
 
+func dxac26CompactJSON(raw json.RawMessage) []byte {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		return raw
+	}
+	return buf.Bytes()
+}
+
 func init() {
 	agentTests["DXAC26_DenyRules"] = func(t *testing.T, ctx context.Context) {
 		DXAC26_DenyRules(t, ctx)
@@ -56,12 +64,39 @@ func DXAC26_DenyRules(t *testing.T, ctx context.Context) {
 
 		dxac26AssertDenyRules(t, settings)
 
+		var origTop map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(initial), &origTop); err != nil {
+			t.Fatalf("DXAC26: parse initial: %v", err)
+		}
 		var top map[string]json.RawMessage
 		if err := json.Unmarshal(dxac26ReadFile(t, settings), &top); err != nil {
 			t.Fatalf("DXAC26: parse settings: %v", err)
 		}
 		if _, ok := top["other"]; !ok {
 			t.Error("DXAC26: 'other' key was removed from settings.json")
+		}
+		if !bytes.Equal(dxac26CompactJSON(origTop["other"]), dxac26CompactJSON(top["other"])) {
+			t.Errorf("DXAC26: 'other' value changed: got %s; want %s",
+				dxac26CompactJSON(top["other"]), dxac26CompactJSON(origTop["other"]))
+		}
+		if origAllow, ok := origTop["permissions"]; ok {
+			var origPerm, gotPerm struct {
+				Allow []string `json:"allow"`
+			}
+			json.Unmarshal(origAllow, &origPerm)
+			json.Unmarshal(top["permissions"], &gotPerm)
+			for _, rule := range origPerm.Allow {
+				found := false
+				for _, r := range gotPerm.Allow {
+					if r == rule {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("DXAC26: original allow rule %q missing from settings.json", rule)
+				}
+			}
 		}
 	})
 

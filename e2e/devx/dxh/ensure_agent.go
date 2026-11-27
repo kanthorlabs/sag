@@ -85,7 +85,7 @@ func defaultAgentRun(t *testing.T) error {
 		return fmt.Errorf("create binDir: %w", err)
 	}
 
-	if err := buildFakeHarness(root, binDir); err != nil {
+	if err := BuildFakeHarness(root, binDir); err != nil {
 		return fmt.Errorf("build fakeharness: %w", err)
 	}
 
@@ -116,7 +116,7 @@ func defaultAgentRun(t *testing.T) error {
 	return nil
 }
 
-func buildFakeHarness(root, binDir string) error {
+func BuildFakeHarness(root, binDir string) error {
 	out := filepath.Join(binDir, "fakeharness")
 	cmd := exec.Command("go", "build", "-o", out, "./e2e/devx/cmd/fakeharness/")
 	cmd.Dir = root

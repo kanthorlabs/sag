@@ -124,8 +124,25 @@ func dxac40CollectSources(t *testing.T, ctx context.Context, home, cfgDir string
 	t.Helper()
 	sources := map[string]string{}
 
+	agentOut := ""
 	for _, out := range dxh.ActiveAgentSetupOutput {
-		sources["agent setup output"] += out
+		agentOut += out
+	}
+	if agentOut == "" {
+		t.Error("DXAC40: agent setup output is empty; EnsureAgentSetup must have run")
+	}
+	sources["agent setup output"] = agentOut
+
+	if dxh.ActiveAgentBinDir != "" {
+		recordPath := filepath.Join(dxh.ActiveAgentBinDir, "stub_records.json")
+		data, err := os.ReadFile(recordPath)
+		if err != nil {
+			t.Errorf("DXAC40: stub_records.json not found at %s: %v", recordPath, err)
+		} else if len(data) == 0 {
+			t.Error("DXAC40: stub_records.json is empty; fakeharness must have been called")
+		} else {
+			sources["stub_records"] = string(data)
+		}
 	}
 
 	r := dxh.NewRunner()
@@ -166,15 +183,6 @@ func dxac40CollectSources(t *testing.T, ctx context.Context, home, cfgDir string
 	for _, sn := range secretNames {
 		if out, err := r.Output(ctx, "podman", "secret", "inspect", sn); err == nil {
 			sources["podman secret inspect "+sn] = string(out)
-		}
-	}
-
-	if dxh.ActiveAgentBinDir != "" {
-		fakeRecordDir := filepath.Join(dxh.ActiveAgentBinDir, "records")
-		if records, err := dxac40ReadDirFiles(fakeRecordDir); err == nil {
-			for name, content := range records {
-				sources["fakeharness record "+filepath.Base(name)] = content
-			}
 		}
 	}
 
@@ -219,9 +227,4 @@ func dxac40CollectSecretNames(ctx context.Context, r dxh.Runner) []string {
 		}
 	}
 	return names
-}
-
-func dxac40PodmanExec(ctx context.Context, r dxh.Runner, args ...string) string {
-	out, _ := r.Output(ctx, "podman", append([]string{"exec", "sag"}, args...)...)
-	return string(out)
 }

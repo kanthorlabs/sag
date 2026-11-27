@@ -26,3 +26,11 @@ func TestBinary() (string, error) {
 	}
 	return filepath.Join(strings.TrimSpace(string(out)), "bin", "sag-devxtest"), nil
 }
+
+func RepoRoot() (string, error) {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --show-toplevel: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
