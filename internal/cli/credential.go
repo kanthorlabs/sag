@@ -384,5 +384,53 @@ func printEntryText(w io.Writer, e credential.Entry, inspect bool) {
 }
 
 func credentialDelete(args []string, std IO) int {
-	return fail(std, errNotImplemented)
+	name, err := credential.ParseDeleteArgs(args)
+	if err != nil {
+		fmt.Fprintf(std.Err, "sag: %v\n", err)
+		return ExitUsage
+	}
+
+	tty, err := openTTY()
+	if err != nil {
+		fmt.Fprintf(std.Err, "sag: open /dev/tty: %v\n", err)
+		return ExitRefusal
+	}
+	defer tty.Close()
+
+	cfg, release, err := buildCfgFn()
+	if err != nil {
+		return fail(std, err)
+	}
+	defer release()
+
+	runner, ok := cfg.Podman.(podman.Runner)
+	if !ok {
+		return fail(std, errors.New("internal: unexpected podman command type"))
+	}
+
+	opts := credential.DeleteOptions{
+		CfgDir:  cfg.CfgDir,
+		Backend: secretpodman.New(runner),
+		Podman:  cfg.Podman,
+		ServiceStart: func(ctx context.Context, out io.Writer) error {
+			return startFn(ctx, cfg, stepline.New(out))
+		},
+		Out:   std.Out,
+		Err:   std.Err,
+		Image: cfg.Image,
+	}
+
+	err = credential.Delete(context.Background(), name, tty, opts)
+	if err == nil {
+		return ExitOK
+	}
+	if errors.Is(err, credential.ErrDeleteWrongName) {
+		fmt.Fprintf(std.Err, "sag: %v\n", err)
+		return ExitRefusal
+	}
+	if errors.Is(err, prompt.ErrNoTerminal) {
+		fmt.Fprintf(std.Err, "sag: %v\n", err)
+		return ExitRefusal
+	}
+	return fail(std, err)
 }
