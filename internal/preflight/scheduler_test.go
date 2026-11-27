@@ -669,17 +669,29 @@ func TestFirstRechecksSpreadOverOneInterval(t *testing.T) {
 
 func TestFirstRetriesSpreadOverRetryInterval(t *testing.T) {
 	f := newFixture(t)
-	f.add(t, "a", newFake(failing(core.NewError(core.CodeResourceUnavailable, "preflight connect failed"))), time.Second)
-	f.add(t, "b", newFake(failing(core.NewError(core.CodeResourceUnavailable, "preflight connect failed"))), time.Second)
 	if err := f.inv.Add(inventory.Entry{Name: "late", Kind: "postgres", Agents: []string{"alice"}, Status: inventory.StatusUnavailable}); err != nil {
 		t.Fatal(err)
 	}
 	f.sched.AddUnopened("late", func(context.Context) (core.Resource, error) {
 		return nil, errors.New("open failed")
 	}, time.Second)
+	f.add(t, "a", newFake(failing(core.NewError(core.CodeResourceUnavailable, "preflight connect failed"))), time.Second)
+	f.add(t, "b", newFake(failing(core.NewError(core.CodeResourceUnavailable, "preflight connect failed"))), time.Second)
 	f.start(t)
-	want := []time.Duration{RetryInterval / 3, 2 * RetryInterval / 3, RetryInterval}
-	if got := f.clock.awaitWaiters(t, 3); !slices.Equal(got, want) {
-		t.Fatalf("first retry waits = %v; want %v", got, want)
+	third := RetryInterval / 3
+	if got := f.clock.awaitWaiters(t, 3); !slices.Equal(got, []time.Duration{third, 2 * third, RetryInterval}) {
+		t.Fatalf("first retry waits = %v; want %v %v %v", got, third, 2*third, RetryInterval)
+	}
+	f.clock.Advance(third)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got := f.clock.awaitWaiters(t, 3)
+		if slices.Equal(got, []time.Duration{2 * third, RetryInterval, RetryInterval}) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("waits after a failed open = %v; want the full retry interval for the next open", got)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
