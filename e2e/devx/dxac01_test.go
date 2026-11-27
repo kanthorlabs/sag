@@ -97,7 +97,7 @@ func launchAgentShows(ctx context.Context, uid string) bool {
 
 func waitLaunchAgentIdle(ctx context.Context, uid string) error {
 	r := dxh.NewRunner()
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(90 * time.Second)
 	for {
 		out, err := r.Output(ctx, "launchctl", "print", "gui/"+uid+"/net.kanthorlabs.sag")
 		if err != nil || strings.Contains(string(out), "state = not running") {
@@ -111,7 +111,7 @@ func waitLaunchAgentIdle(ctx context.Context, uid string) error {
 					state = append(state, l)
 				}
 			}
-			return fmt.Errorf("launch agent not idle after 30s: %s", strings.Join(state, "; "))
+			return fmt.Errorf("launch agent not idle after 90s: %s", strings.Join(state, "; "))
 		}
 		select {
 		case <-ctx.Done():

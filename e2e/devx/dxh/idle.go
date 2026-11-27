@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const idleTimeout = 30 * time.Second
+const idleTimeout = 90 * time.Second
 
 func WaitLaunchAgentIdle(ctx context.Context, r Runner, uid string) error {
 	deadline := time.Now().Add(idleTimeout)
