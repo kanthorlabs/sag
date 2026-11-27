@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 5 |
-| Date | 2026-11-25 |
+| Status | Revision 17 |
+| Date | 2026-11-26 |
 | Target | v1 (PostgreSQL) in one day, v1.1 (MySQL), later phases |
 
 ## 1. Problem
@@ -19,7 +19,7 @@ SAG is a gateway between agents and resources. SAG runs as one container service
 
 | ID | Goal |
 |---|---|
-| G1 | Credentials stay inside the SAG container. An agent never sees, receives, or exfiltrates a credential through SAG. |
+| G1 | Credentials stay inside the SAG container or in a SecureStorage backend. On a developer machine, section 2.3 of `docs/PRD-devx.md` limits G1. An agent never sees, receives, or exfiltrates a credential through SAG. |
 | G2 | SAG guarantees read-only access by itself. SAG assumes that every configured credential has write privileges. |
 | G3 | Each agent has its own JWT identity. Each resource lists the agent identities that can use it. SAG denies by default. |
 | G4 | SAG writes one audit record for each tool call, allowed or denied, and for each authentication failure. SAG returns no data without an audit record. |
@@ -39,7 +39,7 @@ SAG is a gateway between agents and resources. SAG runs as one container service
 
 | Persona | Trust | Responsibilities |
 |---|---|---|
-| Operator (Ulrich) | Trusted. Has shell access to the container host. | Runs the container. Creates Podman secrets. Writes `sag.yaml`. Issues JWTs. Approves risky extensions. Reads the audit log. |
+| Operator (Ulrich) | Trusted. Has shell access to the container host. | Runs the container. Creates Podman secrets. Writes `sag.yaml`. Issues JWTs. Approves risky extensions. Reads the audit log. The operator uses the devx host commands to create secrets, write `sag.yaml`, issue JWTs, approve extensions, set up agent harnesses, and read the audit log. |
 | Agent (Claude Code, other MCP clients) | Untrusted. Has network access to the SAG endpoint only. | Lists permitted resources. Reads schema. Sends read queries. Receives data only. |
 | Adapter author (Ulrich as developer) | Trusted | Adds a resource type through the adapter interface and the read-only contract. |
 
@@ -66,6 +66,9 @@ Constraints that this decision imposes:
 | ULID | `github.com/oklog/ulid/v2` |
 | YAML | `go.yaml.in/yaml/v3` |
 | HTTP, TLS, JSON, logs | Go standard library |
+| AWS configuration (SecureStorage AWS backend) | `github.com/aws/aws-sdk-go-v2/config` |
+| AWS Secrets Manager (SecureStorage AWS backend) | `github.com/aws/aws-sdk-go-v2/service/secretsmanager` |
+| Hidden terminal read (section 7.3 of `docs/PRD-devx.md`) | `golang.org/x/term` |
 
 - v1.1 adds `github.com/go-sql-driver/mysql` and `github.com/pingcap/tidb/pkg/parser` at one pinned commit.
 
@@ -92,21 +95,23 @@ Container constraints:
 |---|---|
 | Image | Multi-stage build. Runtime base is a minimal glibc image with CA certificates. |
 | User | Non-root UID 65532 inside the container. |
-| Root filesystem | Read-only (`--read-only`). |
+| Root filesystem | Read-only (`--read-only`, `--read-only-tmpfs=false`). Podman adds no writable tmpfs at `/tmp`, `/var/tmp`, or `/run`. |
 | Capabilities | `--cap-drop=all`, `--security-opt=no-new-privileges`. |
 | Listen | `0.0.0.0:8443` inside the container network namespace. |
 | Port publish | Only on `127.0.0.1` or on the Tailscale address of the host, for example `PublishPort=100.101.102.103:8443:8443`. Never on `0.0.0.0` or on a public address. |
 | Config | `/etc/sag/sag.yaml`, bind mount, read-only. |
-| State volume | `/var/lib/sag`, owner UID 65532, mode 0700. Contains `audit/` and `approvals/`. |
+| State volume | `/var/lib/sag`, owner UID 65532, mode 0700, mount option `noexec`. Contains `audit/` and `approvals/`. Except for `/dev/shm` (`noexec`), it is the only writable path. No writable path permits execution. |
 | Secrets | Podman secrets, `type=mount`, target `/run/secrets/<name>`, `uid=65532`, `mode=0400`. |
-| Unit | A Quadlet file `deploy/sag.container` for systemd. |
+| Unit | A Quadlet file `deploy/sag.container` for systemd. `Pull=never`, `Restart=on-failure`, `RestartSec=10`. |
+| Logs | The log flags of section 13 of `docs/PRD-devx.md`: `--log-driver k8s-file --log-opt max-size=10mb`. |
 
 Operational rules:
 
-- The daemon reads `sag.yaml` and all secrets at start. A change to `sag.yaml` or to a secret needs a container restart in v1.
+- The daemon reads `sag.yaml` and all secrets at start. This rule applies to `secret:` references. Section 11.4 of `docs/PRD-devx.md` applies to `aws-sm:` references. A change to `sag.yaml` or to a secret needs a container restart in v1.
 - The daemon removes each `PG*` environment variable at start.
-- The daemon refuses to start if a secret file has an owner other than UID 65532 or a mode with group or other bits.
-- The operator runs CLI commands inside the container with `podman exec`. No CLI function is reachable through MCP.
+- The daemon refuses to start if a secret file has an owner other than UID 65532 or a mode other than exactly 0400.
+- The owner and mode rule covers the regular files of the SAG secrets in `/run/secrets`. A directory that Podman adds to `/run/secrets` from `mounts.conf`, for example `rhsm`, is outside SAG control.
+- The operator runs CLI commands inside the container with `podman exec`. This rule also allows the host forms of section 1.2 of `docs/PRD-devx.md`. No CLI function is reachable through MCP.
 - `GET /healthz` returns `200` with an empty body and needs no token. All other paths need a JWT.
 
 Network constraints:
@@ -115,6 +120,7 @@ Network constraints:
 - Remote agents reach SAG only through the Tailscale VPN.
 - Tailscale ACLs allow only agent hosts to reach the SAG port.
 - An agent on the container host uses `127.0.0.1`.
+- devx publishes `127.0.0.1:8443` only. On a host with Tailscale, `tailscale serve --tcp` forwards TCP port 8443 of the Tailscale address to `127.0.0.1:8443` (section 5.8 of `docs/PRD-devx.md`). This forward is the devx form of the Tailscale publish.
 
 ### 6.1 Endpoint certificate
 
@@ -122,8 +128,9 @@ The operator supplies the certificate and the key as the Podman secrets `sag-tls
 
 | Environment | Certificate source |
 |---|---|
-| Server reached over Tailscale | `tailscale cert <machine>.<tailnet>.ts.net` on the host. The operator creates the Podman secrets from the output files. Before the certificate expires, the operator runs the command again, replaces the secrets, and restarts the container. |
-| macOS development machine | mkcert. Run `mkcert -install` one time. Then run `mkcert localhost 127.0.0.1 <hostname>` and create the Podman secrets from the output files. |
+| Server reached over Tailscale | Server install only. `tailscale cert <machine>.<tailnet>.ts.net` on the host. The operator creates the Podman secrets from the output files. Before the certificate expires, the operator runs the command again, replaces the secrets, and restarts the container. |
+| macOS and Ubuntu development machine | `sag bootstrap` (section 5.7 of `docs/PRD-devx.md`). Its CA has no name constraints extension, and no file holds the CA key. The server certificate names `localhost`, `127.0.0.1`, `::1`, and the Tailscale address of section 5.8 of `docs/PRD-devx.md`. `NODE_EXTRA_CA_CERTS` points to `<cfg>/ca.pem` through section 12.5 of `docs/PRD-devx.md`. |
+| Manual mkcert setup | mkcert. Run `mkcert -install` one time. Then run `mkcert localhost 127.0.0.1 <hostname>` and create the Podman secrets from the output files. |
 
 Node-based agent clients, for example Claude Code, do not read the macOS trust store. With a mkcert certificate, start the client with `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`.
 
@@ -136,6 +143,7 @@ Node-based agent clients, for example Claude Code, do not read the macOS trust s
 - The operator is the only person with shell access to the container host as the Podman user.
 - The SAG port is reachable only from `127.0.0.1` and from the tailnet.
 - Target databases belong to other teams or companies. Their TLS support is unknown. Some DSNs point to primary servers.
+- On a developer machine, the agent runs on the container host in the account of the operator. Section 2 of `docs/PRD-devx.md` applies.
 
 ### 7.2 Assets
 
@@ -160,15 +168,16 @@ Node-based agent clients, for example Claude Code, do not read the macOS trust s
 | T5 | Network attacker between SAG and a database | Reads and changes network traffic. Runs a false database server. |
 | T6 | Hostile data in a resource (prompt injection in rows) | Puts instructions into tool output. |
 | T7 | Database owner who adds objects after setup (extensions, views, functions) | Changes the code that a read query can reach. |
+| T8 | AI agent with a shell in the OS account of the operator, for example Claude Code or pi | Runs each command that the operator can run. Reads and writes each file of the operator. Opens a pseudo-terminal with `script` or `expect`. Section 2.2 of `docs/PRD-devx.md` applies. |
 
 ### 7.4 Trust boundaries
 
 | ID | Boundary | Rule |
 |---|---|---|
 | TB1 | Agent ↔ SAG endpoint | All input is untrusted. SAG terminates TLS, verifies the JWT, authorizes, validates, limits, and audits each request. |
-| TB2 | Container ↔ container host | Secrets, master key, config, and approvals enter the container only through Podman secrets and mounts that the operator creates. |
+| TB2 | Container ↔ container host | Secrets, master key, config, and approvals enter the container only through Podman secrets and mounts that the operator creates. On a developer machine, the operator path is the devx host commands. Secrets also enter through the AWS backend as a secret source (section 11 of `docs/PRD-devx.md`). |
 | TB3 | SAG ↔ resource | TLS `verify-full` by default. SAG treats the credential as write-capable and applies the read-only contract (section 8) to each request. |
-| TB4 | Operator ↔ admin functions | JWT issue and extension approval are CLI commands inside the container. They need a terminal and the master key. |
+| TB4 | Operator ↔ admin functions | JWT issue and extension approval are CLI commands inside the container. They need a terminal and the master key. On a developer machine, the devx host commands are the operator path. |
 
 ### 7.5 Mitigations
 
@@ -186,18 +195,21 @@ Node-based agent clients, for example Claude Code, do not read the macOS trust s
 
 - **R1.** A person with shell access to the container host as the Podman user reads Podman secrets and the master key. The security of the host is outside SAG.
 - **R2.** A JWT is a bearer token. A copied JWT works from any network location that reaches SAG, until expiry or an `auth.version` increment. v1 has no revocation of one JWT.
-- **R3.** Code that the AST does not show runs inside the request transaction: a view that calls a user function, a user cast, a domain check, a row-level security policy, a foreign table. The engine read-only mode blocks transactional writes in that code. Non-transactional side effects in that code are outside C2. Preflight refuses the extensions with known external side effects (section 9.1). A read-only database role removes this risk.
+- **R3.** Code that the AST does not show runs inside the request transaction: a view that calls a user function, a user cast, a domain check, a type input function, an operator class, a row-level security policy, a foreign table. User casts, domain checks, type input functions, and operator classes run without a name rule. A view or a materialized view that the database owner created can take a session-level advisory lock or call a volatile function that does not write. The engine read-only mode blocks transactional writes in that code. Non-transactional side effects in that code are outside C2. Preflight refuses the extensions with known external side effects (section 9.1). A read-only database role removes this risk.
 - **R4.** An approved extension (section 9.2) keeps R3 open for that extension.
-- **R5.** An agent can read all data that the credential can read, except the credential catalogs. Column redaction is not a security boundary (section 10.4).
+- **R5.** An agent can read all data that the credential can read, except the credential catalogs. A view that the database owner created over a credential catalog exposes that catalog. Column redaction is not a security boundary (section 10.4).
 - **R6.** An agent can read the database user, the port, and server settings through SQL. SAG keeps only the password and the DSN text secret.
 - **R7.** Read queries on a primary server use its resources up to the limits in section 10.1.
-- **R8.** On the development machine, the mkcert root CA key can sign a certificate for any host name, and that machine trusts it. This applies to development only. The mkcert root CA is never installed on a server or on an agent host outside development.
+- **R8.** This risk applies only to a manual mkcert setup. On the development machine, the mkcert root CA key can sign a certificate for any host name, and that machine trusts it. This applies to development only. The mkcert root CA is never installed on a server or on an agent host outside development.
 - **R9.** A risky object that a database owner adds stays usable for up to one `preflight.recheck_interval`, until the next preflight re-check.
+- **R10.** Audit growth has no limit. One agent can fill the state volume with audit records, and then each `tools/call` returns `internal`. The operator monitors the free space of the state volume.
+- **R11 to R28.** The residual risks R11 to R28 of section 18 of `docs/PRD-devx.md` apply.
 
 Operator guidance for Claude Code:
 
 - Register SAG with `--scope user`, or use `${SAG_TOKEN}` expansion in `.mcp.json`. Do not commit a literal JWT.
 - Issue one JWT for each agent identity. Do not share one JWT between agents.
+- On a developer machine, `sag agent setup` writes the JWT into the user-level MCP configuration file of the harness.
 
 ## 8. Read-only enforcement
 
@@ -250,7 +262,10 @@ Fail-closed rules:
 
 - SAG rejects a statement that the parser cannot parse.
 - SAG rejects an empty statement and a text with more than one statement.
+- SAG rejects a text that holds a NUL byte.
+- SAG rejects a parse tree with more than 500 levels of nested messages. This check runs in `ValidateStatic`, before `Render`.
 - SAG rejects any AST node type that is not on the allowlist.
+- A rejection returns `query_rejected` with the message `statement rejected: <rule>`, `statement rejected: <rule>:<detail>`, or `statement rejected: <Node.Field>`. The message never holds a name that the agent writes. The audit `reason` holds the full reason (section 10.2).
 - For each allowed node type, the allowlist names each permitted field. A non-zero field outside the list rejects the statement.
 - The walk uses `protoreflect` over the pg_query parse tree. The walk does not use a visitor that can skip fields.
 
@@ -262,6 +277,7 @@ Allowlist walk:
 - Rejected anywhere in the tree: writable CTEs, `SELECT ... INTO`, row locks (`FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE`, `FOR KEY SHARE`).
 - All other statement types are absent from the allowlist: DML, DDL, `COPY`, `SET`, `RESET`, `DO`, `CALL`, `LOCK`, `GRANT`, `PREPARE`, `EXECUTE`, `LISTEN`, `NOTIFY`, `VACUUM`, `ANALYZE`, and transaction control.
 - The parser grammar is PostgreSQL 17. The supported server range is PostgreSQL 14 to 19. Syntax that the parser does not know fails to parse, and SAG rejects it. Examples: PostgreSQL 19 `IGNORE NULLS` in window functions, `REPACK`, `WAIT`.
+- These read forms are not on the allowlist, and SAG rejects them: `TABLESAMPLE`, `GROUPING()`, XML functions, SQL/JSON constructors and predicates, bit-string literals, a column definition list (`f() AS x(a int)`), and the `SEARCH` and `CYCLE` clauses of recursive CTEs.
 
 Render rule:
 
@@ -280,13 +296,14 @@ Validation runs in two phases:
 |---|---|
 | `EngineGuard` | `transaction` |
 | `SessionGuard` | `SET default_transaction_read_only = on` |
-| `RequestBegin` | `BEGIN TRANSACTION READ ONLY`, then `SET LOCAL` for `statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`, `standard_conforming_strings = on`, `client_encoding = 'UTF8'` |
+| `RequestBegin` | `BEGIN TRANSACTION READ ONLY`, then `SET LOCAL` for `statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`, `standard_conforming_strings = on`, `client_encoding = 'UTF8'`, `datestyle = 'ISO, YMD'`, `bytea_output = 'hex'` |
 | `ViolationCodes` | SQLSTATE `25006` (`read_only_sql_transaction`) |
 
 Driver rules:
 
 - SAG builds the pgx config from the secret fields: host, port, database, user, password. SAG rejects a DSN with any query parameter.
 - SAG sets `DefaultQueryExecMode` to `QueryExecModeExec`.
+- SAG sets the startup parameter `client_encoding` to `UTF8`.
 - SAG sends agent-derived text only through `Conn.Query` or `pgconn.ExecParams`. These use the extended query protocol, which accepts exactly one statement.
 - SAG sends `SessionGuard` and `RequestBegin` text only. This text contains no agent input.
 
@@ -298,12 +315,20 @@ Row cap (`PlanRowCap`):
 
 Function and operator rules (`ValidateCatalog` and `ValidateStatic`):
 
-1. SAG resolves each function name in `pg_proc`. SAG rejects a name that has any match outside `pg_catalog`.
-2. SAG resolves each operator name in `pg_operator`. SAG rejects a name that has any match outside `pg_catalog`.
-3. SAG rejects a schema-qualified function name with a schema other than `pg_catalog`.
+1. SAG resolves each function name in `pg_proc`. SAG rejects a name that has any match outside `pg_catalog`. SAG rejects a name that has no match.
+2. SAG resolves each operator name in `pg_operator`. SAG rejects a name that has any match outside `pg_catalog`. SAG rejects a name that has no match.
+3. SAG rejects a schema-qualified function name with a schema other than `pg_catalog`. SAG rejects a schema-qualified operator name with a schema other than `pg_catalog`.
 4. SAG rejects each function with `provolatile = 'v'`, except `random`, `clock_timestamp`, `gen_random_uuid`, and `timeofday`.
 5. SAG rejects each function with the prefix `pg_` or `lo_`, except this allowlist: `pg_typeof`, `pg_size_pretty`, `pg_column_size`, `pg_relation_size`, `pg_table_size`, `pg_indexes_size`, `pg_total_relation_size`, `pg_get_viewdef`, `pg_get_indexdef`, `pg_get_constraintdef`, `pg_get_expr`, `pg_get_userbyid`.
-6. SAG rejects these functions and families: `set_config`, `current_setting`, `nextval`, `setval`, `txid_current*`, `pg_current_xact_id*`, `ts_stat`, `ts_rewrite`, `query_to_xml*`, `cursor_to_xml*`, `table_to_xml*`, `schema_to_xml*`, `database_to_xml*`.
+6. SAG rejects these functions and families: `set_config`, `current_setting`, `nextval`, `setval`, `txid_current*`, `pg_current_xact_id*`, `ts_stat`, `ts_rewrite`, `brin_summarize_new_values`, `brin_summarize_range`, `brin_desummarize_range`, `gin_clean_pending_list`, `loread`, `lowrite`, `query_to_xml*`, `cursor_to_xml*`, `table_to_xml*`, `schema_to_xml*`, `database_to_xml*`, `dblink*`, `binary_upgrade_*`.
+
+Rules for names:
+
+- A match counts as a match in `pg_catalog` only when its schema is `pg_catalog` and its OID is below 16384. Each other match is a match outside `pg_catalog`.
+- Rules 1, 2, and 4 apply to the bare name, also when the statement qualifies it with `pg_catalog`.
+- Rules 5 and 6 compare the name in lower case.
+- Field selection: PostgreSQL resolves `(expr).name` and `alias.name` as the call `name(expr)` when no column has that name. SAG takes each field name of an indirection and each part after the first of a column reference as a function name. Rules 5 and 6 apply to this name, so a column with such a name rejects. SAG resolves this name in `pg_proc`. A name with no match is a column and passes. A name with a match passes only when it passes rules 1 and 4.
+- SAG adds the operator `=` for each `JOIN ... USING` and each `NATURAL JOIN`, because PostgreSQL resolves `=` by name there. Rule 2 applies to it.
 
 ### 8.5 PostgreSQL effects that only C1 blocks
 
@@ -318,10 +343,14 @@ C2 and C3 do not block these effects. The conformance suite asserts that C1 reje
 | Server file read | `SELECT pg_read_file('postgresql.conf')` |
 | Signal to another backend | `SELECT pg_terminate_backend(1)` |
 | Server configuration reload | `SELECT pg_reload_conf()` |
+| Command on the database host, server file write | `COPY (SELECT 1) TO PROGRAM 'touch /tmp/x'`, `COPY (SELECT 1) TO '/tmp/x'` |
+| Prepared transaction that stays after `ROLLBACK` | `PREPARE TRANSACTION 'x'` |
+| Checkpoint | `CHECKPOINT` |
+| Prepared statement that stays in the pooled session | `PREPARE p AS SELECT 1` |
 
 ### 8.6 Credential catalogs
 
-The credential can read catalogs that store other credentials. SAG rejects a reference to these relations at any depth of the AST: `pg_authid`, `pg_shadow`, `pg_user_mapping`, `pg_user_mappings`, `pg_subscription`, `pg_settings`, `pg_file_settings`. Rule 6 in section 8.4 rejects `current_setting`.
+The credential can read catalogs that store other credentials. SAG rejects a reference to these relations at any depth of the AST: `pg_authid`, `pg_shadow`, `pg_user_mapping`, `pg_user_mappings`, `pg_subscription`, `pg_settings`, `pg_file_settings`, `pg_statistic`, `pg_stats`, `pg_statistic_ext_data`, `pg_stats_ext`, `pg_stats_ext_exprs`, `user_mapping_options`, `_pg_user_mappings`. SAG compares the relation name in lower case, in any schema. Rule 6 in section 8.4 rejects `current_setting`.
 
 ### 8.7 Recommended read-only database role (defense in depth only)
 
@@ -342,7 +371,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO sag_ro;
 
 ### 9.1 PostgreSQL preflight
 
-SAG runs preflight at `sag resource test <name>` and at daemon start for each resource. A resource that fails preflight is not served. The daemon starts and serves the other resources. The daemon runs preflight again every 60 s for each failed resource. The daemon runs preflight again for each served resource at each `preflight.recheck_interval` (default 10 minutes). A failed re-check marks the resource unavailable until a check passes.
+SAG runs preflight at `sag resource test <name>` and at daemon start for each resource. A resource that fails preflight is not served. The daemon starts and serves the other resources. The daemon runs preflight again every 60 s for each failed resource. The daemon also tries again every 60 s to open a resource whose open failed. After a successful open, the resource gets its first preflight. The daemon runs preflight again for each served resource at each `preflight.recheck_interval` (default 10 minutes). A failed re-check marks the resource unavailable until a check passes.
 
 | Check | Pass condition | On failure |
 |---|---|---|
@@ -350,16 +379,18 @@ SAG runs preflight at `sag resource test <name>` and at daemon start for each re
 | Version | `server_version_num` is from `140000` to `199999`. | Refuse |
 | TLS | `pg_stat_ssl.ssl` is true for the session, unless the resource has the TLS opt-out or a loopback IP literal as host (section 12.2). | Refuse |
 | Read-only mode | After `RequestBegin`, `transaction_read_only` is `on`, `standard_conforming_strings` is `on`, and `client_encoding` is `UTF8`. | Refuse |
-| Risky objects | None of these exist, or a valid approval matches the current fingerprint: extensions `dblink`, `pg_background`, `adminpack`, `file_fdw`; procedural languages with `lanpltrusted = false` other than `c` and `internal`. | Refuse, with the approval hint |
+| Risky objects | None of these exist, or a valid approval matches the current fingerprint: extensions `dblink`, `pg_background`, `adminpack`, `file_fdw`, `pg_cron`, `http`, `pg_net`; procedural languages with `lanpltrusted = false` other than `c` and `internal`. | Refuse, with the approval hint |
 | Operator names | Report each operator name that has a match outside `pg_catalog`. Queries that use these names fail with `query_rejected`. | Report only |
 
-Refusal hint text: `resource <name> has risky objects <list>; to approve, run on the host: podman exec -it sag sag extension approve <name>`.
+Preflight runs on its own connection outside the request pool. Its first statement in the transaction is `SELECT pg_catalog.set_config('search_path', 'pg_catalog', true)`.
+
+Refusal hint text: `resource <name> has risky objects <list>; to approve, run: sag extension approve <name>`.
 
 ### 9.2 Extension approval
 
 An approval accepts the risk of the listed objects for one resource. An approval does not turn off a control. C1 still rejects each function and operator outside `pg_catalog`.
 
-Command: `podman exec -it sag sag extension approve <resource>`.
+Command: `sag extension approve <resource>`.
 
 Flow:
 
@@ -377,7 +408,10 @@ Rules:
 
 - Preflight accepts an approval only with a valid `mac` and a fingerprint equal to the current one.
 - A new risky object, a version change, or a change of the target fields makes the approval invalid. Preflight then refuses the resource.
-- `sag extension revoke <resource>` deletes the approval record.
+- `sag extension revoke <resource>` writes a revoke tombstone `/var/lib/sag/approvals/<resource>.revoked.json`, then deletes the approval record. The command exits 0 when no approval record exists, after it writes the tombstone. The tombstone holds the resource name and the revoke time. Its `mac` is HMAC-SHA-256 with the approval key, so the command needs the master key. The daemon reads the record only at a preflight run. A served resource stays served until the next re-check or a daemon restart. The command prints this fact.
+- Preflight refuses a record with an `approved_at` that is not after the tombstone time. A new approval after the revoke is valid.
+- An approval record is valid for one year after `approved_at`. Preflight refuses an expired record with the check detail `approval record expired: <list>`.
+- The approvals directory must be a directory, not a symbolic link, with mode 0700 and the process user as owner. Otherwise preflight refuses the risky objects.
 - No HTTP path and no MCP tool reads or writes approvals.
 
 ### 9.3 Catalog objects that SAG reads
@@ -386,13 +420,15 @@ SAG reads only these catalog objects and settings. The conformance suite runs ea
 
 | Object | Used by | PostgreSQL 19 status |
 |---|---|---|
-| `pg_proc.proname`, `pronamespace`, `provolatile` | Function rules | Present in the PostgreSQL 19 documentation. |
-| `pg_operator.oprname`, `oprnamespace` | Operator rule, operator name report | Present in the PostgreSQL 19 documentation. |
+| `pg_proc.oid`, `proname`, `pronamespace`, `provolatile` | Function rules | Present in the PostgreSQL 19 documentation. |
+| `pg_operator.oid`, `oprname`, `oprnamespace` | Operator rule, operator name report | Present in the PostgreSQL 19 documentation. |
 | `pg_namespace.nspname` | Schema of functions, operators, extensions | Catalog present in the PostgreSQL 19 documentation. Column not checked. |
 | `pg_extension.extname`, `extversion`, `extnamespace` | Risky object check, fingerprint | Present in the PostgreSQL 19 documentation. |
 | `pg_language.lanname`, `lanpltrusted` | Untrusted language check | Present in the PostgreSQL 19 documentation. |
 | `pg_stat_ssl.pid`, `ssl` | TLS check | Present in the PostgreSQL 19 documentation. |
 | `default_transaction_read_only`, `transaction_read_only`, `statement_timeout`, `lock_timeout`, `idle_in_transaction_session_timeout`, `client_encoding` | `SessionGuard`, `RequestBegin`, read-only mode check | Present in the PostgreSQL 19 documentation. |
+| `datestyle`, `bytea_output` | `RequestBegin`, value encoding | Present in the PostgreSQL 19 documentation. |
+| `set_config('search_path', 'pg_catalog', true)` | Preflight | Present in the PostgreSQL 19 documentation. |
 | `standard_conforming_strings` | `RequestBegin`, read-only mode check | Always `on` in PostgreSQL 19 and cannot be set to `off`. `SET LOCAL standard_conforming_strings = on` is not tested on PostgreSQL 19. |
 | Credential catalogs in section 8.6 | C1 relation rule | Present in the PostgreSQL 19 documentation. |
 | `version()`, `server_version_num` | Engine and version check | Not checked. |
@@ -404,29 +440,35 @@ SAG reads only these catalog objects and settings. The conformance suite runs ea
 | Limit | Default | Hard maximum | Enforcement |
 |---|---|---|---|
 | `max_rows` | 100 | 1000 | `RowCapPlan.Fetch` reads `max_rows + 1` rows. Result has `truncated: true` and `truncated_reason: max_rows`. |
-| `max_result_bytes` | 32 KiB | 2 MiB | Core stops at the cap after JSON encoding. `truncated_reason: max_result_bytes`. |
-| `max_cell_bytes` | 4 KiB | 8 KiB | Core cuts longer text and adds the suffix `…[truncated]`. |
-| `statement_timeout` | 15 s | 30 s | `SET LOCAL statement_timeout` and Go context deadline. On deadline, pgx sends a cancel request. |
+| `max_result_bytes` | 32 KiB | 2 MiB | Core stops at the cap after JSON encoding. The cap covers the JSON object `{columns, rows, row_count, truncated, truncated_reason}`. `duration_ms` and `request_id` are outside the cap. `truncated_reason: max_result_bytes`. The executor stops the read when the encoded rows exceed the cap. The column list is outside the row cut: a result with 0 rows keeps all columns. Its size has a fixed bound of 1,664 columns of 63 bytes plus the type names. |
+| `max_cell_bytes` | 4 KiB | 8 KiB | Core cuts longer text and adds the suffix `…[truncated]`. The executor cuts each text cell when the row arrives. |
+| `statement_timeout` | 15 s | 30 s | `SET LOCAL statement_timeout`, and a Go context deadline 2 s later. The server ends the statement, and the executor sends `ROLLBACK`. If the Go deadline ends first, pgx sends a cancel request. |
 | `lock_timeout` | 2 s | 2 s | `SET LOCAL lock_timeout`. |
 | `idle_in_transaction_session_timeout` | `statement_timeout` + 5 s | 35 s | `SET LOCAL idle_in_transaction_session_timeout`. |
 | `connect_timeout` | 5 s | 5 s | Driver setting. |
 | `max_concurrent_per_agent` | 20 | None. Operator config, not a request value. | One core semaphore for each JWT `sub`, shared across all resources. It runs before `Resource.Execute`. Excess requests get `rate_limited`. |
-| `pool_size` | 2 | 4 | Driver pool setting for each resource. This is the database load limit. When the pool is exhausted, a request waits for a connection up to its `statement_timeout`, then returns `timeout`. |
+| `pool_size` | 5 | 20 | Driver pool setting for each resource. This is the database load limit. When the pool is exhausted, a request waits for a connection up to its `statement_timeout` plus 2 s, then returns `timeout`. |
 
 Rules:
 
 - Each key in this table lives under `limits` in `sag.yaml`: `defaults.limits` and `resources.<name>.limits`.
 - Exception: `max_concurrent_per_agent` lives only in `defaults.limits`. `sag config check` rejects it inside `resources.<name>.limits`.
-- `sag.yaml` can change a default and a hard maximum for each resource. A value above the hard maximum in this table fails `sag config check`.
-- A request can set `max_rows`, `max_result_bytes`, and `timeout_seconds` up to the resource hard maximum. A higher value returns `invalid_argument`.
+- `sag.yaml` changes the default for each resource. The hard maximum is one global table, and `sag.yaml` cannot change it. A value above the hard maximum in this table fails `sag config check`.
+- A request can set `max_rows`, `max_result_bytes`, and `timeout_seconds` up to the hard maximum in this table. The resource default is not a ceiling for a request value. A higher value returns `invalid_argument`.
+- The executor counts the row size for the read stop before redaction. A result with redacted columns can hold fewer rows than the cap permits.
+- Each database connection accepts a server message of at most 16 MiB. A larger row returns `upstream_error` with a fixed message.
 - An adapter that needs another limit puts it in its operation input schema.
+- The executor rejects an operation text above 16 KiB (16384 bytes) with `invalid_argument` before `Parse`. No config key and no request value changes this limit.
 
 Value encoding: `NULL` is `null`. Integers inside ±(2^53 − 1) are JSON numbers. Other integers, decimals, and numerics are strings. Time values are RFC 3339 strings. Binary values are the string `<binary N bytes>`.
 
 ### 10.2 Secret scrub and errors
 
-- Before SAG returns or logs an error, SAG removes every exact occurrence of each loaded secret value and of its password part.
+- An error message to the agent holds fixed text only. It never holds agent text or driver text.
+- A rejected statement returns `statement rejected: <rule>`, `statement rejected: <rule>:<detail>`, or `statement rejected: <Node.Field>`. A detail comes from a closed set and never from agent text: the node type for `statement` and `node` (`statement:InsertStmt`), the limit for `depth` (`depth:500`), and the count for `statement_count` (`statement_count:2`). Names that the agent writes stay out of the message: relations, functions, operators, schemas, EXPLAIN options, and field names. The full reason with the name goes to the audit `reason` only.
+- Before SAG logs a line or appends an audit record, SAG removes every exact occurrence of each loaded secret value and of its password part. The scrubber adds a credential at the time that `Load` returns it. The scrubber also holds the value of the `storage.aws.credentials` file. The scrub applies to log text, error causes, and the audit fields `sql` and `reason`. The scrub does not apply to the agent message.
 - SAG never puts a DSN string into an error or a log line.
+- Accepted limit: an MCP SDK protocol error before dispatch can repeat text of the same request. Examples: `tools/call` `params` that do not decode (`-32602` with the `params` text); `prompts/get` (`unknown prompt "<name>"`); `resources/read` (`data.uri`); an unknown method (the method name, HTTP `400` or `-32601`); an `Mcp-Name` or `Mcp-Method` header that differs from the body (`-32020` with both values); an unsupported protocol version (`-32022` with `data.requested`). Such a request writes no audit record (section 10.5 exception). The scrubber does not run on the message. The message holds only text of the same request and no resource data, so it is no oracle.
 - For a connect error, the agent receives the code `resource_unavailable`, a fixed message, and the `request_id`. The scrubbed driver error goes to the daemon log only.
 - The `Credential` type returns `[REDACTED]` from `String`, `GoString`, `MarshalJSON`, and `LogValue`.
 
@@ -449,28 +491,31 @@ SAG appends one JSON line to `/var/lib/sag/audit/audit-YYYY-MM-DD.jsonl`, mode 0
 |---|---|
 | `ts` | RFC 3339 time with milliseconds, UTC |
 | `request_id` | ULID, also returned to the agent |
-| `remote_addr` | Client address and port |
+| `remote_addr` | Client address and port. For a tailnet client through `tailscale serve`, `remote_addr` holds `127.0.0.1`. |
 | `sub`, `jti` | JWT claims, or `null` on authentication failure |
 | `auth_cause` | JWT refusal cause, or `null` |
-| `resource`, `capability`, `operation` | Target of the request |
-| `sql` | Full statement text from the agent |
+| `resource`, `capability`, `operation` | Target of the request. `resource` and `operation` hold at most the first 63 bytes. |
+| `sql` | Full statement text from the agent, after the secret scrub (section 10.2) |
 | `sql_sha256` | Hash of the statement text |
 | `rendered_sha256` | Hash of the rendered text that SAG sent |
 | `decision` | `allow` or `deny` |
-| `reason` | Deny or error code, with the rejected node, field, function, or operator name |
+| `reason` | Deny or error code, with the rejected node, field, function, or operator name, after the secret scrub (section 10.2) |
 | `rows`, `bytes`, `truncated`, `duration_ms` | Result metadata |
 
 Rules:
 
 - The audit log never contains result values, credentials, or JWTs.
-- SAG writes the record before it returns the result. If the append fails, SAG returns `internal` and no data.
+- SAG writes the record before it returns the result. If the append fails, SAG returns `internal` and no data, and logs `audit append failed` with the `request_id`.
+- A failed write leaves no partial line in the file.
+- Exception: a `tools/call` request that the JSON-RPC layer rejects before dispatch writes no record. Examples: `params` that is `null`, not an object, or has a tool name that is not a string; no `params`; no `id`; a batch with `Mcp-Protocol-Version` `2025-06-18` or later. No tool runs for such a request, and no data returns.
+- A batch without `Mcp-Protocol-Version`, or with a version before `2025-06-18`, runs each call. Each `tools/call` of the batch writes one record.
 
 ## 11. Agent authentication and authorization
 
 ### 11.1 Master key
 
 - The master key is 32 random bytes, encoded as base64. It is the Podman secret `sag-master-key` at `/run/secrets/sag-master-key`.
-- The operator creates it on the host: `openssl rand -base64 32 | podman secret create sag-master-key -`.
+- On a developer machine, `sag bootstrap` creates the master key. On a server, the operator creates it on the host: `openssl rand -base64 32 | podman secret create sag-master-key -`.
 - The daemon refuses to start if the value does not decode to exactly 32 bytes.
 
 ### 11.2 JWT
@@ -500,10 +545,12 @@ Verification order:
 
 The response for each failure is HTTP `401` with `WWW-Authenticate: Bearer`. The cause goes to the audit log only.
 
-Issue command: `podman exec -it sag sag jwt generate <sub> [--name <display>]`.
+Issue command: `sag jwt generate <sub> [--name <display>]` on the host.
 
 - The command refuses to run without a terminal on standard output.
-- The command refuses a `sub` that is not in the `agents` list of at least one resource.
+- The host form exits 3 unless standard input and standard output are terminals, and has no `--json`.
+- The command refuses a `sub` that is not in the `agents` list of at least one resource. This refusal applies to `sag jwt generate` only.
+- Exception: the internal command `sag agent issue` issues a JWT to a pipe for `sag agent setup` (section 12.4 of `docs/PRD-devx.md`).
 - The command prints the JWT once. SAG stores no JWT.
 
 ### 11.3 Authorization
@@ -519,17 +566,21 @@ Issue command: `podman exec -it sag sag jwt generate <sub> [--name <display>]`.
 
 - TLS 1.3 minimum. The certificate and key are the Podman secrets `sag-tls-cert` and `sag-tls-key` (section 6.1).
 - SAG rejects a request with an `Origin` header that is not in `server.allowed_origins`. The default list is empty.
+- Each `server.allowed_origins` entry is a serialized origin: `<scheme>://<host>[:<port>]`. The scheme is `http` or `https`. The host is labels of `[a-z0-9-]` joined by `.`, without a trailing `.`, or an IP literal in its canonical text (`[::1]` for IPv6). The entry has no default port, no path, no query, and no trailing `/`. An entry in another form fails `sag config check` with a fixed message that names the key path and not the value.
+- A request without an `Origin` header passes the Origin check. SAG compares one `Origin` value byte by byte with each list entry. More than one `Origin` value gets `403`.
+- A client disconnect cancels the tool handler only for MCP protocol `2026-07-28` and later. For an older protocol, the handler keeps its concurrency slot until the statement ends, at most `statement_timeout` plus 2 s (section 10.1). Claude Code 2.1.332 uses protocol `2026-07-28`.
+- SAG sends no CORS headers. A browser client is outside v1. `server.allowed_origins` applies only to a client that is not a browser and sends `Origin`.
 - Maximum request body is 64 KiB. Header read timeout is 5 s.
 
 ## 12. Credential storage and database TLS
 
 ### 12.1 Credentials
 
-- Credentials come only from Podman secrets, mounted as files at `/run/secrets/<name>` with `uid=65532` and `mode=0400`.
+- Credentials come from a SecureStorage backend (section 11 of `docs/PRD-devx.md`). The Podman backend mounts each secret as a file at `/run/secrets/<name>` with `uid=65532` and `mode=0400`.
 - `sag.yaml` references a secret with `secret:<name>`. It never contains a secret value.
 - The secret value for a PostgreSQL resource is a DSN URL with user, password, host, port, and database only, for example `postgres://app:<password>@db.example.net:5432/app`. Host, port, database, and user are inside the protected value.
-- The operator creates the secret on the host. The operator reads the DSN without echo: `read -rs DSN && printf '%s' "$DSN" | podman secret create sag-orders -`.
-- The operator adds `--secret sag-orders,type=mount,uid=65532,mode=0400` to the Quadlet file and restarts the container.
+- `sag credential create` replaces the manual steps below. For a manual setup, the operator creates the secret on the host. The operator reads the DSN without echo: `read -rs DSN && printf '%s' "$DSN" | podman secret create sag-orders -`.
+- The operator adds `Secret=sag-orders,type=mount,target=sag-orders,uid=65532,mode=0400` to the Quadlet file, runs `systemctl --user daemon-reload`, and restarts the service with `systemctl --user restart sag`.
 
 ### 12.2 Database TLS
 
@@ -539,14 +590,14 @@ Issue command: `podman exec -it sag sag jwt generate <sub> [--name <display>]`.
 | `insecure-skip-verify` | TLS without verification. The daemon logs one warning for each preflight run. `sag resource test` prints the warning. |
 | `disable` | No TLS. The daemon logs one warning for each preflight run. `sag resource test` prints the warning. |
 
-- A host that is an IP literal in `127.0.0.0/8` or `::1` needs no TLS and logs no warning. The exemption applies to IP literals only. The host name `localhost` gets no exemption.
+- A host that is an IP literal in `127.0.0.0/8` or `::1` needs no TLS and logs no warning. The exemption applies to IP literals only. The host name `localhost` gets no exemption. The exemption applies only when `tls` is `verify-full` or absent. An explicit `tls: insecure-skip-verify` or `tls: disable` applies as written.
 - The DSN cannot set a TLS mode. `sag.yaml` is the only source.
 
 ## 13. Interfaces
 
 ### 13.1 CLI (v1)
 
-All commands run inside the container with `podman exec`, except `sag version` and `sag config check`, which also run on macOS and Linux hosts.
+All commands run inside the container with `podman exec`, except `sag version` and `sag config check`, which also run on macOS and Linux hosts. The commands of section 1.1 of `docs/PRD-devx.md` run on the host.
 
 | Command | Function |
 |---|---|
@@ -557,6 +608,7 @@ All commands run inside the container with `podman exec`, except `sag version` a
 | `sag extension approve <resource>` | Approve risky objects (section 9.2). |
 | `sag extension revoke <resource>` | Delete an approval. |
 | `sag version` | Print the version. |
+| The commands of section 1.1 of `docs/PRD-devx.md` | The devx host commands, for example `sag bootstrap`, `sag credential create`, and `sag agent setup`. |
 
 ### 13.2 MCP endpoint
 
@@ -565,6 +617,8 @@ All commands run inside the container with `podman exec`, except `sag version` a
 - The server builds its tool list from the compile-time adapter registry. A new capability adds a new tool set. The tool name prefix is the capability name.
 
 Claude Code registration:
+
+On a developer machine, `sag agent setup` registers SAG (section 12 of `docs/PRD-devx.md`). A manual registration writes the entry into the MCP configuration file. It never passes the JWT as a command argument.
 
 ```
 claude mcp add --transport http --scope user sag https://sag.example.net:8443/mcp \
@@ -597,21 +651,25 @@ Rules:
 | `version` | integer | yes | Must be `1`. |
 | `server.listen` | string | no | Default `0.0.0.0:8443`. Address inside the container network namespace. Section 6 restricts the host publish address. |
 | `server.tls_cert`, `server.tls_key` | secret reference | yes | `secret:<name>`. |
-| `server.allowed_origins` | list of string | no | Default empty. |
+| `server.allowed_origins` | list of string | no | Default empty. Format: section 11.4. |
 | `auth.version` | integer | no | Positive. Default 1. |
 | `auth.token_lifetime` | duration | no | Default `8760h` (31536000 s, one year). |
 | `preflight.recheck_interval` | duration | no | From `10s` to `10m`. Default `10m`. No value turns off the re-check. |
 | `defaults.limits` | Limits | no | Changes the defaults in section 10.1, also `pool_size`. The only place for `max_concurrent_per_agent`. |
 | `defaults.redact.columns` | list of globs | no | Replaces the default patterns. |
-| `resources.<name>` | Resource | yes | `<name>` matches `^[a-z][a-z0-9-]{0,62}$`. |
+| `storage.aws.region` | string | no | AWS region of the SecureStorage AWS backend (section 11 of `docs/PRD-devx.md`). |
+| `storage.aws.credentials` | secret reference | no | `secret:<name>`. AWS credentials of the SecureStorage AWS backend. |
+| `resources.<name>` | Resource | no | `<name>` matches `^[a-z][a-z0-9-]{0,62}$`. `resources` can be empty. An absent `resources` key equals an empty map. |
 | `resources.<name>.kind` | string | yes | A registered adapter kind. v1: `postgres`. |
 | `resources.<name>.description` | string | no | Shown to agents. Max 500 characters. |
-| `resources.<name>.connection` | secret reference | yes | `secret:<name>`. |
+| `resources.<name>.connection` | secret reference | yes | `secret:<name>` or `aws-sm:` reference (section 11 of `docs/PRD-devx.md`). |
 | `resources.<name>.tls` | string | no | `verify-full` (default), `insecure-skip-verify`, `disable`. |
 | `resources.<name>.tls_ca` | secret reference | no | CA bundle in PEM. |
 | `resources.<name>.agents` | list of string | yes | JWT `sub` values. |
 | `resources.<name>.limits` | Limits | no | Values up to the hard maximums in section 10.1. `max_concurrent_per_agent` is rejected here. |
 | `resources.<name>.redact.columns` | list of globs | no | Adds to the default patterns. |
+
+AC1 keeps its five fixtures.
 
 The daemon rejects unknown keys. `sag.yaml` has no key that turns off a read-only control.
 
@@ -655,7 +713,20 @@ resources:
 
 ### 13.5 Quadlet file
 
-`deploy/sag.container` contains the container constraints in section 6, the port publish, the mounts, and one `Secret=` line for each Podman secret.
+`deploy/sag.container` contains the container constraints in section 6, the log keys of section 13 of `docs/PRD-devx.md`, the port publish, the mounts, and one `Secret=` line for each Podman secret.
+
+**Decision: the operator installs SAG as a Quadlet unit of the systemd user manager of the rootless Podman user.**
+
+Install steps on a Linux host. Run each step as the Podman user of the service, except where a step names `sudo`.
+
+1. Build the image with `make image IMAGE=localhost/sag:latest`. The Quadlet file uses `Image=localhost/sag:latest`. Without `IMAGE`, `make image` builds `localhost/sag:e2e`.
+2. Create each secret: `sag-master-key` (section 11.1), `sag-tls-cert` and `sag-tls-key` (section 6.1), and each secret that `sag.yaml` references, for example `sag-orders` (section 12.1).
+3. Edit the `Secret=` lines of a copy of `deploy/sag.container` to the secrets of the `sag.yaml`. The committed file follows the golden input `deploy/dev/sag.yaml` and needs `sag-orders` and `sag-dev-pg-ca`. No devx command creates these secrets. For an absent secret, Podman prints `no secret with name or id`. The unit does not start, and systemd tries again every 10 s. On a Tailscale host, also edit `PublishPort=` (section 6).
+4. Put `sag.yaml` in `/etc/sag` with mode 0644: `sudo install -D -m 0644 sag.yaml /etc/sag/sag.yaml`. Container UID 65532 maps to a subordinate UID of the host, so the file needs read permission for other users. Do not move the file from a home directory: a file with the SELinux label `user_home_t` gives `Permission denied` in the container.
+5. Copy the unit: `mkdir -p ~/.config/containers/systemd && cp sag.container ~/.config/containers/systemd/`.
+6. Run `sudo loginctl enable-linger "$USER"`. Without linger, the user unit with `WantedBy=default.target` does not start at host start.
+7. Start the service: `systemctl --user daemon-reload && systemctl --user start sag`.
+8. Check the listen address with `ss -ltn`. Port 8443 listens only on `127.0.0.1` or on the Tailscale address of the host.
 
 ## 14. Resource adapter interface
 
@@ -777,7 +848,7 @@ In scope:
 
 ### 15.2 Build order and acceptance criteria
 
-Do not start a step before every acceptance criterion of the previous step passes. Each criterion belongs to one step and has one executable check. "Suite" means the Go integration test suite with PostgreSQL containers.
+Do not start a step before every acceptance criterion of the previous step passes. Each criterion belongs to one step and has one executable check. "Suite" means the Go integration test suite with PostgreSQL containers. The devx build order is section 19 of `docs/PRD-devx.md`.
 
 **Step 1: config, secrets, JWT**
 
@@ -839,10 +910,10 @@ Do not start a step before every acceptance criterion of the previous step passe
 
 | ID | Criterion | Check |
 |---|---|---|
-| AC32 | `podman inspect sag` shows a read-only root filesystem, user 65532, no capabilities, `no-new-privileges`, and a port binding with host IP `127.0.0.1` or an address in `100.64.0.0/10`. | Shell script with `podman inspect` and `jq`. |
-| AC33 | Inside the container, `stat` shows owner 65532 and mode 0400 for each file in `/run/secrets`. | Shell script with `podman exec`. Only the e2e harness mounts a static busybox, read-only, for `stat`. The product image and the Quadlet file contain no busybox. |
-| AC34 | `podman exec sag sag jwt generate a` without `-t` exits non-zero. | Shell script. |
-| AC35 | The full suite passes against the container on Linux amd64 for each PostgreSQL major version from 14 to 19. `go build ./...` passes on macOS arm64. | CI job with a version matrix, and a macOS build job. Needs a git remote and a push by Ulrich. |
+| AC32 | `podman inspect sag` shows a read-only root filesystem, user 65532, no capabilities, `no-new-privileges`, and a port binding with host IP `127.0.0.1` or an address in `100.64.0.0/10`. | Go e2e subtest `AC32_ContainerInspect`. It decodes the `podman inspect` JSON. |
+| AC33 | Inside the container, `stat` shows owner 65532 and mode 0400 for each regular file in `/run/secrets`. The count of regular files equals the count of Podman secrets of the container. | Go e2e subtest `AC33_SecretMounts` with `podman exec`. Only the e2e harness mounts a static busybox, read-only, for `stat`. The product image and the Quadlet file contain no busybox. |
+| AC34 | `podman exec sag sag jwt generate a` without `-t` exits non-zero. | Go e2e subtest `AC34_JWTGenerateNoTTY`. |
+| AC35 | The full suite passes against the container on Linux amd64 for each PostgreSQL major version from 14 to 19. `go build ./...` passes on macOS arm64. | CI job `e2e` with a version matrix: each matrix job runs the integration tier and the e2e suite. CI job `build-macos`. CI job `ac35` runs `acreport merge`. Needs a git remote and a push by Ulrich. |
 
 ### 15.3 Release v1.1: MySQL adapter
 

@@ -44,7 +44,7 @@ A task is done only when its verify command passes and the task is merged (READM
 - Reads: `e2e/harness/flags.go`.
 - Depends on: `T6.0`.
 - Tests first: `quadlet_test.go`: `TestQuadletMatchesHarnessFlags`, `TestPublishPortLoopbackOrTailnet`, `TestOneSecretLinePerSecret`.
-- e2e: `AC32_ContainerInspect`: `podman inspect` with `jq` shows `ReadonlyRootfs` true, user `65532`, all capabilities dropped, `no-new-privileges`, and host IP `127.0.0.1` or an address in `100.64.0.0/10`. `AC34_JWTGenerateNoTTY`: `podman exec sag sag jwt generate a` exits non-zero.
+- e2e: `AC32_ContainerInspect`: the Go e2e subtest decodes the `podman inspect` JSON and checks `ReadonlyRootfs` true, user `65532`, all capabilities dropped, `no-new-privileges`, and host IP `127.0.0.1` or an address in `100.64.0.0/10`. `AC34_JWTGenerateNoTTY`: `podman exec sag sag jwt generate a` exits non-zero.
 - ACs: AC32, AC34.
 - Verify: `go test -count=1 ./e2e/harness/... -run 'TestQuadlet|TestPublishPort|TestOneSecretLine'`. Expected: `ok`.
 - Done when: the Quadlet keys and the harness flags are equal.
@@ -57,7 +57,7 @@ A task is done only when its verify command passes and the task is merged (READM
 - Depends on: `T6.0`.
 - Method: copy `/bin/busybox` out of `busybox:1.37.0-musl` with `podman create` and `podman cp`. Mount it read-only at `/e2e/busybox` in the e2e `sag` container only.
 - Tests first: `busybox_integration_test.go`: `TestBusyboxExtracted`, `TestMountReadOnly`.
-- e2e: `AC33_SecretMounts`: `podman exec sag /e2e/busybox sh -c 'stat -c "%u %a" /run/secrets/*'` shows `65532 400` for each file.
+- e2e: `AC33_SecretMounts`: `podman exec sag /e2e/busybox sh -c '/e2e/busybox stat -c "%n %u %a %F" /run/secrets/*'` shows `65532 400` for each regular file. The busybox shell has no `stat` in `PATH`, so the command calls the applet through `/e2e/busybox`. The count of regular files equals the count of secrets in `podman container inspect`. A directory that Podman adds from `mounts.conf`, for example `rhsm`, is outside SAG control and outside the check.
 - ACs: AC33.
 - Verify: `make test-integration PG=17 PKG=./e2e/harness/... RUN='TestBusybox|TestMountReadOnly'`. Expected: `ok`.
 - Done when: the production image and the Quadlet file stay without busybox.
@@ -70,7 +70,7 @@ A task is done only when its verify command passes and the task is merged (READM
 - Depends on: `T6.0`.
 - Tests first: `merge_test.go`: `TestAC35NeedsAllMajors`, `TestAC35NeedsMacOSBuild`, `TestAC31ExcludedInCI`.
 - ACs: AC35.
-- Verify: `go test -count=1 ./e2e/cmd/acreport/... && podman run --rm -v "$PWD:/repo:ro" -w /repo docker.io/rhysd/actionlint:1.7.7`. Expected: `ok`, then exit 0 with no output.
+- Verify: `go test -count=1 ./e2e/cmd/acreport/... && podman run --rm -v "$PWD:/repo:ro" -w /repo docker.io/rhysd/actionlint:1.7.9`. Expected: `ok`, then exit 0 with no output. actionlint 1.7.7 does not know the runner label `macos-26`.
 - Done when: the workflow lints clean and the merge rule passes its tests.
 
 ## T6.4 Integration, gate, and CI run

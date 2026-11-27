@@ -185,7 +185,7 @@ The integration task of layer N owns every file of layer N after all other tasks
 
 1. Check that each task of the layer has `.dev/claims/<task-id>/merged`.
 2. In `.dev/integration`, run `go mod tidy`. Check that no module version changes.
-3. Run `make e2e-matrix LAYER=<N> PGS="14 17 19"`.
+3. Run `make e2e-matrix LAYER=<N> PGS="14 17 19"`. It runs `make test-integration` for each major before the e2e suite.
 4. If `acreport` exits 1, fix the cause and run step 3 again.
 5. Write the diff: `git diff sag-layer-<N-1> > ../local/layer-<N>.diff`.
 6. Spawn one review sub-agent with `model: fable` and `effort: high`. Give it the diff, the PRD sections of the layer, `e2e/report/ac-report.md`, and the layer file. Ask for correctness and security findings in Ulrich's format.

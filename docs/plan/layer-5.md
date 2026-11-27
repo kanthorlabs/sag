@@ -57,7 +57,7 @@ A task is done only when its verify command passes and the task is merged (READM
 - Reads: `internal/mcpserver/types.go`, `internal/pipeline`, `internal/inventory`.
 - Depends on: `T5.0`.
 - Tests first: `schemas_test.go`: `TestAnnotations`, `TestDescriptionSentence`, `TestStructuredEqualsText`, `TestOutputMatchesSchema`; `errors_test.go`: `TestErrorCodesClosedSet`, `TestNotFoundForForeignResource`.
-- e2e: `AC29_Authorization`: agent `ac29a` gets `not_found` for resource `only-b`, and `list_resources` for `ac29a` excludes `only-b`. `AC30_ToolShapes`: the go-sdk client calls the 4 tools, and each `structuredContent` validates against the output schema.
+- e2e: `AC29_Authorization`: agent `ac29a` gets `not_found` for resource `only-b`, and `list_resources` for `ac29a` excludes `only-b`. `AC30_ToolShapes`: the go-sdk client calls the 4 tools, and each `structuredContent` is validated with jsonschema-go against the output schema.
 - ACs: AC29, AC30.
 - Verify: `go test -count=1 ./internal/mcpserver/...`. Expected: `ok`.
 - Done when: each tool result has `structuredContent` and the same JSON as text.
@@ -70,7 +70,7 @@ A task is done only when its verify command passes and the task is merged (READM
 - Depends on: `T5.0`.
 - Method: write a temporary MCP config file with mode 0600 and the JWT. Run `NODE_EXTRA_CA_CERTS=<test CA> claude -p "<prompt>" --mcp-config <file> --strict-mcp-config --allowedTools mcp__sag__list_resources,mcp__sag__sql_query`. Delete the file.
 - Tests first: `claude_test.go`: `TestConfigFileMode0600`, `TestConfigFileRemoved`.
-- e2e: `AC31_ClaudeCode`: the output holds the marker value. If `claude` is absent or not logged in, the subtest fails with the message `prerequisite missing`.
+- e2e: `AC31_ClaudeCode`: the subtest waits until `list_resources` for `ac31` holds `ac31`. The output holds the marker value. The audit log holds exactly one `allow` record with operation `query` for `sub` `ac31`, and no record of another tool. If `claude` is absent or not logged in, the subtest fails with the message `prerequisite missing`.
 - ACs: AC31.
 - Verify: `go test -count=1 ./e2e/harness/... -run 'TestConfigFile'`. Expected: `ok`.
 - Done when: the subtest passes on the macOS development machine.

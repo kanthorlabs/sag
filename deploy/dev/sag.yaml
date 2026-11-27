@@ -1,0 +1,24 @@
+version: 1
+
+server:
+  listen: 0.0.0.0:8443
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+
+auth:
+  version: 1
+  token_lifetime: 8760h
+
+defaults:
+  limits:
+    max_rows: 100
+    max_result_bytes: 32768
+    statement_timeout: 15s
+
+resources:
+  orders:
+    kind: postgres
+    description: Development PostgreSQL 17, database app.
+    connection: secret:sag-orders
+    tls_ca: secret:sag-dev-pg-ca
+    agents: [claude-code-dev]

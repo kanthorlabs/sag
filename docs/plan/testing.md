@@ -57,7 +57,7 @@ Structure of the e2e test binary:
 
 - One top-level test `TestE2E` in `e2e/e2e_test.go`.
 - Phase 1 runs `t.Run("parallel", ...)` with each phase-1 AC subtest marked `t.Parallel()`.
-- Phase 2 runs sequentially after phase 1, in this order: `AC16_LexerSettings`, `AC08_RollbackOnly`, `AC19_Integrity`.
+- Phase 2 runs sequentially after phase 1, in this order: `AC16_LexerSettings`, the other sequential ACs, `AC08_RollbackOnly`, `AC19_Integrity`. `AC08_RollbackOnly` reads the server log after each other sequential AC except `AC19_Integrity`.
 - Subtest name form: `TestE2E/<phase>/AC<NN>_<Name>`.
 - Run timeout: 30 minutes.
 
@@ -79,6 +79,7 @@ Status rules:
 | `PASS` | The subtest passed on every major in the run. |
 | `FAIL` | The subtest failed or timed out on one major or more, or a prerequisite is missing (for example no `claude` login for AC31). |
 | `NOT_IMPLEMENTED` | No subtest for the AC ran. |
+| `EXCLUDED` | The AC is in `AC_SKIP` (`acreport -skip`). The Markdown table shows no duration for it. |
 
 `e2e/report/ac-report.json`:
 
@@ -108,19 +109,25 @@ Status rules:
 
 `e2e/report/ac-report.md` holds one table with 35 rows: `AC`, `Layer`, `Test`, `Status`, one column per major, `Duration`, `Message`. The header lists the commit, the image digest, and the gate result.
 
-Gate rule: `acreport` exits 1 if any AC with `layer <= N` is not `PASS`, or if any other subtest of the run fails (for example `Harness_Skeleton`). It lists each failing test.
+Gate rule: `acreport` exits 1 if any AC with `layer <= N` is not `PASS` and not `EXCLUDED`, or if any other subtest of the run fails (for example `Harness_Skeleton`). It lists each failing test. The per-run gate never counts AC35, because one run cannot prove it. AC35 stays `NOT_IMPLEMENTED` in a per-run report.
 
 ## 5. CI (AC35)
 
-`.github/workflows/ci.yml` on GitHub Actions:
+`.github/workflows/ci.yml` on GitHub Actions. The jobs `unit`, `build-macos`, and `e2e` set `CGO_ENABLED: "1"`, because `pg_query_go` needs cgo. The `e2e` job has `timeout-minutes: 45`. Each other job has `timeout-minutes: 15`.
 
 | Job | Runner | Steps | Task |
 |---|---|---|---|
 | `unit` | `ubuntu-24.04` | `make test` | `X.1` |
-| `build-macos` | `macos-14` (arm64) | `go build ./...` | `X.1` |
-| `e2e` | `ubuntu-24.04`, matrix `pg: [14, 15, 16, 17, 18, 19]` | `make e2e LAYER=6 PG=${{ matrix.pg }} AC_SKIP=AC31`, upload `e2e/report/pg<major>/` | `T6.3` |
-| `ac35` | `ubuntu-24.04`, needs all jobs above | `go run ./e2e/cmd/acreport merge`: AC35 is `PASS` only if every matrix report passes every AC except AC31, and `build-macos` passes | `T6.3` |
+| `build-macos` | `macos-26` (arm64) | `go build ./...`, then `go build ./cmd/sag` | `X.1` |
+| `e2e` | `ubuntu-24.04`, matrix `pg: [14, 15, 16, 17, 18, 19]`, `fail-fast: false` | `make test-integration PG=${{ matrix.pg }}`, then `make e2e LAYER=6 PG=${{ matrix.pg }} AC_SKIP=AC31`. A step with `if: always()` uploads `e2e/report/` as artifact `ac-report-pg<major>`. | `T6.3` |
+| `ac35` | `ubuntu-24.04`, `needs: [unit, build-macos, e2e]`, `if: always()` | `setup-go` with `cache: false`. Download each `ac-report-pg*` artifact to `reports/`. Run `go run ./e2e/cmd/acreport merge` with one `-in reports/ac-report-pg<major>/ac-report.json` per major and `-macos-build ${{ needs.build-macos.result }}`. Upload `ac35/` as artifact `ac35`. | `T6.3` |
 
+- The `e2e` step has no `continue-on-error`. `AC_SKIP=AC31` marks AC31 `EXCLUDED`, and the per-run gate does not count it. A matrix job is red only on a real failure.
+- The integration tier runs in each matrix job against the major of that job. A failed integration step gives no `ac-report.json`, so the merge names the absent major.
+- AC31 needs a logged-in Claude Code. CI has no login. AC31 runs only in the local gate, with an empty `AC_SKIP`.
+- `AC_SKIP` takes a value only from the make command line. A value in the environment does not change the gate. The Markdown gate line names each `EXCLUDED` AC. `acreport` prints a warning for an `AC_SKIP` ID that is not in the AC table.
+- Merge rule: AC35 is `PASS` only if all conditions are true. The inputs cover exactly the majors 14 to 19. Each input holds a row for each AC of the table. Each AC except AC31 and AC35 has status `PASS` and `by_major` `PASS` in each input. Each input holds `Harness_Skeleton` in `others`, and each `others` entry is `PASS`. `build-macos` is `success`. The merged report marks AC31 `EXCLUDED`. Exit codes: 0 when the merged gate passes, 1 when the merged gate fails (AC35 or another row is not `PASS`), 2 on a usage or input error. A failed `make test`, integration step, or image build gives no `ac-report.json`, so the merge exits 2.
+- The merged report in artifact `ac35` is the CI result for AC35.
 - The runner user is not root. AC27 needs this, because root ignores directory modes.
 - Pin each action by commit SHA.
 - Runner Podman is rootless.
