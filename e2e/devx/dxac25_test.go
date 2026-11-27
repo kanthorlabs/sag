@@ -56,7 +56,7 @@ func DXAC25_Logs(t *testing.T, ctx context.Context) {
 	}
 
 	n := time.Now().UnixNano()
-	dsn := fmt.Sprintf("postgres://dxu%016x:dxp%016x@127.0.0.1:1/dxdb%016x?sslmode=disable",
+	dsn := fmt.Sprintf("postgres://dxu%016x:dxp%016x@127.0.0.1:1/dxdb%016x",
 		n, n^0x5a5a5a5a5a5a5a5a, n^0x2b2b2b2b2b2b2b2b)
 
 	code25, out25 := runSAGWithInput(t, ctx, []byte(dsn),
