@@ -44,8 +44,28 @@ func (f *fakeIssuer) install(t *testing.T, known ...string) {
 func jwtIO(terminalOut bool) (IO, *bytes.Buffer, *bytes.Buffer) {
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	std := IO{In: strings.NewReader(""), Out: out, Err: errOut, Mode: ModeContainer}
-	std.IsTerminal = func(stream any) bool { return terminalOut && stream == std.Out }
+	std.IsTerminal = func(stream any) bool { return terminalOut && (stream == std.Out || stream == std.In) }
 	return std, out, errOut
+}
+
+func TestStdinNotTerminalRefused(t *testing.T) {
+	f := &fakeIssuer{}
+	f.install(t, "ac04")
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	std := IO{In: strings.NewReader(""), Out: out, Err: errOut, Mode: ModeContainer}
+	std.IsTerminal = func(stream any) bool { return stream == std.Out }
+	if code := Run([]string{"jwt", "generate", "ac04"}, std); code != ExitFailure {
+		t.Fatalf("exit = %d; want %d", code, ExitFailure)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout = %q; want empty", out.String())
+	}
+	if !strings.Contains(errOut.String(), "terminal") {
+		t.Fatalf("stderr = %q; want a terminal message", errOut.String())
+	}
+	if f.loaded || f.keyLoaded {
+		t.Fatal("command loaded the config or the key without both terminals")
+	}
 }
 
 func TestAC04_RefusesNoTerminal(t *testing.T) {

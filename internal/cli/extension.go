@@ -19,13 +19,16 @@ const (
 )
 
 var (
-	errApproveNoTerminal = errors.New("standard input and standard output must be a terminal; run the command with podman exec -it")
+	errApproveNoTerminal = errors.New("standard input and standard output must be terminals")
 	errNoInspector       = errors.New("the resource kind does not support extension approval")
 	errTargetMismatch    = errors.New("the inspected target does not name the resource")
 	errNotConfirmed      = errors.New("confirmation does not match the resource name; no approval written")
 )
 
 func extensionApprove(args []string, std IO) int {
+	if std.Mode == ModeHost {
+		return hostExtensionApprove(args, std)
+	}
 	if !std.IsTerminal(std.In) || !std.IsTerminal(std.Out) {
 		return fail(std, errApproveNoTerminal)
 	}
@@ -91,6 +94,9 @@ func readConfirmation(in io.Reader) string {
 }
 
 func extensionRevoke(args []string, std IO) int {
+	if std.Mode == ModeHost {
+		return hostExtensionRevoke(args, std)
+	}
 	if len(args) != 1 {
 		fmt.Fprintln(std.Err, extensionRevokeUsage)
 		return ExitUsage
@@ -99,7 +105,7 @@ func extensionRevoke(args []string, std IO) int {
 	if err != nil {
 		return fail(std, err)
 	}
-	if err := store.Revoke(args[0]); err != nil {
+	if err := store.Revoke(args[0]); err != nil && !errors.Is(err, approval.ErrNotApproved) {
 		return fail(std, err)
 	}
 	fmt.Fprintf(std.Out, revokedFormat, args[0])

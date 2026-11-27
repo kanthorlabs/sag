@@ -15,7 +15,7 @@ import (
 
 const jwtGenerateUsage = "usage: sag jwt generate <sub> [--name <display>]"
 
-var errNoTerminal = errors.New("standard output is not a terminal; run the command with podman exec -it")
+var errNoTerminal = errors.New("standard input and standard output must be terminals")
 
 type jwtIssuer struct {
 	Lifetime time.Duration
@@ -48,7 +48,10 @@ func jwtIssuerFromPaths() (jwtIssuer, error) {
 }
 
 func jwtGenerate(args []string, std IO) int {
-	if !std.IsTerminal(std.Out) {
+	if std.Mode == ModeHost {
+		return hostJWTGenerate(args, std)
+	}
+	if !std.IsTerminal(std.In) || !std.IsTerminal(std.Out) {
 		return fail(std, errNoTerminal)
 	}
 	sub, name, ok := parseJWTGenerateArgs(args)
