@@ -3,9 +3,11 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kanthorlabs/sag/internal/agentsetup"
@@ -285,3 +287,182 @@ func fakeDetected(harnesses ...agentsetup.Harness) []harnessDet {
 
 var _ io.Writer = io.Discard
 var _ stepline.Writer = stepline.New(io.Discard)
+
+func TestHarnessConfigDirIsAbsolute(t *testing.T) {
+	environ := map[string]string{"CLAUDE_CONFIG_DIR": "relative/path"}
+	dir := harnessConfigDir(agentsetup.HarnessClaudeCode, environ, "/home/user")
+	if !filepath.IsAbs(dir) {
+		t.Errorf("harnessConfigDir = %q; want absolute path", dir)
+	}
+}
+
+func TestConvertAgentRunErrorTyped(t *testing.T) {
+	catErr := &agentsetup.CATrustConflictError{
+		Current:    "/other/path.pem",
+		CAPath:     "/sag/ca.pem",
+		BundlePath: "/sag/ca-bundle.pem",
+		Source:     "the environment",
+	}
+	got := convertAgentRunError(catErr)
+	if !errors.Is(got, errCATrustConflict) {
+		t.Errorf("convertAgentRunError(*CATrustConflictError) = %v; want errCATrustConflict", got)
+	}
+}
+
+func TestConvertAgentRunErrorPlainNotConverted(t *testing.T) {
+	plainErr := errors.New("fail ca-trust NODE_EXTRA_CA_CERTS is /other.pem; run: cat ...")
+	got := convertAgentRunError(plainErr)
+	if errors.Is(got, errCATrustConflict) {
+		t.Error("plain error with CA trust message should not be converted to errCATrustConflict")
+	}
+}
+
+func TestPlanOnlyCalledForYesHarnesses(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, "claude")
+	piDir := filepath.Join(dir, "pi")
+
+	var planOnlyCalls []agentsetup.Harness
+	d := agentTestDeps(dir)
+	d.HarnessInPATH = func(h agentsetup.Harness, environ map[string]string) bool { return true }
+	d.Environ = func() map[string]string {
+		return map[string]string{
+			"CLAUDE_CONFIG_DIR":   claudeDir,
+			"PI_CODING_AGENT_DIR": piDir,
+		}
+	}
+	d.PlanOnly = func(ctx context.Context, opts agentsetup.Options) (agentsetup.Plan, error) {
+		planOnlyCalls = append(planOnlyCalls, opts.Harness)
+		return agentsetup.Plan{}, nil
+	}
+	d.ResolveYesNo = func(a prompt.Asker, flagValue, stored, question, flagName string) (string, error) {
+		if stored != "" {
+			return stored, nil
+		}
+		if flagName == "--agent-setup" {
+			if strings.Contains(question, string(agentsetup.HarnessClaudeCode)) {
+				return "yes", nil
+			}
+			return "no", nil
+		}
+		if flagValue != "" {
+			return flagValue, nil
+		}
+		return "yes", nil
+	}
+
+	if err := Run(context.Background(), Flags{Autostart: "yes"}, d); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(planOnlyCalls) != 1 {
+		t.Fatalf("PlanOnly calls = %d; want 1 (only claude-code=yes)", len(planOnlyCalls))
+	}
+	if planOnlyCalls[0] != agentsetup.HarnessClaudeCode {
+		t.Errorf("PlanOnly called for %v; want claude-code", planOnlyCalls[0])
+	}
+}
+
+func TestPlanOnlyConflictExitsBeforeLock(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, "claude")
+
+	lockAcquired := false
+	d := agentTestDeps(dir)
+	d.AcquireLock = func(p hoststate.Paths) (*hoststate.Lock, error) {
+		lockAcquired = true
+		return nil, errors.New("should not reach lock")
+	}
+	d.HarnessInPATH = func(h agentsetup.Harness, environ map[string]string) bool {
+		return h == agentsetup.HarnessClaudeCode
+	}
+	d.Environ = func() map[string]string {
+		return map[string]string{"CLAUDE_CONFIG_DIR": claudeDir}
+	}
+	conflictErr := fmt.Errorf("disk check failed")
+	d.PlanOnly = func(ctx context.Context, opts agentsetup.Options) (agentsetup.Plan, error) {
+		return agentsetup.Plan{}, conflictErr
+	}
+	d.ResolveYesNo = func(a prompt.Asker, flagValue, stored, question, flagName string) (string, error) {
+		if stored != "" {
+			return stored, nil
+		}
+		if flagName == "--agent-setup" {
+			return "yes", nil
+		}
+		if flagValue != "" {
+			return flagValue, nil
+		}
+		return "yes", nil
+	}
+
+	err := Run(context.Background(), Flags{Autostart: "yes"}, d)
+	if err == nil {
+		t.Fatal("Run: want error from PlanOnly conflict, got nil")
+	}
+	if !errors.Is(err, conflictErr) {
+		t.Errorf("error = %v; want conflictErr", err)
+	}
+	if lockAcquired {
+		t.Error("lock was acquired after PlanOnly conflict; want exit before step 4")
+	}
+}
+
+func TestPlanOnlyAnswersPassedToStep14(t *testing.T) {
+	dir := t.TempDir()
+	claudeDir := filepath.Join(dir, "claude")
+	cfgDir := filepath.Join(dir, "sag")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	resolvedAnswers := agentsetup.ResolvedAnswers{DenyRules: "yes"}
+
+	d := agentTestDeps(dir)
+	d.ResolvePaths = func() (hoststate.Paths, error) {
+		return hoststate.Paths{
+			Cfg:         cfgDir,
+			AnswersJSON: filepath.Join(cfgDir, "answers.json"),
+			Lock:        filepath.Join(cfgDir, "lock"),
+		}, nil
+	}
+	d.EnsureCfg = func(p hoststate.Paths) (bool, error) { return false, nil }
+	d.AcquireLock = func(p hoststate.Paths) (*hoststate.Lock, error) {
+		return hoststate.AcquireLock(p)
+	}
+	d.ReleaseLock = func(l *hoststate.Lock) error { return l.Release() }
+	d.HarnessInPATH = func(h agentsetup.Harness, environ map[string]string) bool {
+		return h == agentsetup.HarnessClaudeCode
+	}
+	d.Environ = func() map[string]string {
+		return map[string]string{"CLAUDE_CONFIG_DIR": claudeDir}
+	}
+	d.PlanOnly = func(ctx context.Context, opts agentsetup.Options) (agentsetup.Plan, error) {
+		return agentsetup.Plan{Answers: resolvedAnswers}, nil
+	}
+	var runOpts agentsetup.Options
+	d.AgentRun = func(ctx context.Context, opts agentsetup.Options) error {
+		runOpts = opts
+		return nil
+	}
+	d.ResolveYesNo = func(a prompt.Asker, flagValue, stored, question, flagName string) (string, error) {
+		if stored != "" {
+			return stored, nil
+		}
+		if flagName == "--agent-setup" {
+			return "yes", nil
+		}
+		if flagValue != "" {
+			return flagValue, nil
+		}
+		return "yes", nil
+	}
+
+	if err := Run(context.Background(), Flags{Autostart: "yes"}, d); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if runOpts.DenyRules != "yes" {
+		t.Errorf("step 14 DenyRules = %q; want %q (from step 3 answers)", runOpts.DenyRules, "yes")
+	}
+}
