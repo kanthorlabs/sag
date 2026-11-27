@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - id: digest
+        run: echo "digest=" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    needs: [image]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: sag_darwin_arm64
+            runner: macos-26
+          - target: sag_linux_amd64
+            runner: ubuntu-24.04
+          - target: sag_linux_arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - run: "true"
+
+  release:
+    needs: [image, binaries]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - run: "true"

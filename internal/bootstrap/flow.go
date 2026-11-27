@@ -105,7 +105,7 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 		Asker:        asker,
 
 		PodmanCmd: func(path string) podman.Command { return podman.Runner{Path: path} },
-		ImageRef:  image.Reference,
+		ImageRef:  func() string { ref, _ := image.Reference(); return ref },
 		ImageEnsure: func(ctx context.Context, pm podman.Command, ref string, w stepline.Writer) (bool, error) {
 			return image.Ensure(ctx, pm, ref, w)
 		},

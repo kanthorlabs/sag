@@ -9,17 +9,6 @@ import (
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
-const (
-	devReference = "docker.io/kanthorlabs/sag:main"
-)
-
-func productReference() string {
-	if deploy.ImageDigest != "" {
-		return "docker.io/kanthorlabs/sag@" + deploy.ImageDigest
-	}
-	return devReference
-}
-
 func Ensure(ctx context.Context, pm podman.Command, ref string, out stepline.Writer) (changed bool, err error) {
 	_, err = pm.Run(ctx, nil, "image", "exists", ref)
 	if err == nil {
