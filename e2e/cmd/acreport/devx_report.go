@@ -91,6 +91,10 @@ func runDevx(args []string, stderr io.Writer, probe func() buildInfo) int {
 		fmt.Fprintf(stderr, "acreport: %v\n", err)
 		return 2
 	}
+	tapPath := filepath.Join(*out, "devx-unit", "node.tap")
+	if sr, ok := tapSuiteRun(tapPath); ok {
+		runs = append(runs, sr)
+	}
 	info := probe()
 	r := buildDevxReport(*layer, *phase, *runFilter, runs, devx.ACTable, info)
 	outDir := filepath.Join(*out, devxReportDir)
@@ -195,19 +199,21 @@ func buildDevxReport(layer int, phase, runFilter string, runs []suiteRun, table 
 			return r
 		}
 		matched := 0
-		failed := 0
 		for _, row := range table {
-			if !rowInPhase(row.Run, phase) {
-				continue
-			}
-			for _, t := range row.Tests {
-				if t.Layer > layer || !re.MatchString(t.Name) {
-					continue
+			ac := buildDevxACFiltered(row, runs, layer, phase, re)
+			r.ACs = append(r.ACs, ac)
+			if ac.Status == statusFail {
+				for _, t := range ac.Tests {
+					if t.Layer <= layer && t.Status == statusFail {
+						matched++
+						r.Gate.Failing = append(r.Gate.Failing, t.Name)
+					}
 				}
-				matched++
-				if findDevxTestStatus(runs, t.Name) != statusPass {
-					failed++
-					r.Gate.Failing = append(r.Gate.Failing, t.Name)
+			} else if ac.Status == statusPass {
+				for _, t := range ac.Tests {
+					if t.Layer <= layer && t.Status == statusPass && re.MatchString(t.Name) {
+						matched++
+					}
 				}
 			}
 		}
@@ -293,6 +299,48 @@ func buildDevxAC(row devx.ACRow, runs []suiteRun, layer int, phase string) devxA
 	return ac
 }
 
+func buildDevxACFiltered(row devx.ACRow, runs []suiteRun, layer int, phase string, re *regexp.Regexp) devxACResult {
+	ac := devxACResult{
+		ID:    row.ID,
+		Run:   row.Run,
+		RunBy: row.RunBy,
+		Tests: make([]devxTestResult, len(row.Tests)),
+	}
+	if !rowInPhase(row.Run, phase) {
+		ac.Status = statusOtherPhase
+		for i, t := range row.Tests {
+			ac.Tests[i] = devxTestResult{Name: t.Name, Layer: t.Layer, Status: statusOtherPhase}
+		}
+		return ac
+	}
+
+	anyMatch := false
+	allMatchPass := true
+	anyMatchFail := false
+	for i, t := range row.Tests {
+		status := statusNotImplemented
+		if t.Layer <= layer && re.MatchString(t.Name) {
+			anyMatch = true
+			status = findDevxTestStatus(runs, t.Name)
+			if status != statusPass {
+				allMatchPass = false
+				anyMatchFail = true
+			}
+		}
+		ac.Tests[i] = devxTestResult{Name: t.Name, Layer: t.Layer, Status: status}
+	}
+
+	switch {
+	case !anyMatch:
+		ac.Status = statusNotImplemented
+	case anyMatchFail || !allMatchPass:
+		ac.Status = statusFail
+	default:
+		ac.Status = statusPass
+	}
+	return ac
+}
+
 func rowInPhase(run, phase string) bool {
 	switch run {
 	case "AB":
@@ -309,7 +357,9 @@ func findDevxTestStatus(runs []suiteRun, name string) string {
 	for _, sr := range runs {
 		for key, res := range sr.Run.Tests {
 			parts := strings.Split(key.Test, "/")
-			if len(parts) >= 3 && parts[len(parts)-1] == name {
+			matched := (len(parts) >= 3 && parts[len(parts)-1] == name) ||
+				(len(parts) == 1 && parts[0] == name)
+			if matched {
 				if res.Action == "pass" {
 					return statusPass
 				}
@@ -320,11 +370,33 @@ func findDevxTestStatus(runs []suiteRun, name string) string {
 	return statusNotImplemented
 }
 
+const tapSagGuardTest = "DXAC44_SagGuard"
+
+func tapSuiteRun(tapPath string) (suiteRun, bool) {
+	f, err := os.Open(tapPath)
+	if err != nil {
+		return suiteRun{}, false
+	}
+	defer f.Close()
+	res := parseTAP(f)
+	action := "fail"
+	if tapPassed(res) {
+		action = "pass"
+	}
+	run := testRun{Tests: map[testKey]*testResult{}}
+	syntheticKey := testKey{Package: "node", Test: "TestDevxUnit/harness/" + tapSagGuardTest}
+	run.Tests[syntheticKey] = &testResult{Action: action}
+	commit := readCommitFile(filepath.Dir(tapPath))
+	return suiteRun{Suite: "unit", Commit: commit, Run: run}, true
+}
+
 func checkSkeletonPass(runs []suiteRun) error {
+	hasMain := false
 	for _, sr := range runs {
 		if sr.Suite != devxMainSuite {
 			continue
 		}
+		hasMain = true
 		for key, res := range sr.Run.Tests {
 			parts := strings.Split(key.Test, "/")
 			if len(parts) >= 3 && parts[len(parts)-1] == devxRequiredSubtest {
@@ -334,6 +406,9 @@ func checkSkeletonPass(runs []suiteRun) error {
 				return fmt.Errorf("%s failed", devxRequiredSubtest)
 			}
 		}
+	}
+	if !hasMain {
+		return nil
 	}
 	return fmt.Errorf("%s not found in Main suite", devxRequiredSubtest)
 }
@@ -398,7 +473,7 @@ func writeDevxMarkdown(w io.Writer, r devxReport) error {
 	}
 	fmt.Fprintf(&b, "\n")
 
-	if r.Gate.RunFilter == "" {
+	if len(r.ACs) > 0 {
 		writeRow(&b, []string{"AC", "Run", "Status"})
 		writeRow(&b, []string{"---", "---", "---"})
 		for _, ac := range r.ACs {
