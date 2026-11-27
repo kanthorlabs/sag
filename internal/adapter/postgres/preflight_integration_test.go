@@ -264,7 +264,7 @@ func TestRefusesDblink(t *testing.T) {
 		if report.Passed || reportCheck(t, report, checkRiskyObjects).Passed {
 			t.Fatalf("%s: report = %+v; want risky_objects refused", name, report)
 		}
-		want := "resource main has risky objects dblink; to approve, run on the host: podman exec -it sag sag extension approve main"
+		want := "resource main has risky objects dblink; to approve, run: sag extension approve main"
 		if report.Hint != want {
 			t.Fatalf("%s: hint = %q; want %q", name, report.Hint, want)
 		}

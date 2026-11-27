@@ -119,7 +119,7 @@ func TestResourceTestEscapesDetail(t *testing.T) {
 }
 
 func TestResourceTestRefusedPrintsHint(t *testing.T) {
-	hint := "resource main has risky objects dblink; to approve, run on the host: podman exec -it sag sag extension approve main"
+	hint := "resource main has risky objects dblink; to approve, run: sag extension approve main"
 	res := &preflightResource{report: core.PreflightReport{
 		Checks: []core.PreflightCheck{{Name: "risky_objects", Passed: false, Detail: "not approved: dblink"}},
 		Hint:   hint,
