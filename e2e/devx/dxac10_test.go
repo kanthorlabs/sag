@@ -103,11 +103,17 @@ func DXAC10_CanaryNoLeak(t *testing.T, ctx context.Context) {
 		namedSources["podman secret inspect "+sn] = string(siOut)
 	}
 
-	auditOut, err := r.Output(ctx, "podman", "exec", "sag", "sag", "audit", "read")
-	if err != nil {
-		t.Fatalf("audit read: %v", err)
+	auditCopy := t.TempDir()
+	if out, err := r.Output(ctx, "podman", "cp", "sag:/var/lib/sag/audit", auditCopy); err != nil {
+		t.Fatalf("podman cp audit directory: %v\n%s", err, out)
 	}
-	namedSources["audit log"] = string(auditOut)
+	auditFiles, err := readNamedDirFiles(filepath.Join(auditCopy, "audit"))
+	if err != nil {
+		t.Fatalf("read audit directory copy: %v", err)
+	}
+	for name, content := range auditFiles {
+		namedSources["audit file "+filepath.Base(name)] = content
+	}
 
 	serviceLogPath := filepath.Join(home, "Library", "Logs", "sag", "service.log")
 	if data, err := os.ReadFile(serviceLogPath); err == nil {
