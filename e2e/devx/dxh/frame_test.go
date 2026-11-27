@@ -22,6 +22,7 @@ func holdRunLock(t *testing.T, devDir string) {
 		t.Fatal(err)
 	}
 	t.Setenv("DEVX_RUN_TOKEN", testRunToken)
+	t.Setenv("XDG_CONFIG_HOME", "")
 }
 
 func TestSuiteEntryCreatesAndRemovesMarker(t *testing.T) {

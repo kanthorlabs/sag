@@ -44,6 +44,7 @@ func withGOOS(t *testing.T, goos, goarch string) {
 }
 
 func TestServiceStartSucceeds(t *testing.T) {
+	withGOOS(t, "darwin", "arm64")
 	cfg := service.Config{Image: "localhost/sag:test"}
 	withFakeCfg(t, cfg)
 
@@ -66,6 +67,7 @@ func TestServiceStartSucceeds(t *testing.T) {
 }
 
 func TestServiceStartFailsOnBuildError(t *testing.T) {
+	withGOOS(t, "darwin", "arm64")
 	withFakeCfgErr(t, fmt.Errorf("build failed"))
 
 	std, errOut := testIO()
@@ -79,6 +81,7 @@ func TestServiceStartFailsOnBuildError(t *testing.T) {
 }
 
 func TestServiceStartReleasesOnError(t *testing.T) {
+	withGOOS(t, "darwin", "arm64")
 	released := false
 	oldBuild := buildCfgFn
 	buildCfgFn = func() (service.Config, func(), error) {
@@ -104,6 +107,7 @@ func TestServiceStartReleasesOnError(t *testing.T) {
 }
 
 func TestServiceStopSucceeds(t *testing.T) {
+	withGOOS(t, "darwin", "arm64")
 	cfg := service.Config{Image: "localhost/sag:test"}
 	withFakeCfg(t, cfg)
 
@@ -126,6 +130,7 @@ func TestServiceStopSucceeds(t *testing.T) {
 }
 
 func TestServiceStopFailsOnBuildError(t *testing.T) {
+	withGOOS(t, "darwin", "arm64")
 	withFakeCfgErr(t, fmt.Errorf("build failed"))
 
 	std, errOut := testIO()
@@ -139,6 +144,7 @@ func TestServiceStopFailsOnBuildError(t *testing.T) {
 }
 
 func TestServiceStopReleasesOnError(t *testing.T) {
+	withGOOS(t, "darwin", "arm64")
 	released := false
 	oldBuild := buildCfgFn
 	buildCfgFn = func() (service.Config, func(), error) {

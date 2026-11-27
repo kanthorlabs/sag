@@ -163,7 +163,7 @@ func TestPodmanFixedPathOrder(t *testing.T) {
 	podmanFixedPaths = []string{first, second}
 	defer func() { podmanFixedPaths = orig }()
 
-	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("PATH", t.TempDir())
 
 	got, err := FindPodman("")
 	if err != nil {
