@@ -2,11 +2,19 @@
 
 package image
 
-import "github.com/kanthorlabs/sag/internal/testhook"
+import (
+	"strings"
+
+	"github.com/kanthorlabs/sag/internal/testhook"
+)
 
 func Reference() (string, bool) {
 	if img := testhook.Image(); img != "" {
 		return img, false
 	}
-	return productReference()
+	ref, devBuild := productReference()
+	if reg := testhook.Registry(); reg != "" {
+		ref = strings.Replace(ref, "docker.io", reg, 1)
+	}
+	return ref, devBuild
 }
