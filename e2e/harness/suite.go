@@ -465,6 +465,10 @@ func (s *Suite) StartSAG(ctx context.Context, spec ContainerSpec) (Container, er
 	if spec.Name == ContainerConformance {
 		image = ConformanceImage
 	}
+	hosts, err := s.postgresHosts(ctx)
+	if err != nil {
+		return nil, err
+	}
 	c := &sagContainer{name: name, volume: name + "-state", client: s.http}
 	s.mu.Lock()
 	s.containers[spec.Name] = c
@@ -481,6 +485,7 @@ func (s *Suite) StartSAG(ctx context.Context, spec ContainerSpec) (Container, er
 		SecretMode:  spec.SecretMode,
 		Image:       image,
 		Command:     spec.Args,
+		Hosts:       hosts,
 	})...); err != nil {
 		return nil, err
 	}

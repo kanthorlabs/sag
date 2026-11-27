@@ -35,6 +35,7 @@ type runSpec struct {
 	SecretMode  string
 	Image       string
 	Command     []string
+	Hosts       []string
 }
 
 func runArgs(s runSpec) []string {
@@ -44,6 +45,9 @@ func runArgs(s runSpec) []string {
 	args := []string{"run", "-d", "--name", s.Name}
 	if s.Network != "" {
 		args = append(args, "--network", s.Network)
+	}
+	for _, h := range s.Hosts {
+		args = append(args, "--add-host", h)
 	}
 	args = append(args, "--log-driver", l.Driver)
 	args = append(args, "--log-opt", "max-size="+l.MaxSize)
