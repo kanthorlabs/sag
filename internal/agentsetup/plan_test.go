@@ -316,12 +316,17 @@ func TestB86KeptRemoteEntryPlanPasses(t *testing.T) {
 	})
 	os.WriteFile(settingsFile, settingsData, 0o600)
 
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
 	opts := Options{
 		Harness:    HarnessClaudeCode,
 		Sub:        "claude-code",
 		URL:        url,
 		CfgDir:     dir,
-		Env:        map[string]string{"CLAUDE_CONFIG_DIR": dir},
+		Env:        map[string]string{"CLAUDE_CONFIG_DIR": dir, "PATH": binDir},
 		Home:       dir,
 		PodmanPath: "podman",
 		GOOS:       "darwin",
