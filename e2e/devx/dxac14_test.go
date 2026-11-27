@@ -27,7 +27,7 @@ func DXAC14_CreateStdin(t *testing.T, ctx context.Context) {
 	dxh.EnsureCanary(t)
 
 	uid := fmt.Sprintf("%d", os.Getuid())
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("DXAC14: wait launch agent idle: %v", err)
 	}
 

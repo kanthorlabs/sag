@@ -43,7 +43,7 @@ func DXAC37_CreateTLSCA(t *testing.T, ctx context.Context) {
 	dxh.EnsureCanary(t)
 
 	uid := fmt.Sprintf("%d", os.Getuid())
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("DXAC37: wait launch agent idle: %v", err)
 	}
 

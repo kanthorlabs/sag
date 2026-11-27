@@ -28,7 +28,7 @@ func DXAC17_ListInspect(t *testing.T, ctx context.Context) {
 	canary := dxh.ActiveCanaryParts
 	uid := fmt.Sprintf("%d", os.Getuid())
 
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("waitLaunchAgentIdle: %v", err)
 	}
 
@@ -42,7 +42,7 @@ func DXAC17_ListInspect(t *testing.T, ctx context.Context) {
 	assertSection8FieldsInText(t, "credential list (text)", listText, false)
 
 	t.Log("text inspect canary")
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("waitLaunchAgentIdle: %v", err)
 	}
 	inspectOut, inspectErr, inspectRunErr := runSAGWithStderr(t, ctx, "credential", "inspect", "canary")
@@ -54,7 +54,7 @@ func DXAC17_ListInspect(t *testing.T, ctx context.Context) {
 	assertSection8FieldsInText(t, "credential inspect (text)", inspectText, true)
 
 	t.Log("json list")
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("waitLaunchAgentIdle: %v", err)
 	}
 	jsonListOut, jsonListErr, jsonListRunErr := runSAGWithStderr(t, ctx, "credential", "list", "--json")
@@ -88,7 +88,7 @@ func DXAC17_ListInspect(t *testing.T, ctx context.Context) {
 	}
 
 	t.Log("json inspect canary")
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("waitLaunchAgentIdle: %v", err)
 	}
 	jsonInspectOut, jsonInspectErr, jsonInspectRunErr := runSAGWithStderr(t, ctx, "credential", "inspect", "canary", "--json")

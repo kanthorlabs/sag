@@ -17,7 +17,14 @@ func WaitLaunchAgentIdle(ctx context.Context, r Runner, uid string) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("launch agent not idle after %s", idleTimeout)
+			var state []string
+			for _, l := range strings.Split(string(out), "\n") {
+				l = strings.TrimSpace(l)
+				if strings.HasPrefix(l, "state = ") || strings.HasPrefix(l, "last exit code = ") || strings.HasPrefix(l, "runs = ") || strings.HasPrefix(l, "pid = ") {
+					state = append(state, l)
+				}
+			}
+			return fmt.Errorf("launch agent not idle after %s: %s", idleTimeout, strings.Join(state, "; "))
 		}
 		select {
 		case <-ctx.Done():

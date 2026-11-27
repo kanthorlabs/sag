@@ -35,7 +35,7 @@ func DXAC29_CertRenewal(t *testing.T, ctx context.Context) {
 	t.Setenv("SAG_TEST_CERT_DAYS", "20")
 
 	t.Log("step 1: bootstrap with 20-day cert")
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("waitLaunchAgentIdle (step 1): %v", err)
 	}
 	out, err := runSAG(t, ctx,
@@ -51,7 +51,7 @@ func DXAC29_CertRenewal(t *testing.T, ctx context.Context) {
 	}
 
 	t.Log("step 2: credential list must write expiry warn to stderr and exit 0")
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("waitLaunchAgentIdle (step 2): %v", err)
 	}
 	credStdout, credStderr, credRunErr := runSAGWithStderr(t, ctx, "credential", "list")
@@ -69,7 +69,7 @@ func DXAC29_CertRenewal(t *testing.T, ctx context.Context) {
 	if err != nil {
 		t.Fatalf("read ca.pem before renewal: %v", err)
 	}
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("waitLaunchAgentIdle (step 3): %v", err)
 	}
 	out, err = runSAG(t, ctx,
@@ -96,7 +96,7 @@ func DXAC29_CertRenewal(t *testing.T, ctx context.Context) {
 
 	t.Log("step 4: hook stops renewal after step 3 of section 5.7")
 	t.Setenv("SAG_TEST_FAIL_CERT_RENEWAL", "1")
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("waitLaunchAgentIdle (step 4): %v", err)
 	}
 	_, hookErr := runSAG(t, ctx,
@@ -113,7 +113,7 @@ func DXAC29_CertRenewal(t *testing.T, ctx context.Context) {
 
 	t.Log("step 5: next bootstrap exits 0, removes ca.pem.new, healthz 200")
 	os.Unsetenv("SAG_TEST_FAIL_CERT_RENEWAL")
-	if err := waitLaunchAgentIdle(ctx, uid); err != nil {
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("waitLaunchAgentIdle (step 5): %v", err)
 	}
 	out, err = runSAG(t, ctx,
