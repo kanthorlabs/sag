@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,33 @@ func init() {
 func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 	t.Helper()
 	dxh.EnsureBootstrapped(t)
+	dxh.EnsureCanary(t)
+
+	uid := fmt.Sprintf("%d", os.Getuid())
+	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
+		t.Fatalf("DXAC45: wait idle after EnsureCanary: %v", err)
+	}
+
+	r := dxh.NewRunner()
+	portOut, err := r.Output(ctx, "podman", "port", "sag-canary-pg", "5432/tcp")
+	if err != nil {
+		t.Fatalf("DXAC45: podman port sag-canary-pg: %v", err)
+	}
+	portLine := strings.TrimSpace(string(portOut))
+	portIdx := strings.LastIndex(portLine, ":")
+	if portIdx < 0 {
+		t.Fatalf("DXAC45: unexpected port output: %q", portLine)
+	}
+	pgPort := portLine[portIdx+1:]
+
+	parts := dxh.ActiveCanaryParts
+	canaryURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(parts.User, parts.Password),
+		Host:   "host.containers.internal:" + pgPort,
+		Path:   "/" + parts.Database,
+	}
+	canaryDSN := canaryURL.String()
 
 	sagBin, err := dxh.TestBinary()
 	if err != nil {
@@ -170,21 +198,18 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 	})
 
 	t.Run("credential_create_with_agent", func(t *testing.T) {
-		dsn := "postgres://u:p@127.0.0.1:1/dxac45db"
-		code, out := runSAGWithInput(t, ctx, []byte(dsn),
+		code, out := runSAGWithInput(t, ctx, []byte(canaryDSN),
 			"credential", "create", credName,
 			"--kind", "postgres",
 			"--agent", "claude-code",
 			"--tls", "disable",
 			"--stdin",
-			"--accept-failed-check",
 		)
 		if code != 0 {
 			t.Fatalf("DXAC45-cred: credential create exit %d; output length=%d", code, len(out))
 		}
 	})
 
-	uid := fmt.Sprintf("%d", os.Getuid())
 	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
 		t.Fatalf("DXAC45: wait idle after credential create: %v", err)
 	}

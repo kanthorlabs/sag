@@ -16,7 +16,7 @@ func writeJSON(path string, keyPath []string, value any) error {
 	}
 
 	mode := fs.FileMode(0o600)
-	if info, err := os.Lstat(path); err == nil {
+	if info, err := os.Stat(target); err == nil {
 		mode = info.Mode() & 0o777
 	}
 
