@@ -143,9 +143,6 @@ func (d Deps) runAgentSetup(ctx context.Context, s *State, as *agentRunState) er
 		return err
 	}
 
-	if as.caConflict {
-		return errCATrustConflict
-	}
 	return nil
 }
 
