@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/kanthorlabs/sag/internal/agentsetup"
 	"github.com/kanthorlabs/sag/internal/endpointcert"
 	"github.com/kanthorlabs/sag/internal/hoststate"
 	"github.com/kanthorlabs/sag/internal/image"
@@ -59,6 +60,10 @@ type Deps struct {
 	ServiceRunning func(context.Context, service.Config) (bool, error)
 	ServiceStart   func(context.Context, service.Config, stepline.Writer) error
 	CheckHealthz   func(ctx context.Context, cfgDir string) error
+
+	Environ       func() map[string]string
+	HarnessInPATH func(agentsetup.Harness, map[string]string) bool
+	AgentRun      func(context.Context, agentsetup.Options) error
 
 	Now   func() time.Time
 	Out   stepline.Writer
@@ -115,6 +120,16 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 		ServiceStart:   service.Start,
 		CheckHealthz:   defaultCheckHealthz,
 
+		Environ:       defaultEnvMap,
+		HarnessInPATH: defaultHarnessInPATH,
+		AgentRun: func(ctx context.Context, opts agentsetup.Options) error {
+			err := agentsetup.Run(ctx, opts)
+			if err != nil && isCATrustError(err) {
+				return errCATrustConflict
+			}
+			return err
+		},
+
 		Now:   time.Now,
 		Out:   out,
 		Print: print,
@@ -162,6 +177,7 @@ func defaultCheckHealthz(ctx context.Context, cfgDir string) error {
 }
 
 func (d Deps) BuildSteps() []Step {
+	var as agentRunState
 	return []Step{
 		{Name: "platform-check", Run: d.stepPlatformCheck},
 		{Name: "select-pins", Run: d.stepSelectPins},
@@ -176,8 +192,12 @@ func (d Deps) BuildSteps() []Step {
 		{Name: "autostart", Run: d.stepAutostart},
 		{Name: "service-start", Run: d.stepServiceStart},
 		{Name: "tailscale", Run: d.stepTailscale},
-		{Name: "agent-setup", Run: d.stepAgentSetup},
-		{Name: "print-endpoint", Run: d.stepPrintEndpoint},
+		{Name: "agent-setup", Run: func(ctx context.Context, s *State) error {
+			return d.runAgentSetup(ctx, s, &as)
+		}},
+		{Name: "print-endpoint", Run: func(ctx context.Context, s *State) error {
+			return d.printEndpoint(ctx, s, &as)
+		}},
 	}
 }
 
@@ -326,16 +346,6 @@ func (d Deps) stepServiceStart(ctx context.Context, s *State) error {
 	return nil
 }
 
-func (d Deps) stepAgentSetup(_ context.Context, _ *State) error {
-	return nil
-}
-
-func (d Deps) stepPrintEndpoint(_ context.Context, s *State) error {
-	fmt.Fprintln(d.Print, "https://localhost:8443/mcp")
-	fmt.Fprintln(d.Print, "sag credential create <name> --kind postgres --agent <sub>")
-	return nil
-}
-
 func (d Deps) planOnce(ctx context.Context, s *State) error {
 	fresh, err := d.LoadAnswers(s.Paths)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -367,10 +377,26 @@ func (d Deps) planOnce(ctx context.Context, s *State) error {
 	}
 	s.Answers.Autostart = autostart
 
+	environ := make(map[string]string)
+	if d.Environ != nil {
+		environ = d.Environ()
+	}
+	if err := d.planAgentSetup(s, agentSetupFresh(fresh.AgentSetup), environ, s.Home); err != nil {
+		return err
+	}
+
 	if s.Lock != nil {
 		merged := fresh
 		merged.Autostart = s.Answers.Autostart
 		merged.PodmanPath = s.PodmanPath
+		if s.Answers.AgentSetup != nil {
+			if merged.AgentSetup == nil {
+				merged.AgentSetup = make(map[string]string)
+			}
+			for k, v := range s.Answers.AgentSetup {
+				merged.AgentSetup[k] = v
+			}
+		}
 		if err := d.SaveAnswers(s.Paths, merged); err != nil {
 			return err
 		}
