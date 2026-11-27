@@ -318,14 +318,20 @@ func dxac45WaitForResource(t *testing.T, ctx context.Context, sagCfgDir, jwt, cr
 	}
 	logCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, _ := dxh.NewRunner().Output(logCtx, "podman", "logs", "sag")
+	logCmd := exec.CommandContext(logCtx, "podman", "logs", "sag")
+	out, _ := logCmd.CombinedOutput()
 	sc := bufio.NewScanner(bytes.NewReader(out))
+	matched := 0
 	for sc.Scan() {
 		line := sc.Text()
 		lower := strings.ToLower(line)
 		if strings.Contains(lower, "resource") || strings.Contains(lower, strings.ToLower(credName)) {
 			t.Logf("sag log: %s", line)
+			matched++
 		}
+	}
+	if matched == 0 {
+		t.Logf("sag log: no lines matched (total bytes: %d)", len(out))
 	}
 	return names, false
 }
