@@ -112,7 +112,7 @@ func removeLabeledObjects(ctx context.Context, r Runner) error {
 		return err
 	}
 	for _, name := range parseLines(containers) {
-		if _, err := r.Output(ctx, "podman", "rm", "-f", name); err != nil {
+		if _, err := r.Output(ctx, "podman", "rm", "-f", "--volumes", name); err != nil {
 			return err
 		}
 	}

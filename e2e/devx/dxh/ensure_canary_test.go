@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -58,4 +59,24 @@ type fakeCanaryRunner struct{}
 
 func (fakeCanaryRunner) Output(_ context.Context, _ string, _ ...string) ([]byte, error) {
 	return []byte("true"), nil
+}
+
+type recordingCanaryRunner struct {
+	calls []string
+}
+
+func (r *recordingCanaryRunner) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, strings.Join(append([]string{name}, args...), " "))
+	return nil, nil
+}
+
+func TestRemoveCanaryLeftoversRemovesAnonymousVolumes(t *testing.T) {
+	r := &recordingCanaryRunner{}
+	if err := removeCanaryLeftovers(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	want := "podman rm --force --ignore --volumes " + canaryPGContainer
+	if len(r.calls) == 0 || r.calls[0] != want {
+		t.Fatalf("first call = %q; want %q", r.calls, want)
+	}
 }
