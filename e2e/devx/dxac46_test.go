@@ -3,8 +3,11 @@
 package devx_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,12 +36,24 @@ func DXAC46_BootstrapAgentSetup(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC46: build fakeharness: %v", err)
 	}
 
+	home := os.Getenv("HOME")
+	cfgDir := dxh.CfgDir(home)
+	uid := fmt.Sprintf("%d", os.Getuid())
+	r := dxh.NewRunner()
+	tcfg := dxh.TeardownConfig{Home: home, UID: uid, CfgDir: cfgDir}
+
 	t.Run("happy", func(t *testing.T) {
-		env, err := dxh.ChildEnv(os.Environ(), t.TempDir())
+		dxac46AssertPrecondition(t, ctx, r, cfgDir)
+
+		groupDir := t.TempDir()
+		env, err := dxh.ChildEnv(os.Environ(), groupDir)
 		if err != nil {
-			t.Fatalf("DXAC46/happy: child env: %v", err)
+			t.Fatalf("child env: %v", err)
 		}
 		env = append(env, "PATH="+dxh.TestPATH(binDir))
+		claudeDir := filepath.Join(groupDir, "claude")
+		piDir := filepath.Join(groupDir, "pi")
+		piSnap := dxac46Snapshot(piDir)
 
 		testCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
@@ -58,26 +73,32 @@ func DXAC46_BootstrapAgentSetup(t *testing.T, ctx context.Context) {
 			if exitErr, ok := runErr.(*exec.ExitError); ok {
 				code = exitErr.ExitCode()
 			} else {
-				t.Fatalf("DXAC46/happy: run: %v", runErr)
+				t.Fatalf("run: %v", runErr)
 			}
 		}
 		if code != 0 {
-			t.Fatalf("DXAC46/happy: exit code = %d; want 0; stdout=%s stderr=%s",
+			t.Fatalf("exit code = %d; want 0; stdout=%s stderr=%s",
 				code, stdoutBuf.String(), stderrBuf.String())
 		}
 		combined := stdoutBuf.String() + stderrBuf.String()
 		if !strings.Contains(combined, "--agent claude-code") {
-			t.Fatalf("DXAC46/happy: output missing --agent claude-code; got:\n%s", combined)
+			t.Errorf("output missing --agent claude-code; got:\n%s", combined)
 		}
 		if strings.Contains(combined, "--agent pi") {
-			t.Fatalf("DXAC46/happy: output has --agent pi; want absent; got:\n%s", combined)
+			t.Errorf("output has --agent pi; want absent; got:\n%s", combined)
 		}
+		dxac46AssertClaudeMCP(t, claudeDir)
+		dxac46AssertPiUnchanged(t, piDir, piSnap)
 	})
+
+	if err := dxh.Teardown(ctx, r, tcfg); err != nil {
+		t.Fatalf("DXAC46: teardown after happy: %v", err)
+	}
 
 	t.Run("noterm", func(t *testing.T) {
 		env, err := dxh.ChildEnv(os.Environ(), t.TempDir())
 		if err != nil {
-			t.Fatalf("DXAC46/noterm: child env: %v", err)
+			t.Fatalf("child env: %v", err)
 		}
 		env = append(env, "PATH="+dxh.TestPATH(binDir))
 
@@ -96,31 +117,38 @@ func DXAC46_BootstrapAgentSetup(t *testing.T, ctx context.Context) {
 			if exitErr, ok := runErr.(*exec.ExitError); ok {
 				code = exitErr.ExitCode()
 			} else {
-				t.Fatalf("DXAC46/noterm: run: %v", runErr)
+				t.Fatalf("run: %v", runErr)
 			}
 		}
 		if code != 3 {
-			t.Fatalf("DXAC46/noterm: exit code = %d; want 3; stdout=%s stderr=%s",
+			t.Fatalf("exit code = %d; want 3; stdout=%s stderr=%s",
 				code, stdoutBuf.String(), stderrBuf.String())
 		}
 		combined := stdoutBuf.String() + stderrBuf.String()
 		if !strings.Contains(combined, "--agent-setup") {
-			t.Fatalf("DXAC46/noterm: output does not name --agent-setup; got:\n%s", combined)
+			t.Errorf("output does not name --agent-setup; got:\n%s", combined)
 		}
 	})
 
 	t.Run("catrust", func(t *testing.T) {
+		dxac46AssertPrecondition(t, ctx, r, cfgDir)
+
 		caFile := filepath.Join(t.TempDir(), "other-ca.pem")
 		if err := os.WriteFile(caFile, []byte("not-a-cert"), 0o600); err != nil {
-			t.Fatalf("DXAC46/catrust: write fake ca file: %v", err)
+			t.Fatalf("write fake ca file: %v", err)
 		}
 
-		env, err := dxh.ChildEnv(os.Environ(), t.TempDir())
+		groupDir := t.TempDir()
+		env, err := dxh.ChildEnv(os.Environ(), groupDir)
 		if err != nil {
-			t.Fatalf("DXAC46/catrust: child env: %v", err)
+			t.Fatalf("child env: %v", err)
 		}
 		env = append(env, "PATH="+dxh.TestPATH(binDir))
 		env = append(env, "NODE_EXTRA_CA_CERTS="+caFile)
+		claudeDir := filepath.Join(groupDir, "claude")
+		piDir := filepath.Join(groupDir, "pi")
+		claudeSnap := dxac46Snapshot(claudeDir)
+		piSnap := dxac46Snapshot(piDir)
 
 		testCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
@@ -140,24 +168,127 @@ func DXAC46_BootstrapAgentSetup(t *testing.T, ctx context.Context) {
 			if exitErr, ok := runErr.(*exec.ExitError); ok {
 				code = exitErr.ExitCode()
 			} else {
-				t.Fatalf("DXAC46/catrust: run: %v", runErr)
+				t.Fatalf("run: %v", runErr)
 			}
 		}
+		combined := stdoutBuf.String() + stderrBuf.String()
 		if code != 1 {
-			t.Fatalf("DXAC46/catrust: exit code = %d; want 1; stdout=%s stderr=%s",
+			t.Errorf("exit code = %d; want 1; stdout=%s stderr=%s",
 				code, stdoutBuf.String(), stderrBuf.String())
 		}
-		combined := stdoutBuf.String() + stderrBuf.String()
-		if !strings.Contains(combined, "NODE_EXTRA_CA_CERTS") {
-			t.Fatalf("DXAC46/catrust: output missing NODE_EXTRA_CA_CERTS bundle hint; got:\n%s", combined)
+		if !strings.Contains(combined, "NODE_EXTRA_CA_CERTS=") {
+			t.Errorf("output missing bundle command line (NODE_EXTRA_CA_CERTS=...); got:\n%s", combined)
 		}
-
-		home := os.Getenv("HOME")
-		caPath := filepath.Join(dxh.CfgDir(home), "ca.pem")
-		if err := healthzOK(ctx, caPath); err != nil {
-			t.Fatalf("DXAC46/catrust: /healthz after ca-trust exit: %v", err)
+		if err := healthzOK(ctx, filepath.Join(cfgDir, "ca.pem")); err != nil {
+			t.Errorf("/healthz after ca-trust exit: %v", err)
 		}
+		dxac46AssertSnapshotUnchanged(t, "claude", claudeDir, claudeSnap)
+		dxac46AssertSnapshotUnchanged(t, "pi", piDir, piSnap)
 	})
+}
+
+func dxac46AssertPrecondition(t *testing.T, ctx context.Context, r dxh.Runner, cfgDir string) {
+	t.Helper()
+	if _, err := os.Stat(cfgDir); err == nil {
+		t.Fatalf("precondition: cfg dir %s exists", cfgDir)
+	}
+	out, _ := r.Output(ctx, "podman", "ps", "-a", "--filter", "name=^sag$", "--format", "{{.Names}}")
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("precondition: container sag exists")
+	}
+}
+
+type dxac46FileSnap struct {
+	mode os.FileMode
+	data []byte
+}
+
+func dxac46Snapshot(dir string) map[string]dxac46FileSnap {
+	snap := make(map[string]dxac46FileSnap)
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, err2 := d.Info()
+		if err2 != nil {
+			return nil
+		}
+		data, err2 := os.ReadFile(path)
+		if err2 != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, path)
+		snap[rel] = dxac46FileSnap{mode: info.Mode(), data: data}
+		return nil
+	})
+	return snap
+}
+
+func dxac46AssertSnapshotUnchanged(t *testing.T, name, dir string, before map[string]dxac46FileSnap) {
+	t.Helper()
+	after := dxac46Snapshot(dir)
+	for rel, snap := range before {
+		cur, ok := after[rel]
+		if !ok {
+			t.Errorf("%s: file %s removed after bootstrap", name, rel)
+			continue
+		}
+		if cur.mode != snap.mode {
+			t.Errorf("%s: file %s mode changed: %v → %v", name, rel, snap.mode, cur.mode)
+		}
+		if !bytes.Equal(cur.data, snap.data) {
+			t.Errorf("%s: file %s content changed", name, rel)
+		}
+	}
+	for rel := range after {
+		if _, ok := before[rel]; !ok {
+			t.Errorf("%s: file %s added after bootstrap", name, rel)
+		}
+	}
+}
+
+func dxac46AssertClaudeMCP(t *testing.T, claudeDir string) {
+	t.Helper()
+	mcpFile := filepath.Join(claudeDir, ".claude.json")
+	data, err := os.ReadFile(mcpFile)
+	if err != nil {
+		t.Errorf("claude .claude.json: %v", err)
+		return
+	}
+	var top struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &top); err != nil {
+		t.Errorf("claude .claude.json parse: %v", err)
+		return
+	}
+	if _, ok := top.MCPServers["sag"]; !ok {
+		var keys []string
+		for k := range top.MCPServers {
+			keys = append(keys, k)
+		}
+		t.Errorf("claude .claude.json missing mcpServers.sag; got keys: %v", keys)
+	}
+}
+
+func dxac46AssertPiUnchanged(t *testing.T, piDir string, before map[string]dxac46FileSnap) {
+	t.Helper()
+	after := dxac46Snapshot(piDir)
+	for rel := range after {
+		if _, ok := before[rel]; !ok {
+			t.Errorf("pi: unexpected file %s added; want no pi agent setup", rel)
+		}
+	}
+	mcpFile := filepath.Join(piDir, "mcp.json")
+	if data, err := os.ReadFile(mcpFile); err == nil {
+		if strings.Contains(string(data), `"sag"`) {
+			t.Errorf("pi mcp.json has sag entry; want absent (pi=no)")
+		}
+	}
+	guardFile := filepath.Join(piDir, "extensions", "sag-guard.ts")
+	if _, err := os.Stat(guardFile); err == nil {
+		t.Errorf("pi extensions/sag-guard.ts exists; want absent (pi=no)")
+	}
 }
 
 func dxac46BuildFakeHarness(binDir string) error {
