@@ -27,6 +27,8 @@ var agentTests = map[string]func(*testing.T, context.Context){}
 
 var bootagentTests = map[string]func(*testing.T, context.Context){}
 
+var imageTests = map[string]func(*testing.T, context.Context){}
+
 func TestDevxMain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -205,6 +207,22 @@ func TestDevxMain(t *testing.T) {
 		for _, name := range bootagentOrder {
 			name := name
 			fn := bootagentTests[name]
+			t.Run(name, func(t *testing.T) {
+				if fn == nil {
+					t.Fatal("not implemented")
+				}
+				fn(t, ctx)
+			})
+		}
+	})
+
+	imageOrder := []string{
+		"DXAC30_ImageSelection",
+	}
+	dxh.RunGroup(t, ctx, r, tcfg, "image", nil, func(t *testing.T) {
+		for _, name := range imageOrder {
+			name := name
+			fn := imageTests[name]
 			t.Run(name, func(t *testing.T) {
 				if fn == nil {
 					t.Fatal("not implemented")

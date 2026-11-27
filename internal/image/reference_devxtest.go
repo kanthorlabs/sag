@@ -4,9 +4,9 @@ package image
 
 import "github.com/kanthorlabs/sag/internal/testhook"
 
-func Reference() string {
+func Reference() (string, bool) {
 	if img := testhook.Image(); img != "" {
-		return img
+		return img, false
 	}
 	return productReference()
 }
