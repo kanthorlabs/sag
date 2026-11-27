@@ -73,7 +73,7 @@ func TestTeardownOrder(t *testing.T) {
 func TestTeardownRemovesOnlyLabeled(t *testing.T) {
 	r, cfg := newCleanTeardownFake("/home/u", "1000", "/home/u/.config/sag")
 	r.set("podman ps -a --filter label=sag.devx-e2e=1 --format {{.Names}}", []byte("test-container\n"), nil)
-	r.set("podman rm -f test-container", nil, nil)
+	r.set("podman rm -f --volumes test-container", nil, nil)
 
 	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
 		t.Fatal(err)

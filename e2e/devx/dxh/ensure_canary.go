@@ -248,7 +248,7 @@ func canaryExistsInConfig(sagYAML string) bool {
 }
 
 func removeCanaryLeftovers(ctx context.Context, r Runner) error {
-	if _, err := r.Output(ctx, "podman", "rm", "--force", "--ignore", canaryPGContainer); err != nil {
+	if _, err := r.Output(ctx, "podman", "rm", "--force", "--ignore", "--volumes", canaryPGContainer); err != nil {
 		return fmt.Errorf("remove leftover %s: %w", canaryPGContainer, err)
 	}
 	out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "name=^"+canaryPGSecretName+"$", "--format", "{{.Name}}")
