@@ -1,8 +1,6 @@
 package harness
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -12,14 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -587,49 +584,17 @@ func (s *Suite) Logs(ctx context.Context, container string) (string, error) {
 }
 
 func (s *Suite) Audit(ctx context.Context, container string) ([]json.RawMessage, error) {
-	tmp, err := os.MkdirTemp(s.dir, "audit-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(tmp)
-	if _, err := podman(ctx, "cp", s.ContainerName(container)+":"+AuditDir, tmp); err != nil {
-		return nil, err
-	}
-	var files []string
-	err = filepath.WalkDir(tmp, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.Type().IsRegular() {
-			files = append(files, p)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(files)
 	var records []json.RawMessage
-	for _, f := range files {
-		data, err := os.ReadFile(f)
+	for _, date := range auditDates(s.run.Start, time.Now()) {
+		res, err := podman(ctx, "exec", s.ContainerName(container), "sag", "audit", "read", "--date", date)
 		if err != nil {
 			return nil, err
 		}
-		sc := bufio.NewScanner(bytes.NewReader(data))
-		sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-		for sc.Scan() {
-			line := bytes.TrimSpace(sc.Bytes())
-			if len(line) == 0 {
-				continue
-			}
-			if !json.Valid(line) {
-				return nil, fmt.Errorf("harness: audit file %s has a line that is not JSON", filepath.Base(f))
-			}
-			records = append(records, json.RawMessage(slices.Clone(line)))
+		lines, err := completeAuditLines(res.Stdout)
+		if err != nil {
+			return nil, fmt.Errorf("harness: audit of %s: %w", date, err)
 		}
-		if err := sc.Err(); err != nil {
-			return nil, err
-		}
+		records = append(records, lines...)
 	}
 	return records, nil
 }
