@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	memoryBound    = 64 << 20
+	memoryBound    = 6 * maxMessageBodyBytes
 	oversizedBound = maxMessageBodyBytes / 4
 	retainedBound  = maxMessageBodyBytes + 1<<20
 )
