@@ -1,15 +1,15 @@
 package cli
 
-import "os"
+import (
+	"os"
+
+	"golang.org/x/term"
+)
 
 func isTerminal(stream any) bool {
 	f, ok := stream.(*os.File)
 	if !ok {
 		return false
 	}
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(f.Fd()))
 }

@@ -92,33 +92,66 @@ func TestDaemonFlagsPassed(t *testing.T) {
 	}
 }
 
-func TestAuditDefaultUTCDate(t *testing.T) {
-	fixedDate := "2025-07-04"
-	withFakeUTCToday(t, fixedDate)
+func TestAuditArgs(t *testing.T) {
+	cases := []struct {
+		name     string
+		today    string
+		args     []string
+		wantArgs []string
+	}{
+		{
+			name:     "default date",
+			today:    "2025-07-04",
+			args:     nil,
+			wantArgs: []string{"exec", "sag", "sag", "audit", "read", "--date", "2025-07-04"},
+		},
+		{
+			name:     "explicit date",
+			today:    "2025-07-04",
+			args:     []string{"--date", "2025-01-02"},
+			wantArgs: []string{"exec", "sag", "sag", "audit", "read", "--date", "2025-01-02"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withFakeUTCToday(t, tc.today)
 
+			var captured [][]string
+			withFakeNoLockCfg(t, logsFakeCfg())
+			withFakePodmanStream(t, &captured)
+
+			std := IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+			code := logsAudit(tc.args, std)
+			if code != ExitOK {
+				t.Fatalf("exit %d; want %d; stderr: %s", code, ExitOK, std.Err.(*bytes.Buffer).String())
+			}
+			if len(captured) != 1 {
+				t.Fatalf("stream called %d times; want 1", len(captured))
+			}
+			got := captured[0]
+			if len(got) != len(tc.wantArgs) {
+				t.Fatalf("args %v; want %v", got, tc.wantArgs)
+			}
+			for i, w := range tc.wantArgs {
+				if got[i] != w {
+					t.Fatalf("arg[%d] = %q; want %q (full: %v)", i, got[i], w, got)
+				}
+			}
+		})
+	}
+}
+
+func TestAuditInvalidDate(t *testing.T) {
 	var captured [][]string
 	withFakeNoLockCfg(t, logsFakeCfg())
 	withFakePodmanStream(t, &captured)
 
 	std := IO{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
-	code := logsAudit(nil, std)
-	if code != ExitOK {
-		t.Fatalf("exit %d; want %d; stderr: %s", code, ExitOK, std.Err.(*bytes.Buffer).String())
+	code := logsAudit([]string{"--date", "baddate"}, std)
+	if code != ExitUsage {
+		t.Fatalf("exit %d; want %d (ExitUsage)", code, ExitUsage)
 	}
-	if len(captured) != 1 {
-		t.Fatalf("stream called %d times; want 1", len(captured))
-	}
-
-	args := captured[0]
-	wantDate := fixedDate
-	found := false
-	for i, a := range args {
-		if a == "--date" && i+1 < len(args) && args[i+1] == wantDate {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("args %v do not contain --date %s", args, wantDate)
+	if len(captured) != 0 {
+		t.Fatalf("stream called %d times; want 0 for invalid date", len(captured))
 	}
 }

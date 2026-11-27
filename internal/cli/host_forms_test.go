@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
@@ -133,10 +132,12 @@ func TestRedirectExit3(t *testing.T) {
 
 func TestJSONExit2(t *testing.T) {
 	installFakeHostPodman(t, "/fake/podman")
+	var calledArgs [][]string
 	savedTTY := execHostTTY
 	t.Cleanup(func() { execHostTTY = savedTTY })
-	execHostTTY = func(_ context.Context, _ string, _ []string) error {
-		return errors.New("should not be called")
+	execHostTTY = func(_ context.Context, _ string, args []string) error {
+		calledArgs = append(calledArgs, args)
+		return nil
 	}
 
 	for _, args := range [][]string{
@@ -144,9 +145,28 @@ func TestJSONExit2(t *testing.T) {
 		{"sub", "--json"},
 		{"--json", "sub"},
 	} {
-		std, _, _ := hostFormsIO(false, false)
+		calledArgs = nil
+		std, _, _ := hostFormsIO(true, true)
 		if code := hostJWTGenerate(args, std); code != ExitUsage {
-			t.Fatalf("args %v: exit = %d; want %d", args, code, ExitUsage)
+			t.Fatalf("jwt generate args %v: exit = %d; want %d", args, code, ExitUsage)
+		}
+		if len(calledArgs) != 0 {
+			t.Fatalf("jwt generate args %v: execHostTTY called; want no call", args)
+		}
+	}
+
+	for _, args := range [][]string{
+		{"--json"},
+		{"res", "--json"},
+		{"--json", "res"},
+	} {
+		calledArgs = nil
+		std, _, _ := hostFormsIO(true, true)
+		if code := hostExtensionApprove(args, std); code != ExitUsage {
+			t.Fatalf("extension approve args %v: exit = %d; want %d", args, code, ExitUsage)
+		}
+		if len(calledArgs) != 0 {
+			t.Fatalf("extension approve args %v: execHostTTY called; want no call", args)
 		}
 	}
 }

@@ -81,6 +81,11 @@ func logsAudit(args []string, std IO) int {
 		return ExitUsage
 	}
 
+	if _, err := time.Parse(auditDateFormat, *date); err != nil {
+		fmt.Fprintf(std.Err, "sag: logs audit: invalid date %q: use YYYY-MM-DD\n", *date)
+		return ExitUsage
+	}
+
 	cfg, release, err := buildCfgNoLockFn()
 	if err != nil {
 		return fail(std, err)
