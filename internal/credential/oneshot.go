@@ -11,7 +11,7 @@ import (
 func revokeOneShot(ctx context.Context, name string, pm podman.Command, image string) error {
 	p := deploy.DefaultFlags.Product
 	masterKeySecret := p.Secret(secret.MasterKeyName, secret.MasterKeyName, "")
-	stateVol := p.StateVolume("sag-state")
+	stateVol := p.StateVolume(deploy.StateVolumeName)
 
 	args := []string{"run", "--rm"}
 	args = append(args, p.SecurityArgs()...)

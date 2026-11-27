@@ -3,6 +3,7 @@ package credential
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -47,7 +48,13 @@ func ParseDeleteArgs(args []string) (string, error) {
 	if err := fset.Parse(args); err != nil {
 		return "", ErrDeleteFlagRejected
 	}
-	if yes || stdin || jsonOut {
+	var rejected bool
+	fset.Visit(func(f *flag.Flag) {
+		if f.Name == "yes" || f.Name == "stdin" || f.Name == "json" {
+			rejected = true
+		}
+	})
+	if rejected {
 		return "", ErrDeleteFlagRejected
 	}
 	if fset.NArg() != 1 {
@@ -86,6 +93,19 @@ func collectDeleteState(ctx context.Context, name, cfgDir string, backend secret
 		}
 	}
 
+	otherRefs := make(map[string]bool)
+	for otherName, otherRes := range cfg.Resources {
+		if otherName == name {
+			continue
+		}
+		if otherRes.Connection != "" {
+			otherRefs[string(otherRes.Connection)] = true
+		}
+		if otherRes.TLSCA != "" {
+			otherRefs[string(otherRes.TLSCA)] = true
+		}
+	}
+
 	metas, err := backend.List(ctx, map[string]string{"sag.resource": name})
 	if err != nil {
 		if errors.Is(err, secret.ErrUnavailable) {
@@ -96,18 +116,21 @@ func collectDeleteState(ctx context.Context, name, cfgDir string, backend secret
 
 	ownedSet := make(map[string]bool, len(metas))
 	for _, m := range metas {
-		info.owned = append(info.owned, m.Name)
 		ownedSet[m.Name] = true
+	}
+
+	for _, m := range metas {
+		if otherRefs[m.Name] {
+			info.unowned = append(info.unowned, m.Name)
+		} else {
+			info.owned = append(info.owned, m.Name)
+		}
 	}
 
 	for _, ref := range referenced {
 		if !ownedSet[ref] {
 			info.unowned = append(info.unowned, ref)
 		}
-	}
-
-	if !hasEntry && len(info.owned) == 0 {
-		return info, fmt.Errorf("resource %s not found", name)
 	}
 
 	return info, nil
@@ -219,6 +242,48 @@ func deleteFromMapping(root *yaml.Node, mapKey, entryKey string) bool {
 	return false
 }
 
+type pendingRecord struct {
+	Name       string   `json:"name"`
+	WasRunning bool     `json:"was_running"`
+	Unowned    []string `json:"unowned"`
+}
+
+func pendingRecordPath(cfgDir, name string) string {
+	return filepath.Join(cfgDir, "delete-pending", name+".json")
+}
+
+func loadPendingRecord(cfgDir, name string) (pendingRecord, bool, error) {
+	data, err := os.ReadFile(pendingRecordPath(cfgDir, name))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return pendingRecord{}, false, nil
+		}
+		return pendingRecord{}, false, err
+	}
+	var rec pendingRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return pendingRecord{}, false, err
+	}
+	return rec, true, nil
+}
+
+func writePendingRecord(cfgDir, name string, wasRunning bool, unowned []string) error {
+	dir := filepath.Join(cfgDir, "delete-pending")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	rec := pendingRecord{Name: name, WasRunning: wasRunning, Unowned: unowned}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(pendingRecordPath(cfgDir, name), data, 0o600)
+}
+
+func removePendingRecord(cfgDir, name string) {
+	_ = os.Remove(pendingRecordPath(cfgDir, name))
+}
+
 func Delete(ctx context.Context, name string, tty *os.File, opts DeleteOptions) error {
 	if tty == nil {
 		return fmt.Errorf("open /dev/tty: %w", prompt.ErrNoTerminal)
@@ -229,6 +294,22 @@ func Delete(ctx context.Context, name string, tty *os.File, opts DeleteOptions) 
 	info, err := collectDeleteState(ctx, name, opts.CfgDir, opts.Backend)
 	if err != nil {
 		return err
+	}
+
+	pending, hasPending, err := loadPendingRecord(opts.CfgDir, name)
+	if err != nil {
+		return err
+	}
+
+	entryExists := info.hasEntry
+	if !info.hasEntry {
+		if !hasPending && len(info.owned) == 0 {
+			return fmt.Errorf("resource %s not found", name)
+		}
+		if hasPending {
+			info.hasEntry = true
+			info.unowned = pending.Unowned
+		}
 	}
 
 	printDeleteInfo(tty, name, info)
@@ -256,11 +337,24 @@ func Delete(ctx context.Context, name string, tty *os.File, opts DeleteOptions) 
 		}
 	}
 
+	if entryExists {
+		if err := writePendingRecord(opts.CfgDir, name, wasRunning, info.unowned); err != nil {
+			return err
+		}
+	}
+
 	if err := removeResourceFromYAML(sagYaml, name); err != nil {
 		return err
 	}
 
-	if wasRunning && opts.ServiceStart != nil {
+	var shouldStart bool
+	if entryExists {
+		shouldStart = wasRunning
+	} else if hasPending {
+		shouldStart = pending.WasRunning
+	}
+
+	if shouldStart && opts.ServiceStart != nil {
 		if err := opts.ServiceStart(ctx, opts.Out); err != nil {
 			return fmt.Errorf("service start: %w", err)
 		}
@@ -279,6 +373,8 @@ func Delete(ctx context.Context, name string, tty *os.File, opts DeleteOptions) 
 	for _, s := range info.unowned {
 		fmt.Fprintf(opts.Out, "skip %s not created by sag; not removed\n", s)
 	}
+
+	removePendingRecord(opts.CfgDir, name)
 
 	return nil
 }

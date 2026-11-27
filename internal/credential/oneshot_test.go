@@ -2,37 +2,47 @@ package credential
 
 import (
 	"context"
-	"strings"
+	"reflect"
 	"testing"
 
+	"github.com/kanthorlabs/sag/internal/deploy"
 	"github.com/kanthorlabs/sag/internal/podman"
+	"github.com/kanthorlabs/sag/internal/secret"
 )
 
 func TestOneShotRunsCorrectArgs(t *testing.T) {
 	cmd := &fakePodmanCmd{}
-	err := revokeOneShot(context.Background(), "myres", cmd, "sag:test")
+	const image = "sag:test"
+	const resName = "myres"
+
+	err := revokeOneShot(context.Background(), resName, cmd, image)
 	if err != nil {
 		t.Fatalf("revokeOneShot: %v", err)
 	}
 	if len(cmd.args) == 0 {
 		t.Fatal("no podman run call")
 	}
-	a := cmd.args[0]
-	joined := strings.Join(a, " ")
-	if a[0] != "run" {
-		t.Errorf("first arg = %q; want run", a[0])
+
+	p := deploy.DefaultFlags.Product
+	masterKeySecret := p.Secret(secret.MasterKeyName, secret.MasterKeyName, "")
+	stateVol := p.StateVolume(deploy.StateVolumeName)
+
+	var want []string
+	want = append(want, "run", "--rm")
+	want = append(want, p.SecurityArgs()...)
+	want = append(want, "-v", stateVol)
+	want = append(want, "--secret", masterKeySecret)
+	want = append(want, image)
+	want = append(want, "extension", "revoke", resName)
+
+	if !reflect.DeepEqual(cmd.args[0], want) {
+		t.Errorf("args mismatch\ngot:  %v\nwant: %v", cmd.args[0], want)
 	}
-	if !strings.Contains(joined, "sag-state") {
-		t.Errorf("missing sag-state volume; args = %v", a)
-	}
-	if !strings.Contains(joined, "sag-master-key") {
-		t.Errorf("missing sag-master-key secret; args = %v", a)
-	}
-	if !strings.Contains(joined, "myres") {
-		t.Errorf("missing resource name; args = %v", a)
-	}
-	if !strings.Contains(joined, "extension") {
-		t.Errorf("missing extension sub-command; args = %v", a)
+
+	for i, arg := range cmd.args[0] {
+		if arg == "canary" || len(arg) > 10 && arg[:7] == "eyJ" {
+			t.Errorf("arg[%d] holds canary or JWT: %q", i, arg)
+		}
 	}
 }
 
