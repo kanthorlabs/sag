@@ -48,7 +48,7 @@ func TestAgentSetupBadDenyRules(t *testing.T) {
 		IsTerminal: func(any) bool { return false },
 		Mode:       ModeHost,
 	}
-	code := agentSetup([]string{"--deny-rules", "maybe", "claude-code"}, std)
+	code := agentSetup([]string{"claude-code", "--deny-rules", "maybe"}, std)
 	if code != ExitUsage {
 		t.Errorf("exit = %d; want ExitUsage (%d)", code, ExitUsage)
 	}
@@ -62,7 +62,7 @@ func TestParseAgentSetupFlags(t *testing.T) {
 		IsTerminal: func(any) bool { return false },
 		Mode:       ModeHost,
 	}
-	opts, ok := parseAgentSetupFlags([]string{"--sub", "myagent", "--deny-rules", "yes", "claude-code"}, std)
+	opts, ok := parseAgentSetupFlags([]string{"claude-code", "--sub", "myagent", "--deny-rules", "yes"}, std)
 	if !ok {
 		t.Fatal("parseAgentSetupFlags returned false")
 	}
@@ -91,5 +91,36 @@ func TestParseAgentSetupDefaultSub(t *testing.T) {
 	}
 	if opts.Sub != "pi" {
 		t.Errorf("Sub = %q; want pi (default equals harness name)", opts.Sub)
+	}
+}
+
+func TestParseAgentSetupBadSubExit2(t *testing.T) {
+	std := IO{
+		In:         strings.NewReader(""),
+		Out:        &bytes.Buffer{},
+		Err:        &bytes.Buffer{},
+		IsTerminal: func(any) bool { return false },
+		Mode:       ModeHost,
+	}
+	_, ok := parseAgentSetupFlags([]string{"claude-code", "--sub", "Bad"}, std)
+	if ok {
+		t.Error("parseAgentSetupFlags returned true for invalid sub 'Bad'; want false")
+	}
+}
+
+func TestParseAgentSetupHarnessFirstFlagsAfter(t *testing.T) {
+	std := IO{
+		In:         strings.NewReader(""),
+		Out:        &bytes.Buffer{},
+		Err:        &bytes.Buffer{},
+		IsTerminal: func(any) bool { return false },
+		Mode:       ModeHost,
+	}
+	opts, ok := parseAgentSetupFlags([]string{"claude-code", "--deny-rules", "no"}, std)
+	if !ok {
+		t.Fatal("parseAgentSetupFlags returned false for harness-first form")
+	}
+	if opts.DenyRules != "no" {
+		t.Errorf("DenyRules = %q; want no", opts.DenyRules)
 	}
 }

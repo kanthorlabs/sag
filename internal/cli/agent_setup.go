@@ -8,6 +8,8 @@ import (
 	"runtime"
 
 	"github.com/kanthorlabs/sag/internal/agentsetup"
+	"github.com/kanthorlabs/sag/internal/hoststate"
+	"github.com/kanthorlabs/sag/internal/token"
 )
 
 func agentSetup(args []string, std IO) int {
@@ -15,6 +17,23 @@ func agentSetup(args []string, std IO) int {
 	if !ok {
 		return ExitUsage
 	}
+
+	hsPaths, err := hoststate.ResolvePaths()
+	if err != nil {
+		return fail(std, err)
+	}
+	opts.CfgDir = hsPaths.Cfg
+
+	answers, err := hoststate.LoadAnswers(hsPaths)
+	if err != nil {
+		return fail(std, err)
+	}
+	podmanPath, err := hoststate.FindPodman(answers.PodmanPath)
+	if err != nil {
+		return fail(std, err)
+	}
+	opts.PodmanPath = podmanPath
+
 	agentsetup.SetOut(std.Out)
 	if err := agentsetup.Run(context.Background(), opts); err != nil {
 		return fail(std, err)
@@ -23,11 +42,29 @@ func agentSetup(args []string, std IO) int {
 }
 
 func parseAgentSetupFlags(args []string, std IO) (agentsetup.Options, bool) {
+	if len(args) == 0 {
+		fmt.Fprintln(std.Err, "usage: sag agent setup <claude-code|pi>")
+		return agentsetup.Options{}, false
+	}
+	harnessName := args[0]
+	args = args[1:]
+
+	var harness agentsetup.Harness
+	switch harnessName {
+	case "claude-code":
+		harness = agentsetup.HarnessClaudeCode
+	case "pi":
+		harness = agentsetup.HarnessPi
+	default:
+		fmt.Fprintf(std.Err, "sag: agent setup: unknown harness %q; want claude-code or pi\n", harnessName)
+		return agentsetup.Options{}, false
+	}
+
 	fs := flag.NewFlagSet("agent setup", flag.ContinueOnError)
 	fs.SetOutput(std.Err)
 
 	var sub string
-	fs.StringVar(&sub, "sub", "", "JWT subject")
+	fs.StringVar(&sub, "sub", "", "JWT subject (default: harness name)")
 
 	var url string
 	fs.StringVar(&url, "url", "https://localhost:8443/mcp", "MCP server URL")
@@ -45,20 +82,8 @@ func parseAgentSetupFlags(args []string, std IO) (agentsetup.Options, bool) {
 		return agentsetup.Options{}, false
 	}
 
-	if fs.NArg() != 1 {
-		fmt.Fprintln(std.Err, "usage: sag agent setup <claude-code|pi>")
-		return agentsetup.Options{}, false
-	}
-
-	harnessName := fs.Arg(0)
-	var harness agentsetup.Harness
-	switch harnessName {
-	case "claude-code":
-		harness = agentsetup.HarnessClaudeCode
-	case "pi":
-		harness = agentsetup.HarnessPi
-	default:
-		fmt.Fprintf(std.Err, "sag: agent setup: unknown harness %q; want claude-code or pi\n", harnessName)
+	if fs.NArg() != 0 {
+		fmt.Fprintf(std.Err, "sag: agent setup: unexpected arguments: %v\n", fs.Args())
 		return agentsetup.Options{}, false
 	}
 
@@ -75,8 +100,10 @@ func parseAgentSetupFlags(args []string, std IO) (agentsetup.Options, bool) {
 	if sub == "" {
 		sub = harnessName
 	}
-
-	env := osEnvMap()
+	if !token.ValidSub(sub) {
+		fmt.Fprintf(std.Err, "sag: --sub: invalid subject %q; must match ^[a-z][a-z0-9-]{0,62}$\n", sub)
+		return agentsetup.Options{}, false
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -84,17 +111,12 @@ func parseAgentSetupFlags(args []string, std IO) (agentsetup.Options, bool) {
 		return agentsetup.Options{}, false
 	}
 
-	cfgDir := env["CLAUDE_CONFIG_DIR"]
-	if harness == agentsetup.HarnessPi {
-		cfgDir = env["PI_CODING_AGENT_DIR"]
-	}
+	env := osEnvMap()
 
 	opts := agentsetup.Options{
 		Harness:      harness,
 		Sub:          sub,
 		URL:          url,
-		CfgDir:       cfgDir,
-		PodmanPath:   "podman",
 		Env:          env,
 		Home:         home,
 		GOOS:         runtime.GOOS,

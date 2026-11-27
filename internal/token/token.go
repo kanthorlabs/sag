@@ -73,6 +73,10 @@ func validSub(sub string) bool {
 	return subPattern.MatchString(sub)
 }
 
+func ValidSub(sub string) bool {
+	return validSub(sub)
+}
+
 func validName(name string) bool {
 	return strings.TrimSpace(name) != "" && utf8.RuneCountInString(name) <= maxNameLength
 }
