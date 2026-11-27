@@ -411,4 +411,3 @@ func dxac45BumpAuthVersion(t *testing.T, sagCfgDir string) error {
 	newData := strings.Join(newLines, "\n")
 	return os.WriteFile(yamlPath, []byte(newData), 0o644)
 }
-
