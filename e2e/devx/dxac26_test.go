@@ -157,6 +157,11 @@ func DXAC26_DenyRules(t *testing.T, ctx context.Context) {
 
 func dxac26Env(t *testing.T, claudeDir, binDir string) []string {
 	t.Helper()
+	if fakeBinDir := dxh.ActiveAgentBinDir; fakeBinDir != "" {
+		if err := dxh.AddRealProgramLink(binDir, "claude", filepath.Join(fakeBinDir, "claude")); err != nil {
+			t.Fatalf("DXAC26: link claude stub: %v", err)
+		}
+	}
 	var env []string
 	for _, e := range os.Environ() {
 		key, _, _ := strings.Cut(e, "=")

@@ -158,18 +158,11 @@ func (d Deps) buildAgentOptions(det harnessDet, s *State, environ map[string]str
 		shellProfile = s.Flags.ShellProfile
 		guard = s.Flags.Guard
 	}
-	var cfgDirEnv string
-	switch det.harness {
-	case agentsetup.HarnessPi:
-		cfgDirEnv = environ["PI_CODING_AGENT_DIR"]
-	default:
-		cfgDirEnv = environ["CLAUDE_CONFIG_DIR"]
-	}
 	return agentsetup.Options{
 		Harness:      det.harness,
 		Sub:          det.sub,
 		URL:          "https://localhost:8443/mcp",
-		CfgDir:       cfgDirEnv,
+		CfgDir:       s.Paths.Cfg,
 		PodmanPath:   s.PodmanPath,
 		Env:          environ,
 		Home:         s.Home,

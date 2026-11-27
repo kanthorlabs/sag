@@ -146,7 +146,7 @@ func DXAC39_ClaudeCodeSetup(t *testing.T, ctx context.Context) {
 	var jwtStr string
 	t.Run("sag_entry_fields", func(t *testing.T) {
 		if sagEntry == nil {
-			t.Skip("sag entry missing")
+			t.Fatal("DXAC39-C: sag entry missing")
 		}
 		if _, ok := sagEntry["command"]; ok {
 			t.Error("DXAC39-C: sag entry has 'command' key; want none")
@@ -243,7 +243,7 @@ func DXAC39_ClaudeCodeSetup(t *testing.T, ctx context.Context) {
 
 	t.Run("jwt_authenticates_at_mcp", func(t *testing.T) {
 		if jwtStr == "" {
-			t.Skip("DXAC39-G: JWT not extracted")
+			t.Fatal("DXAC39-G: JWT not extracted")
 		}
 		caPEM, err := os.ReadFile(filepath.Join(sagCfgDir, "ca.pem"))
 		if err != nil {

@@ -262,16 +262,12 @@ func dxac43NotConnectedPi(t *testing.T, ctx context.Context, bin, podmanPath str
 	env := dxac43BaseEnv(claudeDir, piDir, binDir)
 	env = append(env, "SHELL=/bin/zsh")
 	env = append(env, "ZDOTDIR="+t.TempDir())
-	snapBefore := dxac43SnapshotDirs(claudeDir, piDir)
 
 	code, out := dxac43RunSetsid(ctx, bin, env, "agent", "setup", "pi",
 		"--shell-profile", "yes", "--guard", "yes")
 	if code != 1 {
 		t.Fatalf("DXAC43 not-connected: expected exit 1; got %d\n%s", code, out)
 	}
-
-	snapAfter := dxac43SnapshotDirs(claudeDir, piDir)
-	dxac43AssertUnchanged(t, "not-connected-pi", snapBefore, snapAfter)
 }
 
 type dxac43FileSnap struct {

@@ -5,14 +5,22 @@ package devx_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"io/fs"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
@@ -38,7 +46,7 @@ func DXAC42_CATrustConflict(t *testing.T, ctx context.Context) {
 
 	fakeBinDir := dxh.ActiveAgentBinDir
 	if fakeBinDir == "" {
-		t.Skip("DXAC42: ActiveAgentBinDir not set; depends on D6.2 fakeharness")
+		t.Fatal("DXAC42: dxh.ActiveAgentBinDir is not set")
 	}
 
 	t.Run("pi_env_conflict", func(t *testing.T) {
@@ -52,22 +60,11 @@ func DXAC42_CATrustConflict(t *testing.T, ctx context.Context) {
 
 func dxac42PiEnvConflict(t *testing.T, ctx context.Context, bin, podmanPath, fakeBinDir string) {
 	t.Helper()
-	testHome := t.TempDir()
 	piDir := t.TempDir()
 	binDir := t.TempDir()
-
-	cfgDir := dxh.CfgDir(testHome)
-	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cfgDir, "ca.pem"), []byte("fake-ca-pem"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	otherCA := filepath.Join(t.TempDir(), "other-ca.pem")
-	if err := os.WriteFile(otherCA, []byte("other-ca-pem"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	cfgDir := dxh.CfgDir(os.Getenv("HOME"))
+	bundlePath := dxac42PrepareBundlePath(t, cfgDir)
+	otherCA := dxac42WriteOtherCA(t)
 	if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +75,7 @@ func dxac42PiEnvConflict(t *testing.T, ctx context.Context, bin, podmanPath, fak
 		t.Fatal(err)
 	}
 
-	env := dxac42EnvWithHome(t, testHome, piDir, binDir)
+	env := dxac42Env(t, t.TempDir(), piDir, binDir)
 	env = append(env, "NODE_EXTRA_CA_CERTS="+otherCA)
 	env = append(env, "SHELL=/bin/zsh")
 	zdotdir := t.TempDir()
@@ -91,27 +88,23 @@ func dxac42PiEnvConflict(t *testing.T, ctx context.Context, bin, podmanPath, fak
 	if code != 1 {
 		t.Fatalf("DXAC42 pi-env: expected exit 1; got %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "bundle") {
-		t.Errorf("DXAC42 pi-env: output does not contain bundle command; got %q", out)
-	}
+	dxac42AssertConflictLine(t, "pi-env", out, otherCA)
 
 	snapAfter := dxac42Snapshot(piDir, zdotdir)
 	dxac42AssertUnchanged(t, "pi-env conflict", snapBefore, snapAfter)
 
 	bundleCmd := dxac42ParseBundleCmd(out)
 	if bundleCmd == "" {
-		t.Log("DXAC42 pi-env: bundle command not found in output (expected until D6.1 merges)")
-		return
+		t.Fatalf("DXAC42 pi-env: output holds no bundle command; got %q", out)
 	}
 	if err := dxac42RunBundleCmd(bundleCmd); err != nil {
 		t.Fatalf("DXAC42 pi-env: run bundle command: %v", err)
 	}
-	bundlePath := filepath.Join(cfgDir, "ca-bundle.pem")
 	if _, err := os.Stat(bundlePath); err != nil {
 		t.Fatalf("DXAC42 pi-env: bundle file not created at %s: %v", bundlePath, err)
 	}
 
-	env2 := dxac42EnvWithHome(t, testHome, piDir, binDir)
+	env2 := dxac42Env(t, t.TempDir(), piDir, binDir)
 	env2 = append(env2, "NODE_EXTRA_CA_CERTS="+bundlePath)
 	env2 = append(env2, "SHELL=/bin/zsh")
 	env2 = append(env2, "ZDOTDIR="+zdotdir)
@@ -124,22 +117,11 @@ func dxac42PiEnvConflict(t *testing.T, ctx context.Context, bin, podmanPath, fak
 
 func dxac42ClaudeSettingsConflict(t *testing.T, ctx context.Context, bin, podmanPath, fakeBinDir string) {
 	t.Helper()
-	testHome := t.TempDir()
 	claudeDir := t.TempDir()
 	binDir := t.TempDir()
-
-	cfgDir := dxh.CfgDir(testHome)
-	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cfgDir, "ca.pem"), []byte("fake-ca-pem"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	otherCA := filepath.Join(t.TempDir(), "other-ca.pem")
-	if err := os.WriteFile(otherCA, []byte("other-ca-pem"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	cfgDir := dxh.CfgDir(os.Getenv("HOME"))
+	bundlePath := dxac42PrepareBundlePath(t, cfgDir)
+	otherCA := dxac42WriteOtherCA(t)
 	settings := filepath.Join(claudeDir, "settings.json")
 	settingsContent := `{"env":{"NODE_EXTRA_CA_CERTS":"` + otherCA + `"}}`
 	if err := os.WriteFile(settings, []byte(settingsContent), 0o640); err != nil {
@@ -152,7 +134,7 @@ func dxac42ClaudeSettingsConflict(t *testing.T, ctx context.Context, bin, podman
 		t.Fatal(err)
 	}
 
-	env := dxac42EnvClaudeWithHome(t, testHome, claudeDir, binDir)
+	env := dxac42Env(t, claudeDir, t.TempDir(), binDir)
 
 	snapBefore := dxac42Snapshot(claudeDir)
 
@@ -161,27 +143,23 @@ func dxac42ClaudeSettingsConflict(t *testing.T, ctx context.Context, bin, podman
 	if code != 1 {
 		t.Fatalf("DXAC42 claude-settings: expected exit 1; got %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "bundle") {
-		t.Errorf("DXAC42 claude-settings: output does not contain bundle command; got %q", out)
-	}
+	dxac42AssertConflictLine(t, "claude-settings", out, otherCA)
 
 	snapAfter := dxac42Snapshot(claudeDir)
 	dxac42AssertUnchanged(t, "claude-settings conflict", snapBefore, snapAfter)
 
 	bundleCmd := dxac42ParseBundleCmd(out)
 	if bundleCmd == "" {
-		t.Log("DXAC42 claude-settings: bundle command not found in output (expected until D6.1 merges)")
-		return
+		t.Fatalf("DXAC42 claude-settings: output holds no bundle command; got %q", out)
 	}
 	if err := dxac42RunBundleCmd(bundleCmd); err != nil {
 		t.Fatalf("DXAC42 claude-settings: run bundle command: %v", err)
 	}
-	bundlePath := filepath.Join(cfgDir, "ca-bundle.pem")
 	if _, err := os.Stat(bundlePath); err != nil {
 		t.Fatalf("DXAC42 claude-settings: bundle file not created at %s: %v", bundlePath, err)
 	}
 
-	env2 := dxac42EnvClaudeWithHome(t, testHome, claudeDir, binDir)
+	env2 := dxac42Env(t, claudeDir, t.TempDir(), binDir)
 	settings2Content := `{"env":{"NODE_EXTRA_CA_CERTS":"` + bundlePath + `"}}`
 	if err := os.WriteFile(settings, []byte(settings2Content), 0o640); err != nil {
 		t.Fatalf("DXAC42 claude-settings: rewrite settings: %v", err)
@@ -230,9 +208,13 @@ func dxac42AssertUnchanged(t *testing.T, label string, before, after map[string]
 
 func dxac42ParseBundleCmd(output string) string {
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "cat ") && strings.Contains(line, "ca.pem") {
-			return line
+		_, after, ok := strings.Cut(line, "run: cat ")
+		if !ok {
+			continue
+		}
+		cmd, _, _ := strings.Cut(after, "; then")
+		if strings.Contains(cmd, "ca.pem") {
+			return "cat " + cmd
 		}
 	}
 	return ""
@@ -247,13 +229,13 @@ func dxac42RunBundleCmd(cmd string) error {
 	return nil
 }
 
-func dxac42EnvWithHome(t *testing.T, home, piDir, binDir string) []string {
+func dxac42Env(t *testing.T, claudeDir, piDir, binDir string) []string {
 	t.Helper()
 	var env []string
 	for _, e := range os.Environ() {
 		key, _, _ := strings.Cut(e, "=")
 		switch key {
-		case "TMPDIR", "USER", "LANG":
+		case "HOME", "TMPDIR", "USER", "LANG":
 			env = append(env, e)
 		default:
 			if strings.HasPrefix(key, "SAG_TEST_") {
@@ -261,32 +243,58 @@ func dxac42EnvWithHome(t *testing.T, home, piDir, binDir string) []string {
 			}
 		}
 	}
-	env = append(env, "HOME="+home)
-	env = append(env, "CLAUDE_CONFIG_DIR="+t.TempDir())
+	env = append(env, "CLAUDE_CONFIG_DIR="+claudeDir)
 	env = append(env, "PI_CODING_AGENT_DIR="+piDir)
 	env = append(env, "PATH="+dxh.TestPATH(binDir))
 	return env
 }
 
-func dxac42EnvClaudeWithHome(t *testing.T, home, claudeDir, binDir string) []string {
+func dxac42PrepareBundlePath(t *testing.T, cfgDir string) string {
 	t.Helper()
-	var env []string
-	for _, e := range os.Environ() {
-		key, _, _ := strings.Cut(e, "=")
-		switch key {
-		case "TMPDIR", "USER", "LANG":
-			env = append(env, e)
-		default:
-			if strings.HasPrefix(key, "SAG_TEST_") {
-				env = append(env, e)
-			}
-		}
+	bundlePath := filepath.Join(cfgDir, "ca-bundle.pem")
+	if err := os.Remove(bundlePath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("DXAC42: remove old bundle: %v", err)
 	}
-	env = append(env, "HOME="+home)
-	env = append(env, "CLAUDE_CONFIG_DIR="+claudeDir)
-	env = append(env, "PI_CODING_AGENT_DIR="+t.TempDir())
-	env = append(env, "PATH="+dxh.TestPATH(binDir))
-	return env
+	t.Cleanup(func() { os.Remove(bundlePath) })
+	return bundlePath
+}
+
+func dxac42WriteOtherCA(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("DXAC42: other CA key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(time.Now().UnixNano()),
+		Subject:               pkix.Name{CommonName: "dxac42 other CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("DXAC42: other CA certificate: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "other-ca.pem")
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("DXAC42: write other CA: %v", err)
+	}
+	return path
+}
+
+func dxac42AssertConflictLine(t *testing.T, label, out, otherCA string) {
+	t.Helper()
+	want := "fail ca-trust NODE_EXTRA_CA_CERTS is " + otherCA
+	if !strings.Contains(out, want) {
+		t.Errorf("DXAC42 %s: output has no line %q; got %q", label, want, out)
+	}
+	if strings.Contains(out, "container sag does not run") {
+		t.Errorf("DXAC42 %s: exit 1 has another cause; got %q", label, out)
+	}
 }
 
 func dxac42RunSetsid(ctx context.Context, bin string, env []string, args ...string) (int, string) {

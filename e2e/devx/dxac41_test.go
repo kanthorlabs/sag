@@ -44,7 +44,7 @@ func DXAC41_PiSetup(t *testing.T, ctx context.Context) {
 
 	fakeBinDir := dxh.ActiveAgentBinDir
 	if fakeBinDir == "" {
-		t.Skip("DXAC41: ActiveAgentBinDir not set; EnsureAgentSetup depends on D6.2 fakeharness")
+		t.Fatal("DXAC41: dxh.ActiveAgentBinDir is not set")
 	}
 	if err := dxh.AddRealProgramLink(binDir, "pi", filepath.Join(fakeBinDir, "pi")); err != nil {
 		t.Fatalf("DXAC41: link pi stub: %v", err)
@@ -89,7 +89,8 @@ func dxac41BashCase(t *testing.T, ctx context.Context, bin, binDir, fakeBinDir, 
 	if err != nil {
 		t.Fatalf("DXAC41 bash: read .bash_profile: %v", err)
 	}
-	exportLine := `export NODE_EXTRA_CA_CERTS="` + filepath.Join(cfgDir, "ca.pem") + `"`
+	testCfgDir := filepath.Join(testHome, ".config", "sag")
+	exportLine := `export NODE_EXTRA_CA_CERTS="` + filepath.Join(testCfgDir, "ca.pem") + `"`
 	profileStr := string(data)
 	if !strings.Contains(profileStr, exportLine) {
 		t.Errorf("DXAC41 bash: .bash_profile does not contain export line; got %q", profileStr)
@@ -320,7 +321,7 @@ func dxac41AssertStubReceived(t *testing.T, fakeBinDir, cfgDir, label string) {
 	recordPath := filepath.Join(fakeBinDir, "stub_records.json")
 	data, err := os.ReadFile(recordPath)
 	if err != nil {
-		t.Logf("DXAC41 %s: stub_records.json not found (expected until D6.1 merges): %v", label, err)
+		t.Errorf("DXAC41 %s: read stub_records.json: %v", label, err)
 		return
 	}
 	want := filepath.Join(cfgDir, "ca.pem")
