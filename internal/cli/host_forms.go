@@ -76,7 +76,8 @@ func hostJWTGenerate(args []string, std IO) int {
 
 func hostExtensionApprove(args []string, std IO) int {
 	if !std.IsTerminal(std.In) || !std.IsTerminal(std.Out) {
-		return fail(std, errApproveNoTerminal)
+		fmt.Fprintf(std.Err, "sag: %v\n", errApproveNoTerminal)
+		return ExitRefusal
 	}
 	podmanPath, err := loadHostPodmanPath()
 	if err != nil {

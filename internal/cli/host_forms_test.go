@@ -122,8 +122,8 @@ func TestRedirectExit3(t *testing.T) {
 
 	for _, tc := range []struct{ in, out bool }{{false, true}, {true, false}, {false, false}} {
 		std, _, errOut := hostFormsIO(tc.in, tc.out)
-		if code := hostExtensionApprove([]string{"res"}, std); code != ExitFailure {
-			t.Fatalf("approve in=%v out=%v: exit = %d; want %d", tc.in, tc.out, code, ExitFailure)
+		if code := hostExtensionApprove([]string{"res"}, std); code != ExitRefusal {
+			t.Fatalf("approve in=%v out=%v: exit = %d; want %d", tc.in, tc.out, code, ExitRefusal)
 		}
 		if !strings.Contains(errOut.String(), "terminal") {
 			t.Fatalf("approve in=%v out=%v: stderr = %q; want a terminal message", tc.in, tc.out, errOut.String())
