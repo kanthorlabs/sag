@@ -36,6 +36,7 @@ func TestE2E(t *testing.T) {
 		}
 	})
 
+	stopProbe := suite.StartProbe("report")
 	t.Run("parallel", func(t *testing.T) {
 		for _, ac := range harness.InPhase(acs, harness.PhaseParallel) {
 			t.Run(subtestName(ac.ID), func(t *testing.T) {
@@ -44,6 +45,7 @@ func TestE2E(t *testing.T) {
 			})
 		}
 	})
+	stopProbe()
 	t.Run("sequential", func(t *testing.T) {
 		for _, ac := range harness.InPhase(acs, harness.PhaseSequential) {
 			t.Run(subtestName(ac.ID), func(t *testing.T) {

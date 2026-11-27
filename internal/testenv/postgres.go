@@ -99,6 +99,8 @@ func (r *Run) StartPostgres(ctx context.Context, major int) (*Postgres, error) {
 		"-c", "ssl_cert_file="+secretDir+"server.crt",
 		"-c", "ssl_key_file="+secretDir+"server.key",
 		"-c", "log_statement=all",
+		"-c", "log_connections=on",
+		"-c", "log_disconnections=on",
 	)
 	if err != nil {
 		return nil, err
