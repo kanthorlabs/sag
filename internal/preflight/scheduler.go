@@ -67,44 +67,56 @@ func (s *Scheduler) Start(ctx context.Context) {
 		first.Go(func() { served[i] = s.run(ctx, r) })
 	}
 	first.Wait()
+	n := len(s.resources)
 	for i, r := range s.resources {
 		if r.res == nil {
-			s.loops.Go(func() { s.openLoop(ctx, r) })
+			s.loops.Go(func() { s.openLoop(ctx, r, i, n) })
 			continue
 		}
-		s.loops.Go(func() { s.loop(ctx, r, served[i]) })
+		s.loops.Go(func() { s.loop(ctx, r, served[i], i, n) })
 	}
 }
 
-func (s *Scheduler) openLoop(ctx context.Context, r scheduled) {
+func (s *Scheduler) openLoop(ctx context.Context, r scheduled, i, n int) {
+	wait := spread(RetryInterval, i, n)
 	for r.res == nil {
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.opts.Clock.After(RetryInterval):
+		case <-s.opts.Clock.After(wait):
 		}
+		wait = RetryInterval
 		res, err := r.open(ctx)
 		if err != nil {
 			continue
 		}
 		r.res = res
 	}
-	s.loop(ctx, r, s.run(ctx, r))
+	s.loop(ctx, r, s.run(ctx, r), n-1, n)
 }
 
 func (s *Scheduler) Wait() {
 	s.loops.Wait()
 }
 
-func (s *Scheduler) loop(ctx context.Context, r scheduled, served bool) {
+func (s *Scheduler) loop(ctx context.Context, r scheduled, served bool, i, n int) {
+	wait := spread(s.interval(served), i, n)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.opts.Clock.After(s.interval(served)):
+		case <-s.opts.Clock.After(wait):
 		}
 		served = s.run(ctx, r)
+		wait = s.interval(served)
 	}
+}
+
+func spread(d time.Duration, i, n int) time.Duration {
+	if n <= 1 {
+		return d
+	}
+	return d * time.Duration(i+1) / time.Duration(n)
 }
 
 func (s *Scheduler) interval(served bool) time.Duration {
