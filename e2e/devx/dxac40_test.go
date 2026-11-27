@@ -34,19 +34,8 @@ func DXAC40_JWTNoLeak(t *testing.T, ctx context.Context) {
 
 	sources := dxac40CollectSources(t, ctx, home, cfgDir)
 
-	mcpSources := map[string]bool{}
-	if dxh.ActiveAgentClaudeDir != "" {
-		mcpSources[filepath.Join(dxh.ActiveAgentClaudeDir, ".claude.json")] = true
-	}
-	if dxh.ActiveAgentPiDir != "" {
-		mcpSources[filepath.Join(dxh.ActiveAgentPiDir, "mcp.json")] = true
-	}
-
 	var leaks []string
 	for srcName, content := range sources {
-		if _, isMCP := mcpSources[srcName]; isMCP {
-			continue
-		}
 		for _, jwt := range jwts {
 			if strings.Contains(content, jwt) {
 				leaks = append(leaks, "JWT found in "+srcName)
@@ -55,16 +44,6 @@ func DXAC40_JWTNoLeak(t *testing.T, ctx context.Context) {
 	}
 	if len(leaks) > 0 {
 		t.Fatalf("DXAC40: JWT leak detected:\n%s", strings.Join(leaks, "\n"))
-	}
-
-	for srcName, content := range sources {
-		if _, isMCP := mcpSources[srcName]; isMCP {
-			for _, jwt := range jwts {
-				if !strings.Contains(content, jwt) {
-					t.Errorf("DXAC40: positive control: JWT not found in MCP source %s", srcName)
-				}
-			}
-		}
 	}
 }
 
