@@ -42,9 +42,9 @@ func DXAC09_CreateCanary(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC09: transcript does not contain PRD 7.5 final line %q", finalLine)
 	}
 
-	out, err := runSAG(t, ctx, "resource", "test", "canary")
-	if err != nil {
-		t.Fatalf("DXAC09: sag resource test canary: %v", err)
+	r := dxh.NewRunner()
+	testOut, testErr := r.Output(ctx, "podman", "exec", "sag", "sag", "resource", "test", "canary")
+	if testErr != nil {
+		t.Fatalf("DXAC09: sag resource test canary: %v\n%s", testErr, testOut)
 	}
-	_ = out
 }

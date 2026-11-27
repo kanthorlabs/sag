@@ -154,7 +154,8 @@ func DXAC37_CreateTLSCA(t *testing.T, ctx context.Context) {
 			t.Fatalf("DXAC37: mydb-37 not in credential list:\n%s", listOut)
 		}
 
-		testOut, testErr := runSAG(t, ctx, "resource", "test", "mydb-37")
+		testR := dxh.NewRunner()
+		testOut, testErr := testR.Output(ctx, "podman", "exec", "sag", "sag", "resource", "test", "mydb-37")
 		if testErr != nil {
 			t.Fatalf("DXAC37: sag resource test mydb-37: %v\n%s", testErr, testOut)
 		}
