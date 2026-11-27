@@ -329,10 +329,17 @@ func TestPlanOnlyCalledForYesHarnesses(t *testing.T) {
 		return map[string]string{
 			"CLAUDE_CONFIG_DIR":   claudeDir,
 			"PI_CODING_AGENT_DIR": piDir,
+			"NODE_EXTRA_CA_CERTS": "/other.pem",
 		}
 	}
 	d.PlanOnly = func(ctx context.Context, opts agentsetup.Options) (agentsetup.Plan, error) {
 		planOnlyCalls = append(planOnlyCalls, opts.Harness)
+		if !opts.DeferCATrust {
+			t.Errorf("PlanOnly opts.DeferCATrust = false; want true at step 3")
+		}
+		if opts.Env["NODE_EXTRA_CA_CERTS"] != "/other.pem" {
+			t.Errorf("PlanOnly opts.Env[NODE_EXTRA_CA_CERTS] = %q; want the caller value", opts.Env["NODE_EXTRA_CA_CERTS"])
+		}
 		return agentsetup.Plan{}, nil
 	}
 	d.ResolveYesNo = func(a prompt.Asker, flagValue, stored, question, flagName string) (string, error) {

@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"os"
 	"strings"
 
@@ -15,12 +16,19 @@ func applyCATrust(ctx context.Context, opts Options) error {
 	out := stepline.New(agentOut)
 	ca := caFilePath(opts)
 
+	var err error
 	switch opts.Harness {
 	case HarnessPi:
-		return applyCATrustPi(opts, ca, out)
+		err = applyCATrustPi(opts, ca, out)
 	default:
-		return applyCATrustClaudeCode(opts, ca, out)
+		err = applyCATrustClaudeCode(opts, ca, out)
 	}
+	var caErr *CATrustConflictError
+	if errors.As(err, &caErr) {
+		out.Line(stepline.StatusFail, caErr.Error(), "")
+		return &ConflictError{conflicts: []string{caErr.Error()}, caTrust: caErr}
+	}
+	return err
 }
 
 func applyCATrustClaudeCode(opts Options, caPath string, out stepline.Writer) error {
@@ -103,37 +111,42 @@ func currentNECCFromProfile(profile string) string {
 }
 
 func checkCATrustConflict(opts Options, paths HarnessPaths) string {
+	if e := caTrustConflict(opts, paths); e != nil {
+		return e.Error()
+	}
+	return ""
+}
+
+func caTrustConflict(opts Options, paths HarnessPaths) *CATrustConflictError {
 	caPath := caFilePath(opts)
 	switch opts.Harness {
 	case HarnessPi:
-		shell := opts.Env["SHELL"]
-		zdotdir := opts.Env["ZDOTDIR"]
-		profile, ok := ShellProfile(opts.GOOS, shell, zdotdir, opts.Home)
-		if !ok {
-			return ""
-		}
 		env := opts.Env["NODE_EXTRA_CA_CERTS"]
 		if env != "" && !acceptsCATrust(env, caPath) {
-			return newCATrustConflictError(env, caPath, "the environment").Error()
+			return newCATrustConflictError(env, caPath, "the environment")
+		}
+		profile, ok := ShellProfile(opts.GOOS, opts.Env["SHELL"], opts.Env["ZDOTDIR"], opts.Home)
+		if !ok {
+			return nil
 		}
 		current := currentNECCFromProfile(profile)
 		if current != "" && !acceptsCATrust(current, caPath) {
-			return newCATrustConflictError(current, caPath, profile).Error()
+			return newCATrustConflictError(current, caPath, profile)
 		}
 	default:
 		if paths.SettingsFile == "" {
-			return ""
+			return nil
 		}
 		env := opts.Env["NODE_EXTRA_CA_CERTS"]
 		if env != "" && !acceptsCATrust(env, caPath) {
-			return newCATrustConflictError(env, caPath, "the environment").Error()
+			return newCATrustConflictError(env, caPath, "the environment")
 		}
 		settings := currentNECCFromSettings(paths.SettingsFile)
 		if settings != "" && !acceptsCATrust(settings, caPath) {
-			return newCATrustConflictError(settings, caPath, paths.SettingsFile).Error()
+			return newCATrustConflictError(settings, caPath, paths.SettingsFile)
 		}
 	}
-	return ""
+	return nil
 }
 
 func newCATrustConflictError(current, caPath, source string) *CATrustConflictError {

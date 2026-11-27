@@ -67,10 +67,6 @@ func convertAgentRunError(err error) error {
 	if errors.As(err, &catErr) {
 		return errCATrustConflict
 	}
-	var conflictErr *agentsetup.ConflictError
-	if errors.As(err, &conflictErr) && strings.Contains(conflictErr.Error(), "ca-trust NODE_EXTRA_CA_CERTS") {
-		return errCATrustConflict
-	}
 	return err
 }
 
@@ -86,15 +82,6 @@ func harnessConfigDir(harness agentsetup.Harness, environ map[string]string, hom
 		return abs
 	}
 	return dir
-}
-
-func planEnv(environ map[string]string) map[string]string {
-	env := make(map[string]string, len(environ))
-	for k, v := range environ {
-		env[k] = v
-	}
-	delete(env, "NODE_EXTRA_CA_CERTS")
-	return env
 }
 
 func (d Deps) detectHarnesses(environ map[string]string, home string) []harnessDet {
@@ -138,23 +125,15 @@ func (d Deps) planAgentSetup(ctx context.Context, s *State, fresh agentSetupFres
 	if s.Lock != nil || d.PlanOnly == nil {
 		return nil
 	}
-	pe := planEnv(environ)
 	for _, det := range detected {
 		key := agentSetupKey(det.harness, det.cfgDir)
 		if s.Answers.AgentSetup[key] != "yes" {
 			continue
 		}
-		opts := d.buildAgentOptions(det, s, pe)
+		opts := d.buildAgentOptions(det, s, environ)
+		opts.DeferCATrust = true
 		plan, err := d.PlanOnly(ctx, opts)
 		if err != nil {
-			var catErr *agentsetup.CATrustConflictError
-			if errors.As(err, &catErr) {
-				continue
-			}
-			var conflictErr *agentsetup.ConflictError
-			if errors.As(err, &conflictErr) && strings.Contains(conflictErr.Error(), "ca-trust NODE_EXTRA_CA_CERTS") {
-				continue
-			}
 			return err
 		}
 		if s.AgentSetupAnswers == nil {

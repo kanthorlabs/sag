@@ -34,6 +34,7 @@ type Options struct {
 	ShellProfile string
 	Guard        string
 	UnderLock    bool
+	DeferCATrust bool
 	AnswersPath  string
 	Asker        prompt.Asker
 }
@@ -57,12 +58,20 @@ type CATrustConflictError struct {
 }
 
 func (e *CATrustConflictError) Error() string {
-	return fmt.Sprintf("fail ca-trust NODE_EXTRA_CA_CERTS is %s; run: cat %q %q > %q; then set NODE_EXTRA_CA_CERTS to %s in %s",
+	return fmt.Sprintf("ca-trust NODE_EXTRA_CA_CERTS is %s; run: cat %q %q > %q; then set NODE_EXTRA_CA_CERTS to %s in %s",
 		e.Current, e.Current, e.CAPath, e.BundlePath, e.BundlePath, e.Source)
 }
 
 type ConflictError struct {
 	conflicts []string
+	caTrust   *CATrustConflictError
+}
+
+func (e *ConflictError) Unwrap() error {
+	if e.caTrust == nil {
+		return nil
+	}
+	return e.caTrust
 }
 
 func (e *ConflictError) Error() string {
