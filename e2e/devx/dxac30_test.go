@@ -84,7 +84,10 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 		r.Output(context.Background(), "podman", "rmi", "--force", mainRef)
 	}
 	removeRegistryRefs()
-	t.Cleanup(removeRegistryRefs)
+	t.Cleanup(func() {
+		removeRegistryRefs()
+		dxh.Teardown(context.Background(), r, tcfg)
+	})
 
 	t.Run("digest_binary_pulls_by_digest", func(t *testing.T) {
 		stdout, runErr := runBinaryBootstrap(t, ctx, digestBin, registry)
@@ -100,9 +103,7 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 			t.Fatalf("unexpected warn line in digest binary stdout:\n%s", stdout)
 		}
 
-		if err := dxh.Teardown(ctx, r, tcfg); err != nil {
-			t.Errorf("teardown after digest binary: %v", err)
-		}
+		r.Output(ctx, "podman", "rm", "-f", "sag")
 		removeRegistryRefs()
 	})
 
@@ -120,11 +121,6 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 		if !strings.Contains(stdout, wantWarn) {
 			t.Fatalf("warn line %q missing in no-digest binary stdout:\n%s", wantWarn, stdout)
 		}
-
-		if err := dxh.Teardown(ctx, r, tcfg); err != nil {
-			t.Errorf("teardown after no-digest binary: %v", err)
-		}
-		removeRegistryRefs()
 	})
 }
 
