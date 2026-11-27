@@ -146,7 +146,7 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 	}
 
 	t.Run("setup_without_resource_exits_0", func(t *testing.T) {
-		code, out := runAgentSetup(t, ctx)
+		code, out := runAgentSetup(t, ctx, "--deny-rules", "no")
 		if code != 0 {
 			t.Errorf("DXAC45-1: exit = %d; want 0; output length = %d", code, len(out))
 		}
@@ -248,7 +248,7 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 
 	t.Run("second_setup_keeps_entry_byte_equal", func(t *testing.T) {
 		entryBefore := readMCPEntry(t)
-		code, out := runAgentSetup(t, ctx)
+		code, out := runAgentSetup(t, ctx, "--deny-rules", "no")
 		if code != 0 {
 			t.Fatalf("DXAC45-7: second setup exit %d; output length=%d", code, len(out))
 		}
@@ -259,7 +259,7 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 	})
 
 	t.Run("sub_other_writes_new_jwt", func(t *testing.T) {
-		code, out := runAgentSetup(t, ctx, "--sub", "other")
+		code, out := runAgentSetup(t, ctx, "--sub", "other", "--deny-rules", "no")
 		if code != 0 {
 			t.Fatalf("DXAC45-8: setup --sub other exit %d; output length=%d", code, len(out))
 		}
