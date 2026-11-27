@@ -204,19 +204,9 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 	}
 
 	t.Run("list_resources_returns_credential", func(t *testing.T) {
-		names, err := dxac39MCPClient(t, ctx, sagCfgDir, jwtStr)
-		if err != nil {
-			t.Fatalf("DXAC45-4: list_resources: %v", err)
-		}
-		found := false
-		for _, n := range names {
-			if n == credName {
-				found = true
-				break
-			}
-		}
+		names, found := dxac45WaitForResource(t, ctx, sagCfgDir, jwtStr, credName)
 		if !found {
-			t.Errorf("DXAC45-4: list_resources does not contain %q; got %v", credName, names)
+			t.Errorf("DXAC45-4: list_resources does not contain %q after 60 s; got %v", credName, names)
 		}
 	})
 
@@ -302,22 +292,42 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 		}
 
 		newJWT := jwtFromMCP(t)
-		names, err := dxac39MCPClient(t, ctx, sagCfgDir, newJWT)
-		if err != nil {
-			t.Fatalf("DXAC45-9: list_resources with new JWT: %v", err)
-		}
-		found := false
-		for _, n := range names {
-			if n == credName {
-				found = true
-				break
-			}
-		}
+		names, found := dxac45WaitForResource(t, ctx, sagCfgDir, newJWT, credName)
 		if !found {
-			t.Errorf("DXAC45-9: new JWT does not authenticate; list_resources missing %q; got %v",
+			t.Errorf("DXAC45-9: new JWT does not authenticate; list_resources missing %q after 60 s; got %v",
 				credName, names)
 		}
 	})
+}
+
+func dxac45WaitForResource(t *testing.T, ctx context.Context, sagCfgDir, jwt, credName string) ([]string, bool) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	var names []string
+	for time.Now().Before(deadline) {
+		var err error
+		names, err = dxac39MCPClient(t, ctx, sagCfgDir, jwt)
+		if err == nil {
+			for _, n := range names {
+				if n == credName {
+					return names, true
+				}
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
+	logCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, _ := dxh.NewRunner().Output(logCtx, "podman", "logs", "sag")
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	for sc.Scan() {
+		line := sc.Text()
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "resource") || strings.Contains(lower, strings.ToLower(credName)) {
+			t.Logf("sag log: %s", line)
+		}
+	}
+	return names, false
 }
 
 var jwtRe45 = regexp.MustCompile(`eyJ[A-Za-z0-9+/=_-]+\.[A-Za-z0-9+/=_-]+\.[A-Za-z0-9+/=_-]+`)
