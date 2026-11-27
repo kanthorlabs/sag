@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,20 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 	port := freePort(t)
 	registry := fmt.Sprintf("127.0.0.1:%d", port)
 	registryContainerName := "sag-devx-e2e-registry-dxac30"
+
+	confBefore := dxac30RegistriesConf(t, ctx, r)
+	t.Cleanup(func() {
+		cctx := context.Background()
+		if out, _ := r.Output(cctx, "podman", "ps", "-a", "--filter", "name=^"+registryContainerName+"$", "--format", "{{.Names}}"); strings.TrimSpace(string(out)) != "" {
+			t.Errorf("DXAC30: registry container %s remains", registryContainerName)
+		}
+		if out, _ := r.Output(cctx, "podman", "image", "ls", "--filter", "reference="+registry+"/*", "--format", "{{.Repository}}"); strings.TrimSpace(string(out)) != "" {
+			t.Errorf("DXAC30: pulled references remain: %s", out)
+		}
+		if confAfter := dxac30RegistriesConf(t, cctx, r); confAfter != confBefore {
+			t.Error("DXAC30: the registry configuration of podman-machine-default changed")
+		}
+	})
 
 	startOut, startErr := r.Output(ctx, "podman", "run", "-d",
 		"--rm",
@@ -80,8 +95,8 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 	mainRef := registry + "/kanthorlabs/sag:main"
 
 	removeRegistryRefs := func() {
-		r.Output(context.Background(), "podman", "rmi", "--force", digestRef)
-		r.Output(context.Background(), "podman", "rmi", "--force", mainRef)
+		r.Output(context.Background(), "podman", "rmi", digestRef)
+		r.Output(context.Background(), "podman", "rmi", mainRef)
 	}
 	removeRegistryRefs()
 	t.Cleanup(func() {
@@ -90,6 +105,7 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 	})
 
 	t.Run("digest_binary_pulls_by_digest", func(t *testing.T) {
+		dxac30AssertAbsent(t, ctx, r, digestRef, mainRef)
 		stdout, runErr := runBinaryBootstrap(t, ctx, digestBin, registry)
 		if runErr != nil {
 			t.Fatalf("digest binary bootstrap: %v\nstdout: %s", runErr, stdout)
@@ -99,7 +115,7 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 			t.Fatalf("image %q not present after digest binary run", digestRef)
 		}
 
-		if strings.Contains(stdout, "dev build; pulls the main tag") {
+		if dxac30HasLine(stdout, dxac30WarnLine) {
 			t.Fatalf("unexpected warn line in digest binary stdout:\n%s", stdout)
 		}
 
@@ -108,6 +124,7 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 	})
 
 	t.Run("nodigest_binary_pulls_main_and_warns", func(t *testing.T) {
+		dxac30AssertAbsent(t, ctx, r, digestRef, mainRef)
 		stdout, runErr := runBinaryBootstrap(t, ctx, noDigestBin, registry)
 		if runErr != nil {
 			t.Fatalf("no-digest binary bootstrap: %v\nstdout: %s", runErr, stdout)
@@ -117,9 +134,8 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 			t.Fatalf("image %q not present after no-digest binary run", mainRef)
 		}
 
-		wantWarn := "warn image dev build; pulls the main tag"
-		if !strings.Contains(stdout, wantWarn) {
-			t.Fatalf("warn line %q missing in no-digest binary stdout:\n%s", wantWarn, stdout)
+		if !dxac30HasLine(stdout, dxac30WarnLine) {
+			t.Fatalf("warn line %q missing in no-digest binary stdout:\n%s", dxac30WarnLine, stdout)
 		}
 	})
 }
@@ -217,4 +233,28 @@ func runBinaryBootstrap(t *testing.T, ctx context.Context, bin, registry string)
 	cmd.Stdout = &stdout
 	err = cmd.Run()
 	return stdout.String(), err
+}
+
+const dxac30WarnLine = "warn image dev build; pulls the main tag"
+
+func dxac30HasLine(out, line string) bool {
+	return slices.Contains(strings.Split(out, "\n"), line)
+}
+
+func dxac30AssertAbsent(t *testing.T, ctx context.Context, r dxh.Runner, refs ...string) {
+	t.Helper()
+	for _, ref := range refs {
+		if _, err := r.Output(ctx, "podman", "image", "exists", ref); err == nil {
+			t.Fatalf("DXAC30: %s exists before the run; the pull is not proven", ref)
+		}
+	}
+}
+
+func dxac30RegistriesConf(t *testing.T, ctx context.Context, r dxh.Runner) string {
+	t.Helper()
+	out, err := r.Output(ctx, "podman", "machine", "ssh", "--", "sh", "-c", "cat /etc/containers/registries.conf /etc/containers/registries.conf.d/* 2>/dev/null; true")
+	if err != nil {
+		t.Fatalf("DXAC30: read registry configuration: %v", err)
+	}
+	return string(out)
 }
