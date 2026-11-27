@@ -95,6 +95,7 @@ e2e-devx-unit:
 	node --test --test-reporter=tap "internal/agentsetup/assets/pi/*.test.ts" > $(REPORT)/devx-unit/node.tap 2>&1 || true
 	$(GO) test -json -count=1 -run '^TestDXAC49_' ./internal/agentsetup/ > $(REPORT)/devx-unit/events.json || true
 	$(GO) run ./e2e/cmd/acreport -suite devx -layer $(LAYER) -phase $(PHASE) \
+		-run 'DXAC44_SagGuard|TestDXAC49_SkillNamesToolsAndCodes' \
 		-in $(REPORT)/devx-unit/events.json \
 		-out $(REPORT)
 
