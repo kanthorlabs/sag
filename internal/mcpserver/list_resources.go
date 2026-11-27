@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	listResourcesName          = "list_resources"
+	ListResourcesName          = "list_resources"
+	listResourcesName          = ListResourcesName
 	messageListResourcesNoArgs = "arguments must be an empty JSON object"
 )
 
