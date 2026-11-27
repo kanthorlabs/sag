@@ -22,7 +22,7 @@ E2E_TEST := $(GO) test -tags e2e -json -count=1 -timeout 30m
 SHARED_ROOT := $(patsubst %/.git,%,$(shell git rev-parse --path-format=absolute --git-common-dir))
 DEVX_LOCK := $(SHARED_ROOT)/.dev/claims/devx-e2e.lock
 
-.PHONY: build build-devxtest image image-conformance test test-integration e2e e2e-devx e2e-matrix contract-check dev-up dev-down
+.PHONY: build build-devxtest image image-conformance test test-integration e2e e2e-devx e2e-devx-unit e2e-matrix contract-check dev-up dev-down
 
 build:
 	CGO_ENABLED=1 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sag ./cmd/sag
@@ -87,6 +87,15 @@ e2e-devx:
 		./e2e/devx/ > $(REPORT)/devx-$(SUITE)/events.json; \
 	$(GO) run ./e2e/cmd/acreport -suite devx -layer $(LAYER) -phase $(PHASE) \
 		$(if $(RUN),-run '$(RUN)' -in $(REPORT)/devx-$(SUITE)/events.json,$$(for f in $(REPORT)/devx-*/events.json; do printf -- '-in %s ' "$$f"; done)) \
+		-out $(REPORT)
+
+e2e-devx-unit:
+	mkdir -p $(REPORT)/devx-unit
+	git rev-parse HEAD > $(REPORT)/devx-unit/commit
+	node --test --test-reporter=tap "internal/agentsetup/assets/pi/*.test.ts" > $(REPORT)/devx-unit/node.tap 2>&1 || true
+	$(GO) test -json -count=1 -run '^TestDXAC49_' ./internal/agentsetup/ > $(REPORT)/devx-unit/events.json || true
+	$(GO) run ./e2e/cmd/acreport -suite devx -layer $(LAYER) -phase $(PHASE) \
+		-in $(REPORT)/devx-unit/events.json \
 		-out $(REPORT)
 
 contract-check:

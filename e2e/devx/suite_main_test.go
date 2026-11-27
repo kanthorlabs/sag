@@ -23,6 +23,10 @@ var deleteTests = map[string]func(*testing.T, context.Context){}
 
 var hostformsTests = map[string]func(*testing.T, context.Context){}
 
+var agentTests = map[string]func(*testing.T, context.Context){}
+
+var bootagentTests = map[string]func(*testing.T, context.Context){}
+
 func TestDevxMain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -160,6 +164,46 @@ func TestDevxMain(t *testing.T) {
 		for _, name := range hostformsOrder {
 			name := name
 			fn := hostformsTests[name]
+			t.Run(name, func(t *testing.T) {
+				if fn == nil {
+					t.Fatal("not implemented")
+				}
+				fn(t, ctx)
+			})
+		}
+	})
+
+	agentOrder := []string{
+		"DXAC39_ClaudeCodeSetup",
+		"DXAC41_PiSetup",
+		"DXAC40_JWTNoLeak",
+		"DXAC26_DenyRules",
+		"DXAC42_CATrustConflict",
+		"DXAC43_AgentSetupRefusals",
+		"DXAC45_AgentIssue",
+		"DXAC51_RemoteMode",
+	}
+	dxh.RunGroup(t, ctx, r, tcfg, "agent", tagImage, func(t *testing.T) {
+		dxh.EnsureAgentSetup(t)
+		for _, name := range agentOrder {
+			name := name
+			fn := agentTests[name]
+			t.Run(name, func(t *testing.T) {
+				if fn == nil {
+					t.Fatal("not implemented")
+				}
+				fn(t, ctx)
+			})
+		}
+	})
+
+	bootagentOrder := []string{
+		"DXAC46_BootstrapAgentSetup",
+	}
+	dxh.RunGroup(t, ctx, r, tcfg, "bootagent", tagImage, func(t *testing.T) {
+		for _, name := range bootagentOrder {
+			name := name
+			fn := bootagentTests[name]
 			t.Run(name, func(t *testing.T) {
 				if fn == nil {
 					t.Fatal("not implemented")
