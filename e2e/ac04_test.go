@@ -53,7 +53,7 @@ func runAC04(t *testing.T, env harness.Env) {
 		if res.ExitCode == 0 {
 			t.Fatal("jwt generate without a terminal exited 0")
 		}
-		if !strings.Contains(res.Stderr, "not a terminal") {
+		if !strings.Contains(res.Stderr, "must be terminals") {
 			t.Fatalf("jwt generate without a terminal: stderr %q; want the terminal cause", res.Stderr)
 		}
 		if ac04HasJWT(res.Stdout) || ac04HasJWT(res.Stderr) {

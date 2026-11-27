@@ -30,7 +30,7 @@ func runAC34(t *testing.T, env harness.Env) {
 	if res.ExitCode == 0 {
 		t.Fatalf("sag jwt generate without a terminal exit = 0; stdout %q; want non-zero", res.Stdout)
 	}
-	if !strings.Contains(res.Stderr, "not a terminal") {
+	if !strings.Contains(res.Stderr, "must be terminals") {
 		t.Fatalf("sag jwt generate stderr = %q; want the no-terminal cause", res.Stderr)
 	}
 	if res.Stdout != "" {
