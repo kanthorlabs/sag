@@ -89,7 +89,8 @@ func dxac41BashCase(t *testing.T, ctx context.Context, bin, binDir, fakeBinDir, 
 	if err != nil {
 		t.Fatalf("DXAC41 bash: read .bash_profile: %v", err)
 	}
-	exportLine := `export NODE_EXTRA_CA_CERTS="` + filepath.Join(cfgDir, "ca.pem") + `"`
+	testCfgDir := filepath.Join(testHome, ".config", "sag")
+	exportLine := `export NODE_EXTRA_CA_CERTS="` + filepath.Join(testCfgDir, "ca.pem") + `"`
 	profileStr := string(data)
 	if !strings.Contains(profileStr, exportLine) {
 		t.Errorf("DXAC41 bash: .bash_profile does not contain export line; got %q", profileStr)

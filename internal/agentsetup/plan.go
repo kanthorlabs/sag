@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kanthorlabs/sag/internal/hoststate"
+	"github.com/kanthorlabs/sag/internal/prompt"
 	"github.com/kanthorlabs/sag/internal/secret"
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
@@ -35,7 +36,20 @@ func run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	conflicts := planConflicts(opts, mode, checkContainerRunning(ctx, opts.PodmanPath))
+	if needsInteractiveAnswer(opts) {
+		tty, err := remoteOpenTTY()
+		if err != nil {
+			return fmt.Errorf("open /dev/tty: %w", prompt.ErrNoTerminal)
+		}
+		tty.Close()
+	}
+
+	containerRuns := false
+	if mode == ModeLocal {
+		containerRuns = checkContainerRunning(ctx, opts.PodmanPath)
+	}
+
+	conflicts := planConflicts(opts, mode, containerRuns)
 	for _, c := range conflicts {
 		out.Line(stepline.StatusFail, c, "")
 	}
@@ -55,7 +69,10 @@ func run(ctx context.Context, opts Options) error {
 		}
 		defer lock.Release()
 
-		conflicts = planConflicts(opts, mode, checkContainerRunning(ctx, opts.PodmanPath))
+		if mode == ModeLocal {
+			containerRuns = checkContainerRunning(ctx, opts.PodmanPath)
+		}
+		conflicts = planConflicts(opts, mode, containerRuns)
 		for _, c := range conflicts {
 			out.Line(stepline.StatusFail, c, "")
 		}
@@ -129,9 +146,36 @@ func planOnly(ctx context.Context, opts Options) (Plan, error) {
 			return Plan{}, err
 		}
 	}
-	containerRuns := checkContainerRunning(ctx, opts.PodmanPath)
+	containerRuns := false
+	if mode == ModeLocal {
+		containerRuns = checkContainerRunning(ctx, opts.PodmanPath)
+	}
 	conflicts := planConflicts(opts, mode, containerRuns)
 	return Plan{Conflicts: conflicts}, nil
+}
+
+func needsInteractiveAnswer(opts Options) bool {
+	switch opts.Harness {
+	case HarnessClaudeCode:
+		if opts.DenyRules != "" {
+			return false
+		}
+		paths := harnessPathsFromOpts(opts)
+		current, _ := readDenyRules(paths.SettingsFile)
+		return len(appendMissingRules(current, sagDenyRules)) > len(current)
+	case HarnessPi:
+		if opts.ShellProfile != "" {
+			return false
+		}
+		shell := opts.Env["SHELL"]
+		zdotdir := opts.Env["ZDOTDIR"]
+		profile, ok := ShellProfile(opts.GOOS, shell, zdotdir, opts.Home)
+		if !ok {
+			return false
+		}
+		return !fileContainsLine(profile, `export NODE_EXTRA_CA_CERTS="`+caFilePath(opts)+`"`)
+	}
+	return false
 }
 
 func planConflicts(opts Options, mode Mode, containerRuns bool) []string {

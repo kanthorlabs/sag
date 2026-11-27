@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/kanthorlabs/sag/internal/agentsetup"
 	"github.com/kanthorlabs/sag/internal/hoststate"
+	"github.com/kanthorlabs/sag/internal/prompt"
 	"github.com/kanthorlabs/sag/internal/token"
 )
 
@@ -36,6 +38,10 @@ func agentSetup(args []string, std IO) int {
 
 	agentsetup.SetOut(std.Out)
 	if err := agentsetup.Run(context.Background(), opts); err != nil {
+		if errors.Is(err, prompt.ErrNoTerminal) {
+			fmt.Fprintf(std.Err, "sag: %v\n", err)
+			return ExitRefusal
+		}
 		return fail(std, err)
 	}
 	return ExitOK
@@ -95,6 +101,13 @@ func parseAgentSetupFlags(args []string, std IO) (agentsetup.Options, bool) {
 	}
 	if !validYesNoFlag("--guard", guard, std.Err) {
 		return agentsetup.Options{}, false
+	}
+
+	if url != "" && url != "https://localhost:8443/mcp" {
+		if _, err := agentsetup.ParseURL(url); err != nil {
+			fmt.Fprintf(std.Err, "sag: %v\n", err)
+			return agentsetup.Options{}, false
+		}
 	}
 
 	if sub == "" {

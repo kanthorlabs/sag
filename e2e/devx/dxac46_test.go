@@ -176,8 +176,8 @@ func DXAC46_BootstrapAgentSetup(t *testing.T, ctx context.Context) {
 			t.Errorf("exit code = %d; want 1; stdout=%s stderr=%s",
 				code, stdoutBuf.String(), stderrBuf.String())
 		}
-		if !strings.Contains(combined, "NODE_EXTRA_CA_CERTS=") {
-			t.Errorf("output missing bundle command line (NODE_EXTRA_CA_CERTS=...); got:\n%s", combined)
+		if !strings.Contains(combined, "NODE_EXTRA_CA_CERTS is") {
+			t.Errorf("output missing bundle command line (NODE_EXTRA_CA_CERTS is ...); got:\n%s", combined)
 		}
 		if err := healthzOK(ctx, filepath.Join(cfgDir, "ca.pem")); err != nil {
 			t.Errorf("/healthz after ca-trust exit: %v", err)
