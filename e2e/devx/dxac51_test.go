@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,9 +86,8 @@ func DXAC51_RemoteMode(t *testing.T, ctx context.Context) {
 	t.Run("no-terminal-exits-3-no-change", func(t *testing.T) {
 		xdgDir, binDir := dxac51SetupDirs(t, fakeBin)
 		claudeDir := t.TempDir()
-		mcpFile := filepath.Join(claudeDir, ".claude.json")
 
-		snapBefore := dxac51Snapshot(t, mcpFile)
+		snapBefore := dxac51SnapshotDirs(t, xdgDir, claudeDir)
 
 		env := dxac51Env(xdgDir, claudeDir, binDir)
 		cmd := exec.CommandContext(ctx, sagBin, "agent", "setup", "claude-code",
@@ -108,9 +108,16 @@ func DXAC51_RemoteMode(t *testing.T, ctx context.Context) {
 			t.Fatalf("DXAC51 no-terminal: exit %d; want 3; output: %q", code, out.String())
 		}
 
-		snapAfter := dxac51Snapshot(t, mcpFile)
-		if snapBefore != snapAfter {
-			t.Fatal("DXAC51 no-terminal: MCP file changed after refused run")
+		snapAfter := dxac51SnapshotDirs(t, xdgDir, claudeDir)
+		for path, before := range snapBefore {
+			if after, ok := snapAfter[path]; !ok || before != after {
+				t.Errorf("DXAC51 no-terminal: file changed: %s", path)
+			}
+		}
+		for path := range snapAfter {
+			if _, ok := snapBefore[path]; !ok {
+				t.Errorf("DXAC51 no-terminal: new file created: %s", path)
+			}
 		}
 	})
 
@@ -318,6 +325,24 @@ func dxac51JWT(sub string) string {
 	p := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"` + sub + `"}`))
 	s := base64.RawURLEncoding.EncodeToString([]byte("sig"))
 	return h + "." + p + "." + s
+}
+
+func dxac51SnapshotDirs(t *testing.T, dirs ...string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, dir := range dirs {
+		filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err == nil {
+				out[path] = string(data)
+			}
+			return nil
+		})
+	}
+	return out
 }
 
 func dxac51BuildFakeharness(t *testing.T, ctx context.Context) string {

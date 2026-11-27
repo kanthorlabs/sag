@@ -26,6 +26,7 @@ func TestProfileByShell(t *testing.T) {
 				t.Fatal(err)
 			}
 			opts := Options{
+				Harness:      HarnessPi,
 				ShellProfile: "yes",
 				GOOS:         tc.goos,
 				Home:         home,
@@ -56,6 +57,7 @@ func TestProfileZshWithZDOTDIR(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := Options{
+		Harness:      HarnessPi,
 		ShellProfile: "yes",
 		GOOS:         "darwin",
 		Home:         home,
@@ -86,6 +88,7 @@ func TestProfileLineOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := Options{
+		Harness:      HarnessPi,
 		ShellProfile: "yes",
 		GOOS:         "darwin",
 		Home:         home,
@@ -122,6 +125,7 @@ func TestProfileNoTrailingNewlineAppend(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := Options{
+		Harness:      HarnessPi,
 		ShellProfile: "yes",
 		GOOS:         "darwin",
 		Home:         home,
@@ -148,6 +152,7 @@ func TestFishRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := Options{
+		Harness:      HarnessPi,
 		ShellProfile: "yes",
 		GOOS:         "darwin",
 		Home:         home,
@@ -163,6 +168,7 @@ func TestProfileNoOpWhenAnswerNo(t *testing.T) {
 	home := t.TempDir()
 	cfgDir := filepath.Join(home, ".config", "sag")
 	opts := Options{
+		Harness:      HarnessPi,
 		ShellProfile: "no",
 		GOOS:         "darwin",
 		Home:         home,

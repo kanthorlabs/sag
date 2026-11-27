@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"github.com/kanthorlabs/sag/internal/agentsetup"
@@ -15,6 +16,11 @@ import (
 )
 
 func agentSetup(args []string, std IO) int {
+	if std.Mode == ModeContainer {
+		fmt.Fprintln(std.Err, "sag: agent setup runs only on the host")
+		return ExitFailure
+	}
+
 	opts, ok := parseAgentSetupFlags(args, std)
 	if !ok {
 		return ExitUsage
@@ -25,22 +31,42 @@ func agentSetup(args []string, std IO) int {
 		return fail(std, err)
 	}
 	opts.CfgDir = hsPaths.Cfg
+	opts.AnswersPath = hsPaths.AnswersJSON
+
+	opts.Env = makeAbsoluteConfigDirs(opts.Env)
 
 	answers, err := hoststate.LoadAnswers(hsPaths)
 	if err != nil {
 		return fail(std, err)
 	}
-	podmanPath, err := hoststate.FindPodman(answers.PodmanPath)
-	if err != nil {
-		return fail(std, err)
+
+	mode := agentsetup.ModeLocal
+	if opts.URL != "" && opts.URL != "https://localhost:8443/mcp" {
+		mode, err = agentsetup.ParseURL(opts.URL)
+		if err != nil {
+			fmt.Fprintf(std.Err, "sag: %v\n", err)
+			return ExitUsage
+		}
 	}
-	opts.PodmanPath = podmanPath
+
+	if mode == agentsetup.ModeLocal {
+		podmanPath, err := hoststate.FindPodman(answers.PodmanPath)
+		if err != nil {
+			return fail(std, err)
+		}
+		opts.PodmanPath = podmanPath
+	}
 
 	agentsetup.SetOut(std.Out)
 	if err := agentsetup.Run(context.Background(), opts); err != nil {
-		if errors.Is(err, prompt.ErrNoTerminal) {
+		var refusal *prompt.RefusalError
+		if errors.As(err, &refusal) {
 			fmt.Fprintf(std.Err, "sag: %v\n", err)
 			return ExitRefusal
+		}
+		var conflict *agentsetup.ConflictError
+		if errors.As(err, &conflict) {
+			return ExitFailure
 		}
 		return fail(std, err)
 	}
@@ -103,6 +129,19 @@ func parseAgentSetupFlags(args []string, std IO) (agentsetup.Options, bool) {
 		return agentsetup.Options{}, false
 	}
 
+	if harness == agentsetup.HarnessPi && denyRules != "" {
+		fmt.Fprintln(std.Err, "sag: --deny-rules is not valid for pi")
+		return agentsetup.Options{}, false
+	}
+	if harness == agentsetup.HarnessClaudeCode && shellProfile != "" {
+		fmt.Fprintln(std.Err, "sag: --shell-profile is not valid for claude-code")
+		return agentsetup.Options{}, false
+	}
+	if harness == agentsetup.HarnessClaudeCode && guard != "" {
+		fmt.Fprintln(std.Err, "sag: --guard is not valid for claude-code")
+		return agentsetup.Options{}, false
+	}
+
 	if url != "" && url != "https://localhost:8443/mcp" {
 		if _, err := agentsetup.ParseURL(url); err != nil {
 			fmt.Fprintf(std.Err, "sag: %v\n", err)
@@ -138,6 +177,21 @@ func parseAgentSetupFlags(args []string, std IO) (agentsetup.Options, bool) {
 		Guard:        guard,
 	}
 	return opts, true
+}
+
+func makeAbsoluteConfigDirs(env map[string]string) map[string]string {
+	out := make(map[string]string, len(env))
+	for k, v := range env {
+		out[k] = v
+	}
+	for _, key := range []string{"CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR"} {
+		if v := out[key]; v != "" && !filepath.IsAbs(v) {
+			if abs, err := filepath.Abs(v); err == nil {
+				out[key] = abs
+			}
+		}
+	}
+	return out
 }
 
 func osEnvMap() map[string]string {

@@ -125,7 +125,7 @@ func BuildFakeHarness(root, binDir string) error {
 	if err != nil {
 		return fmt.Errorf("go build fakeharness: %w\n%s", err, data)
 	}
-	for _, name := range []string{"claude", "pi"} {
+	for _, name := range []string{"claude", "pi", "podman"} {
 		link := filepath.Join(binDir, name)
 		_ = os.Remove(link)
 		if err := os.Symlink(out, link); err != nil {
@@ -179,6 +179,19 @@ func agentChildEnv(claudeDir, piDir, binDir string) ([]string, error) {
 	base = append(base, "PI_CODING_AGENT_DIR="+piDir)
 	base = append(base, "PATH="+TestPATH(binDir))
 	return base, nil
+}
+
+func ResetAgentSetup() {
+	for _, dir := range []string{ActiveAgentClaudeDir, ActiveAgentPiDir, ActiveAgentZDOTDIR, ActiveAgentBinDir} {
+		if dir != "" {
+			os.RemoveAll(dir)
+		}
+	}
+	ActiveAgentClaudeDir = ""
+	ActiveAgentPiDir = ""
+	ActiveAgentZDOTDIR = ""
+	ActiveAgentBinDir = ""
+	ActiveAgentSetupOutput = nil
 }
 
 func NewAgentGroupRunner(extraEnv ...string) Runner {

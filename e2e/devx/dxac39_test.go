@@ -57,6 +57,7 @@ func DXAC39_ClaudeCodeSetup(t *testing.T, ctx context.Context) {
 	}
 
 	sagCfgDir := dxh.CfgDir(home)
+	env = append(env, "NODE_EXTRA_CA_CERTS="+filepath.Join(sagCfgDir, "ca.pem"))
 
 	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
 		t.Fatalf("DXAC39: mkdir claude dir: %v", err)
@@ -300,13 +301,8 @@ func DXAC39_ClaudeCodeSetup(t *testing.T, ctx context.Context) {
 				if rec.Dir == claudeDir || rec.Dir == home {
 					t.Errorf("DXAC39-H: claude ran in %q; want an empty temp dir", rec.Dir)
 				}
-				entries, err := os.ReadDir(rec.Dir)
-				if err == nil && len(entries) != 0 {
-					names := make([]string, len(entries))
-					for i, e := range entries {
-						names[i] = e.Name()
-					}
-					t.Errorf("DXAC39-H: claude ran in dir with entries %v; want empty", names)
+				if len(rec.DirEntries) != 0 {
+					t.Errorf("DXAC39-H: claude ran in dir with entries %v; want empty", rec.DirEntries)
 				}
 				break
 			}
@@ -318,9 +314,10 @@ func DXAC39_ClaudeCodeSetup(t *testing.T, ctx context.Context) {
 }
 
 type dxac39Record struct {
-	Argv []string          `json:"argv"`
-	Env  map[string]string `json:"env"`
-	Dir  string            `json:"dir"`
+	Argv       []string          `json:"argv"`
+	Env        map[string]string `json:"env"`
+	Dir        string            `json:"dir"`
+	DirEntries []string          `json:"dir_entries"`
 }
 
 func dxac39ReadRecords(t *testing.T, harnessDir string) []dxac39Record {

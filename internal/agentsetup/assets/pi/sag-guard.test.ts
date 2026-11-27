@@ -107,7 +107,7 @@ test("passes git commit -m script fix", async () => {
 });
 
 test("passes grep script x", async () => {
-  const r = await toolCall('"grep "script" x"');
+  const r = await toolCall('grep "script" x');
   assert.strictEqual(r, undefined);
 });
 

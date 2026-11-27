@@ -88,7 +88,7 @@ func dxac42PiEnvConflict(t *testing.T, ctx context.Context, bin, podmanPath, fak
 	if code != 1 {
 		t.Fatalf("DXAC42 pi-env: expected exit 1; got %d\n%s", code, out)
 	}
-	dxac42AssertConflictLine(t, "pi-env", out, otherCA)
+	dxac42AssertConflictLine(t, "pi-env", out, otherCA, cfgDir, "the environment")
 
 	snapAfter := dxac42Snapshot(piDir, zdotdir)
 	dxac42AssertUnchanged(t, "pi-env conflict", snapBefore, snapAfter)
@@ -143,7 +143,7 @@ func dxac42ClaudeSettingsConflict(t *testing.T, ctx context.Context, bin, podman
 	if code != 1 {
 		t.Fatalf("DXAC42 claude-settings: expected exit 1; got %d\n%s", code, out)
 	}
-	dxac42AssertConflictLine(t, "claude-settings", out, otherCA)
+	dxac42AssertConflictLine(t, "claude-settings", out, otherCA, cfgDir, settings)
 
 	snapAfter := dxac42Snapshot(claudeDir)
 	dxac42AssertUnchanged(t, "claude-settings conflict", snapBefore, snapAfter)
@@ -286,11 +286,15 @@ func dxac42WriteOtherCA(t *testing.T) string {
 	return path
 }
 
-func dxac42AssertConflictLine(t *testing.T, label, out, otherCA string) {
+func dxac42AssertConflictLine(t *testing.T, label, out, otherCA, cfgDir, source string) {
 	t.Helper()
-	want := "fail ca-trust NODE_EXTRA_CA_CERTS is " + otherCA
-	if !strings.Contains(out, want) {
-		t.Errorf("DXAC42 %s: output has no line %q; got %q", label, want, out)
+	caPath := filepath.Join(cfgDir, "ca.pem")
+	bundlePath := filepath.Join(cfgDir, "ca-bundle.pem")
+	wantFull := fmt.Sprintf(
+		"fail ca-trust NODE_EXTRA_CA_CERTS is %s; run: cat %q %q > %q; then set NODE_EXTRA_CA_CERTS to %s in %s",
+		otherCA, otherCA, caPath, bundlePath, bundlePath, source)
+	if !strings.Contains(out, wantFull) {
+		t.Errorf("DXAC42 %s: output missing full bundle line %q; got %q (waits for D6.6c B94 on pi-env case)", label, wantFull, out)
 	}
 	if strings.Contains(out, "container sag does not run") {
 		t.Errorf("DXAC42 %s: exit 1 has another cause; got %q", label, out)

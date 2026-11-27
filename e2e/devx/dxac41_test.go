@@ -78,6 +78,7 @@ func dxac41BashCase(t *testing.T, ctx context.Context, bin, binDir, fakeBinDir, 
 	env := dxac41BaseEnvForHome(t, testHome, piDir, binDir)
 	env = append(env, "SHELL=/bin/bash")
 
+	stubsBefore := dxac41CountStubRecords(fakeBinDir)
 	code, out := dxac41RunSetsid(ctx, bin, env, "agent", "setup", "pi",
 		"--shell-profile", "yes", "--guard", "yes")
 	if code != 0 {
@@ -105,22 +106,23 @@ func dxac41BashCase(t *testing.T, ctx context.Context, bin, binDir, fakeBinDir, 
 	dxac41AssertPiMCP(t, "bash", mcp)
 	dxac41AssertSkill(t, piDir, "bash")
 	dxac41AssertGuardMarker(t, filepath.Join(piDir, "extensions", "sag-guard.ts"))
-	dxac41AssertStubReceived(t, fakeBinDir, cfgDir, "bash")
+	dxac41AssertStubReceived(t, fakeBinDir, cfgDir, "bash", stubsBefore)
 
+	stubsAfterFirst := dxac41CountStubRecords(fakeBinDir)
 	code2, out2 := dxac41RunSetsid(ctx, bin, env, "agent", "setup", "pi")
 	if code2 != 0 {
 		t.Fatalf("DXAC41 bash: second run: exit %d\n%s", code2, out2)
 	}
 	dxac41AssertOnlyOkLines(t, "bash second run", out2)
+	stubsAfterSecond := dxac41CountStubRecords(fakeBinDir)
+	if stubsAfterSecond <= stubsAfterFirst {
+		t.Errorf("DXAC41 bash: second run did not call stub pi; records before=%d after=%d", stubsAfterFirst, stubsAfterSecond)
+	}
 }
 
 func dxac41BuildTestHome(t *testing.T, cfgDir string) string {
 	t.Helper()
-	testHome, err := os.MkdirTemp("", "sag-dxac41-home-*")
-	if err != nil {
-		t.Fatalf("DXAC41: create test home: %v", err)
-	}
-	t.Cleanup(func() { os.RemoveAll(testHome) })
+	testHome := t.TempDir()
 
 	configDir := filepath.Join(testHome, ".config")
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
@@ -171,6 +173,7 @@ func dxac41ZshCase(t *testing.T, ctx context.Context, bin, binDir, fakeBinDir, c
 	env = append(env, "SHELL=/bin/zsh")
 	env = append(env, "ZDOTDIR="+zdotdir)
 
+	stubsBefore := dxac41CountStubRecords(fakeBinDir)
 	code, out := dxac41RunSetsid(ctx, bin, env, "agent", "setup", "pi",
 		"--shell-profile", "yes", "--guard", "yes")
 	if code != 0 {
@@ -197,7 +200,7 @@ func dxac41ZshCase(t *testing.T, ctx context.Context, bin, binDir, fakeBinDir, c
 	dxac41AssertPiMCP(t, "zsh", mcp)
 	dxac41AssertSkill(t, piDir, "zsh")
 	dxac41AssertGuardMarker(t, filepath.Join(piDir, "extensions", "sag-guard.ts"))
-	dxac41AssertStubReceived(t, fakeBinDir, cfgDir, "zsh")
+	dxac41AssertStubReceived(t, fakeBinDir, cfgDir, "zsh", stubsBefore)
 
 	code2, out2 := dxac41RunSetsid(ctx, bin, env, "agent", "setup", "pi")
 	if code2 != 0 {
@@ -316,7 +319,21 @@ func dxac41AssertGuardMarker(t *testing.T, guardPath string) {
 	}
 }
 
-func dxac41AssertStubReceived(t *testing.T, fakeBinDir, cfgDir, label string) {
+func dxac41CountStubRecords(fakeBinDir string) int {
+	data, err := os.ReadFile(filepath.Join(fakeBinDir, "stub_records.json"))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
+}
+
+func dxac41AssertStubReceived(t *testing.T, fakeBinDir, cfgDir, label string, skipFirst int) {
 	t.Helper()
 	recordPath := filepath.Join(fakeBinDir, "stub_records.json")
 	data, err := os.ReadFile(recordPath)
@@ -326,10 +343,16 @@ func dxac41AssertStubReceived(t *testing.T, fakeBinDir, cfgDir, label string) {
 	}
 	want := filepath.Join(cfgDir, "ca.pem")
 	found := false
+	idx := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		if line == "" {
 			continue
 		}
+		if idx < skipFirst {
+			idx++
+			continue
+		}
+		idx++
 		var rec struct {
 			Argv []string          `json:"argv"`
 			Env  map[string]string `json:"env"`
@@ -345,7 +368,7 @@ func dxac41AssertStubReceived(t *testing.T, fakeBinDir, cfgDir, label string) {
 		}
 	}
 	if !found {
-		t.Errorf("DXAC41 %s: stub pi did not receive 'mcp list --json' with NODE_EXTRA_CA_CERTS=%q", label, want)
+		t.Errorf("DXAC41 %s: stub pi did not receive 'mcp list --json' with NODE_EXTRA_CA_CERTS=%q in records after offset %d", label, want, skipFirst)
 	}
 }
 
@@ -364,7 +387,7 @@ func dxac41BaseEnvForHome(t *testing.T, home, piDir, binDir string) []string {
 		}
 	}
 	env = append(env, "HOME="+home)
-	env = append(env, "CLAUDE_CONFIG_DIR="+t_tmpDir41())
+	env = append(env, "CLAUDE_CONFIG_DIR="+t.TempDir())
 	env = append(env, "PI_CODING_AGENT_DIR="+piDir)
 	env = append(env, "PATH="+dxh.TestPATH(binDir))
 	return env
@@ -384,7 +407,7 @@ func dxac41BaseEnv(t *testing.T, piDir, binDir string) []string {
 			}
 		}
 	}
-	env = append(env, "CLAUDE_CONFIG_DIR="+t_tmpDir41())
+	env = append(env, "CLAUDE_CONFIG_DIR="+t.TempDir())
 	env = append(env, "PI_CODING_AGENT_DIR="+piDir)
 	env = append(env, "PATH="+dxh.TestPATH(binDir))
 	return env
@@ -418,9 +441,4 @@ func dxac41ReadMCP(t *testing.T, mcpFile string) map[string]interface{} {
 		t.Fatalf("DXAC41: parse mcp.json: %v", err)
 	}
 	return top
-}
-
-func t_tmpDir41() string {
-	dir, _ := os.MkdirTemp("", "sag-dxac41-claude-*")
-	return dir
 }
