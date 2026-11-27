@@ -94,6 +94,10 @@ After the runs, `~/.config/sag`, the LaunchAgent and each container with label `
 after: /var 13865020 KiB free; 14 local volumes before and after
 ```
 
+## CI after the tag
+
+- B114 - status:FIXED - action:YES - `TestB86KeptRemoteEntryPlanPasses` needed `claude` in the `PATH` of the machine - CI of pull request 1 at `b1489a4` failed in `unit` and each `e2e` job; `ac35` then found no report - fix:the test puts a stub `claude` in its own `PATH`; all unit tests pass with a `PATH` without `claude` and `pi` - why:a unit test must not depend on the machine
+
 ## Open items
 
 - S45 - status:OPEN - action:YES - preflight rechecks of all resources start at the same moment - fix:spread the first timer - why:load peak at start
