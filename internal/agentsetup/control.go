@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
 const (
@@ -24,7 +26,8 @@ var sagDenyRules = []string{denyRuleSagDelete, denyRulePodmanRM, denyRuleScript}
 var writeJSONFn func(path string, keyPath []string, value any) error = writeJSON
 
 func applyDenyRules(ctx context.Context, opts Options, dir string) error {
-	if opts.DenyRules != "yes" {
+	out := stepline.New(agentOut)
+	if opts.Harness != HarnessClaudeCode {
 		return nil
 	}
 	settingsPath := filepath.Join(dir, "settings.json")
@@ -34,9 +37,18 @@ func applyDenyRules(ctx context.Context, opts Options, dir string) error {
 	}
 	next := appendMissingRules(current, sagDenyRules)
 	if len(next) == len(current) {
+		out.Line(stepline.StatusOK, "deny-rules", "")
 		return nil
 	}
-	return writeJSONFn(settingsPath, []string{"permissions", "deny"}, next)
+	if opts.DenyRules != "yes" {
+		out.Line(stepline.StatusSkip, "deny-rules", "")
+		return nil
+	}
+	if err := writeJSONFn(settingsPath, []string{"permissions", "deny"}, next); err != nil {
+		return err
+	}
+	out.Line(stepline.StatusOK, "deny-rules", "")
+	return nil
 }
 
 func readDenyRules(path string) ([]string, error) {
@@ -78,7 +90,8 @@ func containsString(ss []string, s string) bool {
 }
 
 func applyGuard(ctx context.Context, opts Options, dir string, content []byte) error {
-	if opts.Guard != "yes" {
+	out := stepline.New(agentOut)
+	if opts.Harness != HarnessPi {
 		return nil
 	}
 	extDir := filepath.Join(dir, "extensions")
@@ -97,7 +110,15 @@ func applyGuard(ctx context.Context, opts Options, dir string, content []byte) e
 		}
 		mode = info.Mode()
 	}
-	return os.WriteFile(guardPath, content, mode)
+	if opts.Guard != "yes" {
+		out.Line(stepline.StatusSkip, "guard", "")
+		return nil
+	}
+	if err := os.WriteFile(guardPath, content, mode); err != nil {
+		return err
+	}
+	out.Line(stepline.StatusOK, "guard", "")
+	return nil
 }
 
 func readFirstLine(path string) (string, error) {

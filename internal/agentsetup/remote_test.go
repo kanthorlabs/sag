@@ -2,7 +2,6 @@ package agentsetup
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -29,6 +28,9 @@ func TestURLForms(t *testing.T) {
 		{"", true},
 		{"not-a-url", true},
 		{"https://example.com:8443/mcp/extra", true},
+		{"https://user@example.com:8443/mcp", true},
+		{"https://example.com:8443/mcp?q=1", true},
+		{"https://example.com:8443/mcp#frag", true},
 	}
 	for _, c := range cases {
 		c := c
@@ -52,13 +54,7 @@ func TestURLForms(t *testing.T) {
 
 func TestNoPodmanCall(t *testing.T) {
 	podmanDir := t.TempDir()
-	podmanScript := filepath.Join(podmanDir, "podman")
 	podmanRecord := filepath.Join(podmanDir, "podman_called")
-	scriptContent := fmt.Sprintf("#!/bin/sh\ntouch %s\n", podmanRecord)
-	if err := os.WriteFile(podmanScript, []byte(scriptContent), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", podmanDir)
 
 	sub := "remote-a"
 	jwtStr := remoteTestJWT(t, sub)
@@ -66,24 +62,25 @@ func TestNoPodmanCall(t *testing.T) {
 	oldOpen := remoteOpenTTY
 	defer func() { remoteOpenTTY = oldOpen }()
 
-	r, w, err := os.Pipe()
+	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
-	remoteOpenTTY = func() (*os.File, error) { return r, nil }
+	defer pr.Close()
+	remoteOpenTTY = func() (*os.File, error) { return pr, nil }
 
 	go func() {
-		fmt.Fprintln(w, jwtStr)
-		w.Close()
+		fmt.Fprintln(pw, jwtStr)
+		pw.Close()
 	}()
 
 	opts := Options{
-		Harness: HarnessClaudeCode,
-		Sub:     sub,
-		URL:     "https://127.0.0.1:8443/mcp",
-		Home:    t.TempDir(),
-		Env:     map[string]string{},
+		Harness:    HarnessClaudeCode,
+		Sub:        sub,
+		URL:        "https://127.0.0.1:8443/mcp",
+		Home:       t.TempDir(),
+		PodmanPath: filepath.Join(podmanDir, "podman"),
+		Env:        map[string]string{},
 	}
 	cred, err := remoteJWT(context.Background(), opts)
 	if err != nil {
@@ -164,20 +161,22 @@ func TestNoTerminalExit3NoChange(t *testing.T) {
 	}
 
 	opts := Options{
-		Harness: HarnessClaudeCode,
-		Sub:     "remote-a",
-		URL:     "https://127.0.0.1:8443/mcp",
-		CfgDir:  cfgDir,
-		Home:    home,
-		Env:     map[string]string{"CLAUDE_CONFIG_DIR": claudeDir},
+		Harness:    HarnessClaudeCode,
+		Sub:        "remote-a",
+		URL:        "https://127.0.0.1:8443/mcp",
+		CfgDir:     cfgDir,
+		Home:       home,
+		Env:        map[string]string{"CLAUDE_CONFIG_DIR": claudeDir},
+		PodmanPath: "podman",
 	}
 
-	err := planRemote(context.Background(), opts)
+	_, err := planOnly(context.Background(), opts)
 	if err == nil {
 		t.Fatal("TestNoTerminalExit3NoChange: want error, got nil")
 	}
-	if !errors.Is(err, prompt.ErrNoTerminal) {
-		t.Fatalf("TestNoTerminalExit3NoChange: want ErrNoTerminal, got %v", err)
+	var refusal *prompt.RefusalError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("TestNoTerminalExit3NoChange: want *prompt.RefusalError, got %T: %v", err, err)
 	}
 
 	if _, statErr := os.Stat(mcpFile); statErr == nil {
@@ -186,22 +185,10 @@ func TestNoTerminalExit3NoChange(t *testing.T) {
 }
 
 func TestVariableHeaderIsOtherForm(t *testing.T) {
-	home := t.TempDir()
-	cfgDir := filepath.Join(home, ".config", "sag")
-	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cfgDir, "ca.pem"), []byte("fake-ca"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	dir := t.TempDir()
+	mcpFile := filepath.Join(dir, ".claude.json")
 
-	claudeDir := filepath.Join(home, "claude")
-	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	mcpFile := filepath.Join(claudeDir, ".claude.json")
-
-	entry := map[string]any{
+	variableEntry := map[string]any{
 		"mcpServers": map[string]any{
 			"sag": map[string]any{
 				"type": "http",
@@ -212,32 +199,17 @@ func TestVariableHeaderIsOtherForm(t *testing.T) {
 			},
 		},
 	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		t.Fatal(err)
+	writeJSONToFile(t, mcpFile, variableEntry)
+
+	conflict := checkMCPFile(mcpFile, "https://127.0.0.1:8443/mcp")
+	if conflict == "" {
+		t.Fatal("TestVariableHeaderIsOtherForm: want conflict for variable header, got empty")
 	}
-	if err := os.WriteFile(mcpFile, data, 0o600); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(conflict, "another form") {
+		t.Fatalf("TestVariableHeaderIsOtherForm: want 'another form' in conflict, got %q", conflict)
 	}
 
-	opts := Options{
-		Harness: HarnessClaudeCode,
-		Sub:     "remote-a",
-		URL:     "https://127.0.0.1:8443/mcp",
-		CfgDir:  cfgDir,
-		Home:    home,
-		Env:     map[string]string{"CLAUDE_CONFIG_DIR": claudeDir},
-	}
-
-	err = planRemote(context.Background(), opts)
-	if err == nil {
-		t.Fatal("TestVariableHeaderIsOtherForm: want error, got nil")
-	}
-	if !strings.Contains(err.Error(), "another form") {
-		t.Fatalf("TestVariableHeaderIsOtherForm: want 'another form' in error, got %q", err.Error())
-	}
-
-	entry2 := map[string]any{
+	bearerEntry := map[string]any{
 		"mcpServers": map[string]any{
 			"sag": map[string]any{
 				"type": "http",
@@ -248,14 +220,19 @@ func TestVariableHeaderIsOtherForm(t *testing.T) {
 			},
 		},
 	}
-	data2, _ := json.Marshal(entry2)
-	if err := os.WriteFile(mcpFile, data2, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeJSONToFile(t, mcpFile, bearerEntry)
 
-	conflict := remoteCheckVariableHeader(mcpFile)
-	if conflict != "" {
-		t.Fatalf("TestVariableHeaderIsOtherForm: bearer entry should not be another form, got %q", conflict)
+	conflict2 := checkMCPFile(mcpFile, "https://127.0.0.1:8443/mcp")
+	if conflict2 != "" {
+		t.Fatalf("TestVariableHeaderIsOtherForm: bearer entry should not be another form, got %q", conflict2)
+	}
+}
+
+func writeJSONToFile(t *testing.T, path string, v any) {
+	t.Helper()
+	data := marshalForTest(t, v)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -268,4 +245,13 @@ func remoteTestJWT(t *testing.T, sub string) string {
 		t.Fatal(err)
 	}
 	return str
+}
+
+func marshalForTest(t *testing.T, v any) []byte {
+	t.Helper()
+	data, err := marshalNoEscape(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

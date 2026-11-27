@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
 const (
@@ -15,20 +17,35 @@ const (
 )
 
 func applyShellProfile(ctx context.Context, opts Options) error {
-	if opts.ShellProfile != "yes" {
+	out := stepline.New(agentOut)
+	if opts.Harness != HarnessPi {
 		return nil
 	}
 	shell := opts.Env["SHELL"]
 	zdotdir := opts.Env["ZDOTDIR"]
 	profilePath, ok := ShellProfile(opts.GOOS, shell, zdotdir, opts.Home)
 	if !ok {
-		return fmt.Errorf("SHELL=%s is not supported; add the export line by hand and run with --shell-profile no", shell)
+		if opts.ShellProfile == "yes" {
+			return fmt.Errorf("SHELL=%s is not supported; add the export line by hand and run with --shell-profile no", shell)
+		}
+		out.Line(stepline.StatusSkip, "shell-profile", "")
+		return nil
 	}
 	if opts.CfgDir == "" {
 		return fmt.Errorf("CfgDir is empty")
 	}
-	exportLine := `export NODE_EXTRA_CA_CERTS="` + filepath.Join(opts.CfgDir, "ca.pem") + `"`
+	caPath := filepath.Join(opts.CfgDir, "ca.pem")
+	exportLine := `export NODE_EXTRA_CA_CERTS="` + caPath + `"`
 	if fileContainsLine(profilePath, exportLine) {
+		out.Line(stepline.StatusOK, "shell-profile", "")
+		return nil
+	}
+	if profileHasAcceptedValue(profilePath, caPath) {
+		out.Line(stepline.StatusOK, "shell-profile", "")
+		return nil
+	}
+	if opts.ShellProfile != "yes" {
+		out.Line(stepline.StatusSkip, "shell-profile", "")
 		return nil
 	}
 	f, err := os.OpenFile(profilePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o600)
@@ -47,6 +64,7 @@ func applyShellProfile(ctx context.Context, opts Options) error {
 	if _, err := fmt.Fprintln(f, exportLine); err != nil {
 		return err
 	}
+	out.Line(stepline.StatusOK, "shell-profile", "")
 	return nil
 }
 
@@ -81,18 +99,4 @@ func fileContainsLine(path, line string) bool {
 		}
 	}
 	return false
-}
-
-func ReadShellProfileLines(profilePath string) []string {
-	f, err := os.Open(profilePath)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-	var lines []string
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		lines = append(lines, strings.TrimRight(sc.Text(), "\r"))
-	}
-	return lines
 }

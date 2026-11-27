@@ -19,6 +19,7 @@ var runVerifyChild = func(ctx context.Context, name string, args []string, env [
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = env
 	cmd.Dir = dir
+	cmd.WaitDelay = verifyTimeout
 	return cmd.Output()
 }
 
@@ -38,18 +39,23 @@ func verify(ctx context.Context, opts Options) error {
 	env := buildVerifyEnv(opts, ca)
 
 	var connected bool
+	var sagLine string
 	switch opts.Harness {
 	case HarnessPi:
-		connected, err = verifyPi(verifyCtx, opts, env, tmpDir)
+		connected, sagLine, err = verifyPi(verifyCtx, opts, env, tmpDir)
 	default:
-		connected, err = verifyClaudeCode(verifyCtx, opts, env, tmpDir)
+		connected, sagLine, err = verifyClaudeCode(verifyCtx, opts, env, tmpDir)
 	}
 	if err != nil {
-		out.Line(stepline.StatusFail, "verify", string(opts.Harness))
+		out.Line(stepline.StatusFail, "verify", string(opts.Harness)+" "+err.Error())
 		return fmt.Errorf("verify %s: %w", opts.Harness, err)
 	}
 	if !connected {
-		out.Line(stepline.StatusFail, "verify", string(opts.Harness))
+		detail := string(opts.Harness)
+		if sagLine != "" {
+			detail += " " + sagLine
+		}
+		out.Line(stepline.StatusFail, "verify", detail)
 		return fmt.Errorf("verify %s: sag not connected", opts.Harness)
 	}
 	out.Line(stepline.StatusOK, "verify", string(opts.Harness))
@@ -77,27 +83,35 @@ func buildVerifyEnv(opts Options, caPath string) []string {
 	return env
 }
 
-func verifyClaudeCode(ctx context.Context, opts Options, env []string, dir string) (bool, error) {
+func verifyClaudeCode(ctx context.Context, opts Options, env []string, dir string) (bool, string, error) {
 	harnessCmd, err := lookupHarness(opts, "claude")
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	out, _ := runVerifyChild(ctx, harnessCmd, []string{"mcp", "list"}, env, dir)
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "sag: ") {
-			return true, nil
+	output, _ := runVerifyChild(ctx, harnessCmd, []string{"mcp", "list"}, env, dir)
+	for _, line := range strings.Split(string(output), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "sag: ") {
+			if strings.Contains(trimmed, "✔ Connected") {
+				return true, trimmed, nil
+			}
+			return false, trimmed, nil
 		}
 	}
-	return false, nil
+	return false, "", nil
 }
 
-func verifyPi(ctx context.Context, opts Options, env []string, dir string) (bool, error) {
+func verifyPi(ctx context.Context, opts Options, env []string, dir string) (bool, string, error) {
 	harnessCmd, err := lookupHarness(opts, "pi")
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	out, _ := runVerifyChild(ctx, harnessCmd, []string{"mcp", "list", "--json"}, env, dir)
-	return parsePiMCPState(out), nil
+	output, _ := runVerifyChild(ctx, harnessCmd, []string{"mcp", "list", "--json"}, env, dir)
+	state := parsePiMCPState(output)
+	if state == "connected" {
+		return true, "", nil
+	}
+	return false, "pi state: " + state, nil
 }
 
 type piMCPListOutput struct {
@@ -107,21 +121,21 @@ type piMCPListOutput struct {
 	} `json:"servers"`
 }
 
-func parsePiMCPState(data []byte) bool {
+func parsePiMCPState(data []byte) string {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 {
-		return false
+		return ""
 	}
 	var result piMCPListOutput
 	if err := json.Unmarshal(data, &result); err != nil {
-		return false
+		return ""
 	}
 	for _, s := range result.Servers {
 		if s.Name == "sag" {
-			return s.State == "connected"
+			return s.State
 		}
 	}
-	return false
+	return ""
 }
 
 func lookupHarness(opts Options, name string) (string, error) {
@@ -136,14 +150,4 @@ func lookupHarness(opts Options, name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%s not found in PATH", name)
-}
-
-func lastLine(out string) string {
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			return strings.TrimSpace(lines[i])
-		}
-	}
-	return ""
 }

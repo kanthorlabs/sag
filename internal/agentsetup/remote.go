@@ -3,17 +3,14 @@ package agentsetup
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/url"
-	"os"
-	"strings"
-
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/kanthorlabs/sag/internal/prompt"
 	"github.com/kanthorlabs/sag/internal/secret"
 	"golang.org/x/term"
+	"io"
+	"net/url"
+	"os"
 )
 
 var remoteOpenTTY = func() (*os.File, error) {
@@ -25,24 +22,25 @@ func ParseURL(rawURL string) (Mode, error) {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.Port() != "8443" || u.Path != "/mcp" {
 		return ModeLocal, fmt.Errorf("--url must be https://<host>:8443/mcp")
 	}
+	if u.User != nil {
+		return ModeLocal, fmt.Errorf("--url must be https://<host>:8443/mcp")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return ModeLocal, fmt.Errorf("--url must be https://<host>:8443/mcp")
+	}
 	return ModeRemote, nil
 }
 
 func ReadJWT(tty io.ReadWriter, sub string) (secret.Credential, error) {
 	fmt.Fprintf(tty, "JWT for %s (input hidden): ", sub)
 	var raw []byte
-	if f, ok := tty.(*os.File); ok {
+	if f, ok := tty.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		b, err := term.ReadPassword(int(f.Fd()))
-		if err == nil {
-			raw = b
-			fmt.Fprintln(tty)
-		} else {
-			b2, err2 := remoteReadLine(tty)
-			if err2 != nil {
-				return secret.Credential{}, err2
-			}
-			raw = b2
+		if err != nil {
+			return secret.Credential{}, fmt.Errorf("read password: %w", err)
 		}
+		fmt.Fprintln(tty)
+		raw = b
 	} else {
 		b, err := remoteReadLine(tty)
 		if err != nil {
@@ -57,27 +55,6 @@ func ReadJWT(tty io.ReadWriter, sub string) (secret.Credential, error) {
 	return secret.NewCredential("jwt-"+sub, raw), nil
 }
 
-func planRemote(ctx context.Context, opts Options) error {
-	caPath := opts.CfgDir + "/ca.pem"
-	if _, err := os.Stat(caPath); err != nil {
-		return fmt.Errorf("fail ca.pem absent for remote mode")
-	}
-
-	mcpFile := remoteMCPFile(opts)
-	if conflict := remoteCheckVariableHeader(mcpFile); conflict != "" {
-		return fmt.Errorf("%s", conflict)
-	}
-
-	if remoteNeedsJWT(mcpFile, opts.URL, opts.Sub) {
-		tty, err := remoteOpenTTY()
-		if err != nil {
-			return fmt.Errorf("open /dev/tty: %w", prompt.ErrNoTerminal)
-		}
-		tty.Close()
-	}
-	return nil
-}
-
 func remoteJWT(ctx context.Context, opts Options) (secret.Credential, error) {
 	tty, err := remoteOpenTTY()
 	if err != nil {
@@ -85,66 +62,6 @@ func remoteJWT(ctx context.Context, opts Options) (secret.Credential, error) {
 	}
 	defer tty.Close()
 	return ReadJWT(tty, opts.Sub)
-}
-
-func remoteMCPFile(opts Options) string {
-	switch opts.Harness {
-	case HarnessPi:
-		return PiPaths(opts.Env["PI_CODING_AGENT_DIR"], opts.Home).MCPFile
-	default:
-		return ClaudeCodePaths(opts.Env["CLAUDE_CONFIG_DIR"], opts.Home).MCPFile
-	}
-}
-
-func remoteCheckVariableHeader(mcpFile string) string {
-	_, auth := remoteReadEntry(mcpFile)
-	if auth == "${SAG_JWT}" {
-		return "fail mcp-server sag in " + mcpFile + " has another form; remove it"
-	}
-	return ""
-}
-
-func remoteNeedsJWT(mcpFile, wantURL, wantSub string) bool {
-	entryURL, auth := remoteReadEntry(mcpFile)
-	if entryURL != wantURL {
-		return true
-	}
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return true
-	}
-	raw := strings.TrimPrefix(auth, "Bearer ")
-	return remoteSubFromJWT(raw) != wantSub
-}
-
-func remoteReadEntry(mcpFile string) (entryURL, authHeader string) {
-	data, err := os.ReadFile(mcpFile)
-	if err != nil {
-		return "", ""
-	}
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(data, &top); err != nil {
-		return "", ""
-	}
-	serversRaw, ok := top["mcpServers"]
-	if !ok {
-		return "", ""
-	}
-	var servers map[string]json.RawMessage
-	if err := json.Unmarshal(serversRaw, &servers); err != nil {
-		return "", ""
-	}
-	entryRaw, ok := servers["sag"]
-	if !ok {
-		return "", ""
-	}
-	var entry struct {
-		URL     string            `json:"url"`
-		Headers map[string]string `json:"headers"`
-	}
-	if err := json.Unmarshal(entryRaw, &entry); err != nil {
-		return "", ""
-	}
-	return entry.URL, entry.Headers["Authorization"]
 }
 
 func remoteSubFromJWT(raw string) string {

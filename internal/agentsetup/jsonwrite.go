@@ -21,7 +21,11 @@ func writeJSON(path string, keyPath []string, value any) error {
 	}
 
 	top := map[string]json.RawMessage{}
-	if data, err := os.ReadFile(target); err == nil && len(data) > 0 {
+	data, err := os.ReadFile(target)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if len(data) > 0 {
 		if err := json.Unmarshal(data, &top); err != nil {
 			return err
 		}

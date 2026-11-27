@@ -1,12 +1,10 @@
 package agentsetup
 
 import (
-	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"fmt"
 	"os"
 	"strings"
 
@@ -27,16 +25,18 @@ func applyCATrust(ctx context.Context, opts Options) error {
 
 func applyCATrustClaudeCode(opts Options, caPath string, out stepline.Writer) error {
 	paths := ClaudeCodePaths(opts.Env["CLAUDE_CONFIG_DIR"], opts.Home)
-	current := currentNECCClaudeCode(opts, paths.SettingsFile)
-	if current != "" {
-		if acceptsCATrust(current, caPath) {
-			out.Line(stepline.StatusOK, "ca-trust", "")
-			return nil
-		}
-		return bundleConflictError(current, caPath, paths.SettingsFile)
+	env := opts.Env["NODE_EXTRA_CA_CERTS"]
+	if env != "" && !acceptsCATrust(env, caPath) {
+		return newCATrustConflictError(env, caPath, "the environment")
 	}
-	if err := writeJSON(paths.SettingsFile, []string{"env", "NODE_EXTRA_CA_CERTS"}, caPath); err != nil {
-		return err
+	settings := currentNECCFromSettings(paths.SettingsFile)
+	if settings != "" && !acceptsCATrust(settings, caPath) {
+		return newCATrustConflictError(settings, caPath, paths.SettingsFile)
+	}
+	if settings == "" {
+		if err := writeJSON(paths.SettingsFile, []string{"env", "NODE_EXTRA_CA_CERTS"}, caPath); err != nil {
+			return err
+		}
 	}
 	out.Line(stepline.StatusOK, "ca-trust", "")
 	return nil
@@ -47,41 +47,26 @@ func applyCATrustPi(opts Options, caPath string, out stepline.Writer) error {
 	zdotdir := opts.Env["ZDOTDIR"]
 	profile, ok := ShellProfile(opts.GOOS, shell, zdotdir, opts.Home)
 	if !ok {
-		return fmt.Errorf("ca-trust: unsupported shell %q", shell)
-	}
-
-	current := currentNECCPi(opts, profile)
-	if current != "" {
-		if acceptsCATrust(current, caPath) {
-			out.Line(stepline.StatusOK, "shell-profile", "")
-			return nil
-		}
-		return bundleConflictError(current, caPath, profile)
-	}
-
-	if opts.ShellProfile != "yes" {
+		out.Line(stepline.StatusSkip, "ca-trust", "")
 		return nil
 	}
-
-	data, _ := os.ReadFile(profile)
-	var sb strings.Builder
-	sb.Write(data)
-	if len(data) > 0 && !bytes.HasSuffix(data, []byte("\n")) {
-		sb.WriteByte('\n')
+	env := opts.Env["NODE_EXTRA_CA_CERTS"]
+	if env != "" && !acceptsCATrust(env, caPath) {
+		return newCATrustConflictError(env, caPath, "the environment")
 	}
-	sb.WriteString("# sag agent setup\n")
-	sb.WriteString(`export NODE_EXTRA_CA_CERTS="` + caPath + `"` + "\n")
-	if err := os.WriteFile(profile, []byte(sb.String()), 0o644); err != nil {
-		return err
+	current := currentNECCFromProfile(profile)
+	if current != "" {
+		if acceptsCATrust(current, caPath) {
+			out.Line(stepline.StatusOK, "ca-trust", "")
+			return nil
+		}
+		return newCATrustConflictError(current, caPath, profile)
 	}
-	out.Line(stepline.StatusOK, "shell-profile", "")
+	out.Line(stepline.StatusSkip, "ca-trust", "")
 	return nil
 }
 
-func currentNECCClaudeCode(opts Options, settingsFile string) string {
-	if v := opts.Env["NODE_EXTRA_CA_CERTS"]; v != "" {
-		return v
-	}
+func currentNECCFromSettings(settingsFile string) string {
 	data, err := os.ReadFile(settingsFile)
 	if err != nil {
 		return ""
@@ -101,10 +86,7 @@ func currentNECCClaudeCode(opts Options, settingsFile string) string {
 	return env["NODE_EXTRA_CA_CERTS"]
 }
 
-func currentNECCPi(opts Options, profile string) string {
-	if v := opts.Env["NODE_EXTRA_CA_CERTS"]; v != "" {
-		return v
-	}
+func currentNECCFromProfile(profile string) string {
 	data, err := os.ReadFile(profile)
 	if err != nil {
 		return ""
@@ -118,6 +100,54 @@ func currentNECCPi(opts Options, profile string) string {
 		}
 	}
 	return ""
+}
+
+func checkCATrustConflict(opts Options, paths HarnessPaths) string {
+	caPath := caFilePath(opts)
+	switch opts.Harness {
+	case HarnessPi:
+		shell := opts.Env["SHELL"]
+		zdotdir := opts.Env["ZDOTDIR"]
+		profile, ok := ShellProfile(opts.GOOS, shell, zdotdir, opts.Home)
+		if !ok {
+			return ""
+		}
+		env := opts.Env["NODE_EXTRA_CA_CERTS"]
+		if env != "" && !acceptsCATrust(env, caPath) {
+			return newCATrustConflictError(env, caPath, "the environment").Error()
+		}
+		current := currentNECCFromProfile(profile)
+		if current != "" && !acceptsCATrust(current, caPath) {
+			return newCATrustConflictError(current, caPath, profile).Error()
+		}
+	default:
+		if paths.SettingsFile == "" {
+			return ""
+		}
+		env := opts.Env["NODE_EXTRA_CA_CERTS"]
+		if env != "" && !acceptsCATrust(env, caPath) {
+			return newCATrustConflictError(env, caPath, "the environment").Error()
+		}
+		settings := currentNECCFromSettings(paths.SettingsFile)
+		if settings != "" && !acceptsCATrust(settings, caPath) {
+			return newCATrustConflictError(settings, caPath, paths.SettingsFile).Error()
+		}
+	}
+	return ""
+}
+
+func newCATrustConflictError(current, caPath, source string) *CATrustConflictError {
+	bundlePath := caPath[:len(caPath)-len(".pem")] + "-bundle.pem"
+	return &CATrustConflictError{
+		Current:    current,
+		CAPath:     caPath,
+		BundlePath: bundlePath,
+		Source:     source,
+	}
+}
+
+func bundleConflictError(current, caPath, source string) error {
+	return newCATrustConflictError(current, caPath, source)
 }
 
 func acceptsCATrust(value, caPath string) bool {
@@ -165,12 +195,38 @@ func parseCerts(pemData []byte) []*x509.Certificate {
 	return certs
 }
 
-func bundleConflictError(current, caPath, source string) error {
-	bundlePath := caPath[:len(caPath)-len(".pem")] + "-bundle.pem"
-	return fmt.Errorf(`fail ca-trust NODE_EXTRA_CA_CERTS is %s; run: cat %q %q > %q; then set NODE_EXTRA_CA_CERTS to %s in %s`,
-		current, current, caPath, bundlePath, bundlePath, source)
+func profileHasAcceptedValue(profile, caPath string) bool {
+	data, err := os.ReadFile(profile)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "export NODE_EXTRA_CA_CERTS=") {
+			v := strings.TrimPrefix(line, "export NODE_EXTRA_CA_CERTS=")
+			v = strings.Trim(v, `"'`)
+			if acceptsCATrust(v, caPath) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func caFilePath(opts Options) string {
 	return opts.CfgDir + "/ca.pem"
+}
+
+func currentNECCClaudeCode(opts Options, settingsFile string) string {
+	if v := opts.Env["NODE_EXTRA_CA_CERTS"]; v != "" {
+		return v
+	}
+	return currentNECCFromSettings(settingsFile)
+}
+
+func currentNECCPi(opts Options, profile string) string {
+	if v := opts.Env["NODE_EXTRA_CA_CERTS"]; v != "" {
+		return v
+	}
+	return currentNECCFromProfile(profile)
 }
