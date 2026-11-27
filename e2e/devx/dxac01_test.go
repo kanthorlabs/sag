@@ -104,7 +104,14 @@ func waitLaunchAgentIdle(ctx context.Context, uid string) error {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("launch agent not idle after 30s")
+			var state []string
+			for _, l := range strings.Split(string(out), "\n") {
+				l = strings.TrimSpace(l)
+				if strings.HasPrefix(l, "state = ") || strings.HasPrefix(l, "last exit code = ") || strings.HasPrefix(l, "runs = ") || strings.HasPrefix(l, "pid = ") {
+					state = append(state, l)
+				}
+			}
+			return fmt.Errorf("launch agent not idle after 30s: %s", strings.Join(state, "; "))
 		}
 		select {
 		case <-ctx.Done():
