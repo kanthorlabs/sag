@@ -95,6 +95,8 @@ func run(ctx context.Context, opts Options) error {
 		}
 	}
 
+	answers.save()
+
 	var jwtFunc func() (secret.Credential, error)
 	switch mode {
 	case ModeRemote:
@@ -222,7 +224,7 @@ func resolveAnswers(opts Options, asker prompt.Asker) (ResolvedAnswers, error) {
 			}
 			answers.DenyRules = val
 			if opts.AnswersPath != "" && val != storedVal {
-				saveAnswerDenyRules(opts.AnswersPath, paths.SettingsFile, val)
+				answers.pending = append(answers.pending, func() { saveAnswerDenyRules(opts.AnswersPath, paths.SettingsFile, val) })
 			}
 		} else {
 			answers.DenyRules = opts.DenyRules
@@ -250,7 +252,7 @@ func resolveAnswers(opts Options, asker prompt.Asker) (ResolvedAnswers, error) {
 			}
 			answers.ShellProfile = val
 			if opts.AnswersPath != "" && val != storedVal {
-				saveAnswerShellProfile(opts.AnswersPath, profile, val)
+				answers.pending = append(answers.pending, func() { saveAnswerShellProfile(opts.AnswersPath, profile, val) })
 			}
 		} else {
 			answers.ShellProfile = opts.ShellProfile
@@ -270,7 +272,7 @@ func resolveAnswers(opts Options, asker prompt.Asker) (ResolvedAnswers, error) {
 				}
 				answers.Guard = val
 				if opts.AnswersPath != "" && val != storedVal {
-					saveAnswerGuard(opts.AnswersPath, guardPath, val)
+					answers.pending = append(answers.pending, func() { saveAnswerGuard(opts.AnswersPath, guardPath, val) })
 				}
 			} else {
 				answers.Guard = opts.Guard
@@ -278,7 +280,7 @@ func resolveAnswers(opts Options, asker prompt.Asker) (ResolvedAnswers, error) {
 					answers.Guard = stored.Guard[guardPath]
 				}
 				if opts.AnswersPath != "" && opts.Guard != "" && (stored.Guard == nil || stored.Guard[guardPath] != opts.Guard) {
-					saveAnswerGuard(opts.AnswersPath, guardPath, opts.Guard)
+					answers.pending = append(answers.pending, func() { saveAnswerGuard(opts.AnswersPath, guardPath, opts.Guard) })
 				}
 			}
 		}

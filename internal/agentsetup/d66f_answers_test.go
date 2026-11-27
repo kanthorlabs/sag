@@ -58,6 +58,7 @@ func TestPiGuardFlagIsStoredAndReusedOnSecondRun(t *testing.T) {
 	if first.Guard != "yes" {
 		t.Fatalf("first run guard = %q; want yes", first.Guard)
 	}
+	first.save()
 
 	guardPath := harnessPathsFromOpts(opts).GuardFile
 	if err := os.MkdirAll(filepath.Dir(guardPath), 0o700); err != nil {
@@ -119,5 +120,45 @@ func TestRemoteRunWithoutTerminalIsNoTerminalBeforeLock(t *testing.T) {
 	}
 	if _, statErr := os.Stat(claudeDir); statErr == nil {
 		t.Error("run created the harness directory")
+	}
+}
+
+func TestRemoteRunWithoutTerminalWritesNoAnswers(t *testing.T) {
+	home := t.TempDir()
+	cfgDir := filepath.Join(home, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "ca.pem"), []byte("fake-ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	oldOpen := remoteOpenTTY
+	defer func() { remoteOpenTTY = oldOpen }()
+	remoteOpenTTY = func() (*os.File, error) { return nil, errors.New("no terminal") }
+
+	answersPath := filepath.Join(cfgDir, "answers.json")
+	opts := Options{
+		Harness:     HarnessClaudeCode,
+		Sub:         "remote-a",
+		URL:         "https://127.0.0.1:8443/mcp",
+		CfgDir:      cfgDir,
+		Home:        home,
+		GOOS:        "darwin",
+		DenyRules:   "yes",
+		UnderLock:   true,
+		AnswersPath: answersPath,
+		Env:         map[string]string{"CLAUDE_CONFIG_DIR": filepath.Join(home, "claude"), "PATH": binDir},
+	}
+	err := run(context.Background(), opts)
+	if !errors.Is(err, prompt.ErrNoTerminal) {
+		t.Fatalf("error = %v; want prompt.ErrNoTerminal", err)
+	}
+	if _, statErr := os.Stat(answersPath); statErr == nil {
+		t.Error("run wrote answers.json on an exit in the plan")
 	}
 }

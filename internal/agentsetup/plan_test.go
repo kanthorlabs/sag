@@ -204,6 +204,10 @@ func TestB82AnswerSavedToAnswersJSON(t *testing.T) {
 	if answers.DenyRules != "yes" {
 		t.Errorf("B82: DenyRules = %q; want yes", answers.DenyRules)
 	}
+	if _, statErr := os.Stat(answersPath); statErr == nil {
+		t.Fatal("B82: resolveAnswers wrote answers.json before the plan passed")
+	}
+	answers.save()
 
 	data, err := os.ReadFile(answersPath)
 	if err != nil {
@@ -220,10 +224,11 @@ func TestB82StoredAnswerNoRePrompt(t *testing.T) {
 	answersPath := filepath.Join(t.TempDir(), "answers.json")
 	opts.AnswersPath = answersPath
 
-	_, err := resolveAnswers(opts, yesAsker())
+	first, err := resolveAnswers(opts, yesAsker())
 	if err != nil {
 		t.Fatalf("B82 setup: %v", err)
 	}
+	first.save()
 
 	opts2 := baseOpts(t)
 	opts2.CfgDir = opts.CfgDir
