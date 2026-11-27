@@ -290,7 +290,7 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 			t.Fatalf("DXAC45-9: healthz after restart: %v", err)
 		}
 
-		code, out := runAgentSetup(t, ctx, "--sub", "claude-code")
+		code, out := runAgentSetup(t, ctx, "--sub", "claude-code", "--deny-rules", "no")
 		if code != 0 {
 			t.Fatalf("DXAC45-9: setup after version bump exit %d; output length=%d", code, len(out))
 		}
