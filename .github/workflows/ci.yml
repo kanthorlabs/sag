@@ -73,9 +73,13 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
       - run: go vet -tags devxtest ./...
       - run: go vet -tags devxe2e ./e2e/devx/...
       - run: go test -count=1 -tags devxtest ./internal/testhook/...
+      - run: node --test "internal/agentsetup/assets/pi/*.test.ts"
 
   ac35:
     needs: [unit, build-macos, e2e]
