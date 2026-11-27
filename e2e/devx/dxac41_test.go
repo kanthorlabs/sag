@@ -44,7 +44,7 @@ func DXAC41_PiSetup(t *testing.T, ctx context.Context) {
 
 	fakeBinDir := dxh.ActiveAgentBinDir
 	if fakeBinDir == "" {
-		t.Skip("DXAC41: ActiveAgentBinDir not set; EnsureAgentSetup depends on D6.2 fakeharness")
+		t.Fatal("DXAC41: dxh.ActiveAgentBinDir is not set")
 	}
 	if err := dxh.AddRealProgramLink(binDir, "pi", filepath.Join(fakeBinDir, "pi")); err != nil {
 		t.Fatalf("DXAC41: link pi stub: %v", err)

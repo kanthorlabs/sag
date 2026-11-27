@@ -38,7 +38,7 @@ func DXAC42_CATrustConflict(t *testing.T, ctx context.Context) {
 
 	fakeBinDir := dxh.ActiveAgentBinDir
 	if fakeBinDir == "" {
-		t.Skip("DXAC42: ActiveAgentBinDir not set; depends on D6.2 fakeharness")
+		t.Fatal("DXAC42: dxh.ActiveAgentBinDir is not set")
 	}
 
 	t.Run("pi_env_conflict", func(t *testing.T) {
