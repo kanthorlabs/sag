@@ -152,24 +152,42 @@ func dxac40CollectSources(t *testing.T, ctx context.Context, home, cfgDir string
 	r := dxh.NewRunner()
 
 	podmanLogsOut, err := r.Output(ctx, "podman", "logs", "--timestamps=false", "sag")
-	if err == nil {
-		sources["podman logs sag"] = string(podmanLogsOut)
+	if err != nil {
+		t.Fatalf("DXAC40: podman logs sag: %v", err)
 	}
+	if len(podmanLogsOut) == 0 {
+		t.Fatal("DXAC40: podman logs sag: empty")
+	}
+	sources["podman logs sag"] = string(podmanLogsOut)
 
-	if auditOut, err := r.Output(ctx, "podman", "exec", "sag", bin, "audit", "read"); err == nil {
-		sources["audit read"] = string(auditOut)
+	auditOut, err := r.Output(ctx, "podman", "exec", "sag", bin, "audit", "read")
+	if err != nil {
+		t.Fatalf("DXAC40: audit read: %v", err)
 	}
+	if len(auditOut) == 0 {
+		t.Fatal("DXAC40: audit read: empty; EnsureAgentSetup must have produced audit entries")
+	}
+	sources["audit read"] = string(auditOut)
 
 	serviceLogPath := filepath.Join(home, "Library", "Logs", "sag", "service.log")
-	if data, err := os.ReadFile(serviceLogPath); err == nil {
-		sources["service log"] = string(data)
+	serviceData, err := os.ReadFile(serviceLogPath)
+	if err != nil {
+		t.Fatalf("DXAC40: service log %s: %v", serviceLogPath, err)
 	}
+	if len(serviceData) == 0 {
+		t.Fatalf("DXAC40: service log %s: empty", serviceLogPath)
+	}
+	sources["service log"] = string(serviceData)
 
 	cfgFiles, err := dxac40ReadDirFiles(cfgDir)
-	if err == nil {
-		for name, content := range cfgFiles {
-			sources["cfg:"+name] = content
-		}
+	if err != nil {
+		t.Fatalf("DXAC40: read cfg dir %s: %v", cfgDir, err)
+	}
+	if len(cfgFiles) == 0 {
+		t.Fatalf("DXAC40: cfg dir %s: no files found", cfgDir)
+	}
+	for name, content := range cfgFiles {
+		sources["cfg:"+name] = content
 	}
 
 	if out, err := r.Output(ctx, "podman", "container", "inspect", "sag"); err == nil {

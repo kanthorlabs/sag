@@ -361,18 +361,22 @@ func dxac43ClaudeSagLine(t *testing.T, ctx context.Context, bin, podmanPath stri
 		t.Fatal(err)
 	}
 
+	const failedSagLine = "sag: https://localhost:8443/mcp (HTTP) - ✗ Failed to connect"
 	sagLinePath := filepath.Join(binDir, "claude_sag_line")
-	if err := os.WriteFile(sagLinePath, []byte("not connected\n"), 0o600); err != nil {
+	if err := os.WriteFile(sagLinePath, []byte(failedSagLine+"\n"), 0o600); err != nil {
 		t.Fatalf("DXAC43 claude-sag-line: write claude_sag_line: %v", err)
 	}
 
 	env := dxac43BaseEnv(claudeDir, piDir, binDir)
 	code, out := dxac43RunSetsid(ctx, bin, env, "agent", "setup", "claude-code", "--deny-rules", "yes")
 	if code != 1 {
-		t.Fatalf("DXAC43 claude-sag-line: expected exit 1; got %d\n%s", code, out)
+		t.Fatalf("DXAC43 claude-sag-line: expected exit 1; got %d\n%s (waits for D6.6c B83)", code, out)
 	}
 	if !strings.Contains(out, "fail verify claude-code") {
 		t.Errorf("DXAC43 claude-sag-line: output missing 'fail verify claude-code'; got %q", out)
+	}
+	if !strings.Contains(out, failedSagLine) {
+		t.Errorf("DXAC43 claude-sag-line: output missing sag result line %q; got %q (waits for D6.6c B83)", failedSagLine, out)
 	}
 	if strings.Contains(out, "not in PATH") {
 		t.Errorf("DXAC43 claude-sag-line: output contains 'not in PATH'; got %q", out)
