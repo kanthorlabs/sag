@@ -40,10 +40,19 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 	}
 
 	parts := dxh.ActiveCanaryParts
+	pgPortOut, pgPortErr := dxh.NewRunner().Output(ctx, "podman", "port", "sag-canary-pg", "5432/tcp")
+	if pgPortErr != nil {
+		t.Fatalf("DXAC45: get canary PG host port: %v", pgPortErr)
+	}
+	pgPortLine := strings.TrimSpace(string(pgPortOut))
+	pgHostPort := pgPortLine
+	if i := strings.LastIndex(pgPortLine, ":"); i >= 0 {
+		pgHostPort = pgPortLine[i+1:]
+	}
 	canaryURL := &url.URL{
 		Scheme: "postgres",
 		User:   url.UserPassword(parts.User, parts.Password),
-		Host:   "sag-canary-pg:5432",
+		Host:   "host.containers.internal:" + pgHostPort,
 		Path:   "/" + parts.Database,
 	}
 	canaryDSN := canaryURL.String()
