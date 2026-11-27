@@ -26,6 +26,11 @@ func TestE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		if t.Failed() {
+			if err := suite.SaveLogs(context.Background(), "report"); err != nil {
+				t.Logf("save logs: %v", err)
+			}
+		}
 		if err := suite.Close(context.Background()); err != nil {
 			t.Errorf("teardown: %v", err)
 		}
