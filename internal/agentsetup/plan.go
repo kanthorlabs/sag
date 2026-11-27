@@ -36,10 +36,10 @@ func run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	if needsInteractiveAnswer(opts) {
+	if flag, needed := needsInteractiveAnswer(opts); needed {
 		tty, err := remoteOpenTTY()
 		if err != nil {
-			return fmt.Errorf("open /dev/tty: %w", prompt.ErrNoTerminal)
+			return fmt.Errorf("add %s flag or run from a terminal: %w", flag, prompt.ErrNoTerminal)
 		}
 		tty.Close()
 	}
@@ -154,28 +154,32 @@ func planOnly(ctx context.Context, opts Options) (Plan, error) {
 	return Plan{Conflicts: conflicts}, nil
 }
 
-func needsInteractiveAnswer(opts Options) bool {
+func needsInteractiveAnswer(opts Options) (flag string, needed bool) {
 	switch opts.Harness {
 	case HarnessClaudeCode:
 		if opts.DenyRules != "" {
-			return false
+			return "", false
 		}
 		paths := harnessPathsFromOpts(opts)
 		current, _ := readDenyRules(paths.SettingsFile)
-		return len(appendMissingRules(current, sagDenyRules)) > len(current)
+		if len(appendMissingRules(current, sagDenyRules)) > len(current) {
+			return "--deny-rules", true
+		}
 	case HarnessPi:
 		if opts.ShellProfile != "" {
-			return false
+			return "", false
 		}
 		shell := opts.Env["SHELL"]
 		zdotdir := opts.Env["ZDOTDIR"]
 		profile, ok := ShellProfile(opts.GOOS, shell, zdotdir, opts.Home)
 		if !ok {
-			return false
+			return "--shell-profile", true
 		}
-		return !fileContainsLine(profile, `export NODE_EXTRA_CA_CERTS="`+caFilePath(opts)+`"`)
+		if !fileContainsLine(profile, `export NODE_EXTRA_CA_CERTS="`+caFilePath(opts)+`"`) {
+			return "--shell-profile", true
+		}
 	}
-	return false
+	return "", false
 }
 
 func planConflicts(opts Options, mode Mode, containerRuns bool) []string {
