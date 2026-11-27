@@ -123,10 +123,6 @@ func dxac40ExtractJWT(t *testing.T, mcpFile, topKey, serverKey string) string {
 
 func dxac40CollectSources(t *testing.T, ctx context.Context, home, cfgDir string) map[string]string {
 	t.Helper()
-	bin, err := dxh.TestBinary()
-	if err != nil {
-		t.Fatalf("DXAC40: test binary: %v", err)
-	}
 	sources := map[string]string{}
 
 	agentOut := ""
@@ -161,14 +157,22 @@ func dxac40CollectSources(t *testing.T, ctx context.Context, home, cfgDir string
 	}
 	sources["podman logs sag"] = string(podmanLogsOut)
 
-	auditOut, err := r.Output(ctx, "podman", "exec", "sag", bin, "audit", "read")
+	auditCopy := t.TempDir()
+	if out, err := r.Output(ctx, "podman", "cp", "sag:/var/lib/sag/audit", auditCopy); err != nil {
+		t.Fatalf("DXAC40: podman cp audit directory: %v\n%s", err, out)
+	}
+	auditFiles, err := readNamedDirFiles(filepath.Join(auditCopy, "audit"))
 	if err != nil {
-		t.Fatalf("DXAC40: audit read: %v", err)
+		t.Fatalf("DXAC40: read audit directory copy: %v", err)
 	}
-	if len(auditOut) == 0 {
-		t.Fatal("DXAC40: audit read: empty; EnsureAgentSetup must have produced audit entries")
+	auditBytes := 0
+	for name, content := range auditFiles {
+		sources["audit file "+filepath.Base(name)] = content
+		auditBytes += len(content)
 	}
-	sources["audit read"] = string(auditOut)
+	if auditBytes == 0 {
+		t.Fatal("DXAC40: audit file: empty; EnsureAgentSetup must have produced audit entries")
+	}
 
 	serviceLogPath := filepath.Join(home, "Library", "Logs", "sag", "service.log")
 	serviceData, err := os.ReadFile(serviceLogPath)

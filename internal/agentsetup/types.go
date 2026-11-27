@@ -43,6 +43,13 @@ type ResolvedAnswers struct {
 	DenyRules    string
 	ShellProfile string
 	Guard        string
+	pending      []func()
+}
+
+func (a ResolvedAnswers) save() {
+	for _, f := range a.pending {
+		f()
+	}
 }
 
 type Plan struct {
