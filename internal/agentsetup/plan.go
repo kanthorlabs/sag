@@ -64,6 +64,11 @@ func run(ctx context.Context, opts Options) error {
 	var keptJWT string
 	if mode == ModeRemote {
 		keptJWT = checkKeptRemoteEntry(opts)
+		if keptJWT == "" {
+			if err := checkRemoteTerminal(); err != nil {
+				return err
+			}
+		}
 	}
 
 	var lock *hoststate.Lock
@@ -183,11 +188,9 @@ func planOnly(ctx context.Context, opts Options) (Plan, error) {
 	if mode == ModeRemote {
 		keptJWT := checkKeptRemoteEntry(opts)
 		if keptJWT == "" {
-			tty, err := remoteOpenTTY()
-			if err != nil {
-				return Plan{}, &prompt.RefusalError{Flag: "--url"}
+			if err := checkRemoteTerminal(); err != nil {
+				return Plan{}, err
 			}
-			tty.Close()
 		}
 	}
 
@@ -218,7 +221,7 @@ func resolveAnswers(opts Options, asker prompt.Asker) (ResolvedAnswers, error) {
 				return ResolvedAnswers{}, err
 			}
 			answers.DenyRules = val
-			if opts.AnswersPath != "" && opts.DenyRules == "" && storedVal == "" {
+			if opts.AnswersPath != "" && val != storedVal {
 				saveAnswerDenyRules(opts.AnswersPath, paths.SettingsFile, val)
 			}
 		} else {
@@ -228,7 +231,14 @@ func resolveAnswers(opts Options, asker prompt.Asker) (ResolvedAnswers, error) {
 		shell := opts.Env["SHELL"]
 		zdotdir := opts.Env["ZDOTDIR"]
 		profile, ok := ShellProfile(opts.GOOS, shell, zdotdir, opts.Home)
-		if ok && !fileContainsLine(profile, `export NODE_EXTRA_CA_CERTS="`+caFilePath(opts)+`"`) {
+		if !ok {
+			question := fmt.Sprintf("Add \"export NODE_EXTRA_CA_CERTS=%s/ca.pem\" to the profile of %s? [y/N] ", opts.CfgDir, shellLabel(shell))
+			val, err := prompt.ResolveYesNo(asker, opts.ShellProfile, "", question, "--shell-profile")
+			if err != nil {
+				return ResolvedAnswers{}, err
+			}
+			answers.ShellProfile = val
+		} else if !fileContainsLine(profile, `export NODE_EXTRA_CA_CERTS="`+caFilePath(opts)+`"`) {
 			storedVal := ""
 			if stored.ShellProfile != nil {
 				storedVal = stored.ShellProfile[profile]
@@ -239,7 +249,7 @@ func resolveAnswers(opts Options, asker prompt.Asker) (ResolvedAnswers, error) {
 				return ResolvedAnswers{}, err
 			}
 			answers.ShellProfile = val
-			if opts.AnswersPath != "" && opts.ShellProfile == "" && storedVal == "" {
+			if opts.AnswersPath != "" && val != storedVal {
 				saveAnswerShellProfile(opts.AnswersPath, profile, val)
 			}
 		} else {
@@ -259,11 +269,17 @@ func resolveAnswers(opts Options, asker prompt.Asker) (ResolvedAnswers, error) {
 					return ResolvedAnswers{}, err
 				}
 				answers.Guard = val
-				if opts.AnswersPath != "" && opts.Guard == "" && storedVal == "" {
+				if opts.AnswersPath != "" && val != storedVal {
 					saveAnswerGuard(opts.AnswersPath, guardPath, val)
 				}
 			} else {
 				answers.Guard = opts.Guard
+				if answers.Guard == "" && stored.Guard != nil {
+					answers.Guard = stored.Guard[guardPath]
+				}
+				if opts.AnswersPath != "" && opts.Guard != "" && (stored.Guard == nil || stored.Guard[guardPath] != opts.Guard) {
+					saveAnswerGuard(opts.AnswersPath, guardPath, opts.Guard)
+				}
 			}
 		}
 	}
@@ -530,4 +546,11 @@ func deferredCATrust(opts Options) *CATrustConflictError {
 		return nil
 	}
 	return caTrustConflict(opts, harnessPathsFromOpts(opts))
+}
+
+func shellLabel(shell string) string {
+	if shell == "" {
+		return "an unknown shell"
+	}
+	return shell
 }

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kanthorlabs/sag/internal/agentsetup"
 )
 
 func TestAgentSetupUnknownHarness(t *testing.T) {
@@ -232,4 +234,15 @@ func TestS65ConflictNoDuplicateMessage(t *testing.T) {
 		t.Errorf("S65: 'plan conflicts' appeared %d times; want 0 (conflicts should not double-print)", planConflictsCount)
 	}
 	_ = failCount
+}
+
+func TestAgentSetupNoTerminalForJWTExit3(t *testing.T) {
+	std := newTestIO()
+	code := agentSetupExit(agentsetup.ErrNoTerminalForJWT, std)
+	if code != ExitRefusal {
+		t.Errorf("exit = %d; want ExitRefusal (%d)", code, ExitRefusal)
+	}
+	if !strings.Contains(std.Err.(*bytes.Buffer).String(), "no terminal to read the JWT") {
+		t.Errorf("stderr = %q; want the JWT terminal message", std.Err.(*bytes.Buffer).String())
+	}
 }
