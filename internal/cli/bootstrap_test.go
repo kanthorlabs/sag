@@ -58,6 +58,14 @@ func TestBootstrapFlags(t *testing.T) {
 		}
 	})
 
+	t.Run("unknown harness name gives exit 2", func(t *testing.T) {
+		std, _ := bootstrapTestIO()
+		code := bootstrapCmd([]string{"--agent-setup", "unknown=yes"}, std)
+		if code != ExitUsage {
+			t.Fatalf("bootstrapCmd(--agent-setup unknown=yes) = %d; want %d", code, ExitUsage)
+		}
+	})
+
 	t.Run("refusal error gives exit 3", func(t *testing.T) {
 		runBootstrap = func(ctx context.Context, flags bootstrap.Flags, std IO) error {
 			return &prompt.RefusalError{Flag: "--autostart"}

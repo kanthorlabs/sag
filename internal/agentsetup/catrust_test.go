@@ -58,7 +58,7 @@ func TestB94BundleLineFromEnv(t *testing.T) {
 		t.Fatal("B94: want error")
 	}
 	msg := err.Error()
-	wantPrefix := "fail ca-trust NODE_EXTRA_CA_CERTS is " + otherPath
+	wantPrefix := "ca-trust NODE_EXTRA_CA_CERTS is " + otherPath
 	if !strings.HasPrefix(msg, wantPrefix) {
 		t.Errorf("B94 env: message = %q; want prefix %q", msg, wantPrefix)
 	}

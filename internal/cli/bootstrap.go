@@ -103,6 +103,10 @@ func parseBootstrapFlags(args []string, std IO) (bootstrap.Flags, bool) {
 			fmt.Fprintf(std.Err, "sag: --agent-setup: want <harness>=yes|no, got %q\n", kv)
 			return bootstrap.Flags{}, false
 		}
+		if k != "claude-code" && k != "pi" {
+			fmt.Fprintf(std.Err, "sag: --agent-setup: unknown harness %q; want claude-code or pi\n", k)
+			return bootstrap.Flags{}, false
+		}
 		flags.AgentSetup[k] = v
 	}
 

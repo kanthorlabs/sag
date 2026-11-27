@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 
+	"github.com/kanthorlabs/sag/internal/agentsetup"
 	"github.com/kanthorlabs/sag/internal/deps"
 	"github.com/kanthorlabs/sag/internal/hoststate"
 	"github.com/kanthorlabs/sag/internal/pins"
@@ -22,22 +23,23 @@ type Flags struct {
 }
 
 type State struct {
-	Flags          Flags
-	Paths          hoststate.Paths
-	Answers        hoststate.Answers
-	Lock           *hoststate.Lock
-	Asker          prompt.Asker
-	Out            stepline.Writer
-	PodmanPath     string
-	SAGPath        string
-	UID            string
-	Home           string
-	CfgCreated     bool
-	Changed        bool
-	Pins           []pins.Item
-	DepPlan        deps.Plan
-	TailscaleState tailscale.State
-	PortHolder     portcheck.Holder
+	Flags             Flags
+	Paths             hoststate.Paths
+	Answers           hoststate.Answers
+	Lock              *hoststate.Lock
+	Asker             prompt.Asker
+	Out               stepline.Writer
+	PodmanPath        string
+	SAGPath           string
+	UID               string
+	Home              string
+	CfgCreated        bool
+	Changed           bool
+	Pins              []pins.Item
+	DepPlan           deps.Plan
+	TailscaleState    tailscale.State
+	PortHolder        portcheck.Holder
+	AgentSetupAnswers map[string]agentsetup.ResolvedAnswers
 }
 
 type Step struct {

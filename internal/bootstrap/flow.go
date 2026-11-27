@@ -63,6 +63,7 @@ type Deps struct {
 
 	Environ       func() map[string]string
 	HarnessInPATH func(agentsetup.Harness, map[string]string) bool
+	PlanOnly      func(context.Context, agentsetup.Options) (agentsetup.Plan, error)
 	AgentRun      func(context.Context, agentsetup.Options) error
 
 	Now   func() time.Time
@@ -122,12 +123,9 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 
 		Environ:       defaultEnvMap,
 		HarnessInPATH: defaultHarnessInPATH,
+		PlanOnly:      agentsetup.PlanOnly,
 		AgentRun: func(ctx context.Context, opts agentsetup.Options) error {
-			err := agentsetup.Run(ctx, opts)
-			if err != nil && isCATrustError(err) {
-				return errCATrustConflict
-			}
-			return err
+			return convertAgentRunError(agentsetup.Run(ctx, opts))
 		},
 
 		Now:   time.Now,
@@ -381,7 +379,7 @@ func (d Deps) planOnce(ctx context.Context, s *State) error {
 	if d.Environ != nil {
 		environ = d.Environ()
 	}
-	if err := d.planAgentSetup(s, agentSetupFresh(fresh.AgentSetup), environ, s.Home); err != nil {
+	if err := d.planAgentSetup(ctx, s, agentSetupFresh(fresh.AgentSetup), environ, s.Home); err != nil {
 		return err
 	}
 

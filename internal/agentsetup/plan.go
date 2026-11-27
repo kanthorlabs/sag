@@ -348,7 +348,7 @@ func checkKeptRemoteEntry(opts Options) string {
 func planConflictsWithErr(opts Options, mode Mode, containerRuns bool) ([]string, error) {
 	conflicts := planConflicts(opts, mode, containerRuns)
 	if len(conflicts) > 0 {
-		return conflicts, &ConflictError{conflicts: conflicts}
+		return conflicts, &ConflictError{conflicts: conflicts, caTrust: deferredCATrust(opts)}
 	}
 	return nil, nil
 }
@@ -394,7 +394,7 @@ func planConflicts(opts Options, mode Mode, containerRuns bool) []string {
 		}
 	}
 
-	if c := checkCATrustConflict(opts, paths); c != "" {
+	if c := checkCATrustConflict(opts, paths); c != "" && !opts.DeferCATrust {
 		conflicts = append(conflicts, c)
 	}
 
@@ -523,4 +523,11 @@ func checkGuardFile(path string) string {
 		return "guard " + path + " exists without the managed marker in line 1"
 	}
 	return ""
+}
+
+func deferredCATrust(opts Options) *CATrustConflictError {
+	if opts.DeferCATrust {
+		return nil
+	}
+	return caTrustConflict(opts, harnessPathsFromOpts(opts))
 }

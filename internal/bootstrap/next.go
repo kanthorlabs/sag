@@ -31,10 +31,13 @@ func (d Deps) printEndpoint(ctx context.Context, s *State, as *agentRunState) er
 		}
 	}
 
-	if s.TailscaleState.Address != "" {
+	if s.TailscaleState.SkipReason == "" && s.TailscaleState.Address != "" {
 		printTailscaleSteps(d.Print, s.TailscaleState.Address)
 	}
 
+	if as.caConflict {
+		return errCATrustConflict
+	}
 	return nil
 }
 

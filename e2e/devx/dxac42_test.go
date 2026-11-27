@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -293,7 +294,7 @@ func dxac42AssertConflictLine(t *testing.T, label, out, otherCA, cfgDir, source 
 	wantFull := fmt.Sprintf(
 		"fail ca-trust NODE_EXTRA_CA_CERTS is %s; run: cat %q %q > %q; then set NODE_EXTRA_CA_CERTS to %s in %s",
 		otherCA, otherCA, caPath, bundlePath, bundlePath, source)
-	if !strings.Contains(out, wantFull) {
+	if !slices.Contains(strings.Split(out, "\n"), wantFull) {
 		t.Errorf("DXAC42 %s: output missing full bundle line %q; got %q (waits for D6.6c B94 on pi-env case)", label, wantFull, out)
 	}
 	if strings.Contains(out, "container sag does not run") {
