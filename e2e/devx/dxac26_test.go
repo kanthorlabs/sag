@@ -134,7 +134,7 @@ func DXAC26_DenyRules(t *testing.T, ctx context.Context) {
 			t.Fatal(err)
 		}
 		settings := filepath.Join(claudeDir, "settings.json")
-		initial := `{"other":"kept"}`
+		initial := `{"other":"kept","permissions":{"deny":["Bash(sag credential delete:*)","Bash(podman secret rm:*)","Bash(script:*)","Bash(other-rule:*)"]}}`
 		if err := os.WriteFile(settings, []byte(initial), 0o600); err != nil {
 			t.Fatalf("DXAC26: write settings: %v", err)
 		}
@@ -149,8 +149,40 @@ func DXAC26_DenyRules(t *testing.T, ctx context.Context) {
 		if err != nil {
 			t.Fatalf("DXAC26: read settings: %v", err)
 		}
-		if strings.Contains(string(data), "sag credential delete") {
-			t.Error("DXAC26: deny rule was added when answer was 'no'")
+		var got map[string]json.RawMessage
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Fatalf("DXAC26: parse settings after --deny-rules no: %v", err)
+		}
+		var orig map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(initial), &orig); err != nil {
+			t.Fatalf("DXAC26: parse initial: %v", err)
+		}
+		if !bytes.Equal(dxac26CompactJSON(orig["permissions"]), dxac26CompactJSON(got["permissions"])) {
+			t.Errorf("DXAC26: permissions changed after --deny-rules no; got %s; want %s",
+				dxac26CompactJSON(got["permissions"]), dxac26CompactJSON(orig["permissions"]))
+		}
+	})
+
+	t.Run("deny_rules_no_adds_no_deny_key", func(t *testing.T) {
+		claudeDir := t.TempDir()
+		binDir := t.TempDir()
+		if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
+			t.Fatal(err)
+		}
+		settings := filepath.Join(claudeDir, "settings.json")
+		if err := os.WriteFile(settings, []byte(`{"other":"kept"}`), 0o600); err != nil {
+			t.Fatalf("DXAC26: write settings: %v", err)
+		}
+
+		env := dxac26Env(t, claudeDir, binDir)
+		code, out := dxac26RunSetsid(ctx, bin, env, "agent", "setup", "claude-code", "--deny-rules", "no")
+		if code != 0 {
+			t.Fatalf("DXAC26: agent setup --deny-rules no: exit %d\n%s", code, out)
+		}
+
+		rules := dxac26ReadDenyRules(t, settings)
+		if len(rules) != 0 {
+			t.Errorf("DXAC26: deny rules added when answer was 'no'; got %v", rules)
 		}
 	})
 }
