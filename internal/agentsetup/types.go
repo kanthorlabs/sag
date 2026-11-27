@@ -2,10 +2,10 @@ package agentsetup
 
 import (
 	"context"
-	"errors"
-)
+	"fmt"
 
-var errNotImplemented = errors.New("not implemented")
+	"github.com/kanthorlabs/sag/internal/prompt"
+)
 
 type Harness string
 
@@ -34,11 +34,42 @@ type Options struct {
 	ShellProfile string
 	Guard        string
 	UnderLock    bool
+	AnswersPath  string
+	Asker        prompt.Asker
+}
+
+type ResolvedAnswers struct {
+	DenyRules    string
+	ShellProfile string
+	Guard        string
 }
 
 type Plan struct {
-	Answers   map[string]string
+	Answers   ResolvedAnswers
 	Conflicts []string
+}
+
+type CATrustConflictError struct {
+	Current    string
+	CAPath     string
+	BundlePath string
+	Source     string
+}
+
+func (e *CATrustConflictError) Error() string {
+	return fmt.Sprintf("fail ca-trust NODE_EXTRA_CA_CERTS is %s; run: cat %q %q > %q; then set NODE_EXTRA_CA_CERTS to %s in %s",
+		e.Current, e.Current, e.CAPath, e.BundlePath, e.BundlePath, e.Source)
+}
+
+type ConflictError struct {
+	conflicts []string
+}
+
+func (e *ConflictError) Error() string {
+	if len(e.conflicts) == 1 {
+		return e.conflicts[0]
+	}
+	return fmt.Sprintf("%d plan conflicts", len(e.conflicts))
 }
 
 func Run(ctx context.Context, opts Options) error {

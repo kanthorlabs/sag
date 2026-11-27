@@ -52,14 +52,7 @@ var mcpProbe = func(ctx context.Context, url, caPath string, cred secret.Credent
 	return resp.StatusCode, nil
 }
 
-type mcpServerEntry struct {
-	Type     string            `json:"type,omitempty"`
-	URL      string            `json:"url"`
-	Headers  map[string]string `json:"headers"`
-	Exposure string            `json:"exposure,omitempty"`
-}
-
-func registerMCP(ctx context.Context, opts Options, jwtCred secret.Credential) error {
+func registerMCP(ctx context.Context, opts Options, jwtFunc func() (secret.Credential, error)) error {
 	paths := harnessPathsFromOpts(opts)
 	out := stepline.New(agentOut)
 
@@ -78,21 +71,22 @@ func registerMCP(ctx context.Context, opts Options, jwtCred secret.Credential) e
 			keptCred := secret.NewCredential("jwt-"+opts.Sub, []byte(keptJWT))
 			status, err := mcpProbe(ctx, opts.URL, caPath, keptCred)
 			if err == nil && status != http.StatusUnauthorized {
+				if err := ensureMode0600(mcpFile); err != nil {
+					return err
+				}
 				out.Line(stepline.StatusOK, "mcp-server", "")
 				return nil
 			}
 		}
 	}
 
-	entry := buildEntry(opts.Harness, opts.URL, jwtCred)
-	var keyPath []string
-	switch opts.Harness {
-	case HarnessPi:
-		keyPath = []string{"mcpServers", "sag"}
-	default:
-		keyPath = []string{"mcpServers", "sag"}
+	jwtCred, err := jwtFunc()
+	if err != nil {
+		return err
 	}
-	if err := writeJSON(mcpFile, keyPath, entry); err != nil {
+	entry := buildEntry(opts.Harness, opts.URL, jwtCred)
+	keyPath := []string{"mcpServers", "sag"}
+	if err := writeJSONMode(mcpFile, keyPath, entry, 0o600); err != nil {
 		return err
 	}
 	if err := ensureMode0600(mcpFile); err != nil {

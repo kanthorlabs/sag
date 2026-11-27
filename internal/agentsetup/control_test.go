@@ -42,7 +42,7 @@ func TestDenyRulesNoDuplicate(t *testing.T) {
 	restore := testWriteJSON(t)
 	defer restore()
 
-	opts := Options{DenyRules: "yes", CfgDir: dir}
+	opts := Options{Harness: HarnessClaudeCode, DenyRules: "yes", CfgDir: dir}
 	ctx := context.Background()
 
 	if err := applyDenyRules(ctx, opts, dir); err != nil {
@@ -59,6 +59,7 @@ func TestDenyRulesNoDuplicate(t *testing.T) {
 		t.Errorf("deny rules count = %d; want %d", len(rules1), len(sagDenyRules))
 	}
 
+	opts.DenyRules = "yes"
 	if err := applyDenyRules(ctx, opts, dir); err != nil {
 		t.Fatalf("second applyDenyRules: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestDenyRulesNoKeepsFile(t *testing.T) {
 		t.Fatalf("write settings: %v", err)
 	}
 
-	opts := Options{DenyRules: "no", CfgDir: dir}
+	opts := Options{Harness: HarnessClaudeCode, DenyRules: "no", CfgDir: dir}
 	ctx := context.Background()
 
 	if err := applyDenyRules(ctx, opts, dir); err != nil {
@@ -107,7 +108,7 @@ func TestDenyRulesPreservesOtherKeys(t *testing.T) {
 		t.Fatalf("write settings: %v", err)
 	}
 
-	opts := Options{DenyRules: "yes", CfgDir: dir}
+	opts := Options{Harness: HarnessClaudeCode, DenyRules: "yes", CfgDir: dir}
 	if err := applyDenyRules(context.Background(), opts, dir); err != nil {
 		t.Fatalf("applyDenyRules: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestGuardMarkerOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	opts := Options{Guard: "yes"}
+	opts := Options{Harness: HarnessPi, Guard: "yes"}
 	err := applyGuard(context.Background(), opts, dir, []byte(guardMarker+"\n"))
 	if err == nil {
 		t.Fatal("applyGuard: expected error for file without marker; got nil")
@@ -152,7 +153,7 @@ func TestGuardWritesNewFile(t *testing.T) {
 	dir := t.TempDir()
 	content := []byte(guardMarker + "\nsome content\n")
 
-	opts := Options{Guard: "yes"}
+	opts := Options{Harness: HarnessPi, Guard: "yes"}
 	if err := applyGuard(context.Background(), opts, dir, content); err != nil {
 		t.Fatalf("applyGuard: %v", err)
 	}
@@ -180,7 +181,7 @@ func TestGuardOverwritesWithMarker(t *testing.T) {
 	}
 
 	newContent := []byte(guardMarker + "\nnew content\n")
-	opts := Options{Guard: "yes"}
+	opts := Options{Harness: HarnessPi, Guard: "yes"}
 	if err := applyGuard(context.Background(), opts, dir, newContent); err != nil {
 		t.Fatalf("applyGuard: %v", err)
 	}

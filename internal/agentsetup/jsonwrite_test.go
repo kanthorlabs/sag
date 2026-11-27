@@ -135,3 +135,21 @@ func TestNewFileMode0600(t *testing.T) {
 		t.Errorf("mode = %o; want 600", fi.Mode()&0o777)
 	}
 }
+
+func TestForcedMode0600OldFile0644(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONMode(path, []string{"key"}, "jwt-value", 0o600); err != nil {
+		t.Fatalf("writeJSONMode: %v", err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&0o177 != 0 {
+		t.Errorf("mode = %04o; want 0600 (no group/other bits)", fi.Mode()&0o777)
+	}
+}

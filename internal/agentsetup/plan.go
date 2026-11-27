@@ -3,6 +3,7 @@ package agentsetup
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,25 +37,33 @@ func run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	if flag, needed := needsInteractiveAnswer(opts); needed {
-		tty, err := remoteOpenTTY()
-		if err != nil {
-			return fmt.Errorf("add %s flag or run from a terminal: %w", flag, prompt.ErrNoTerminal)
-		}
-		tty.Close()
+	asker := opts.Asker
+	if asker.Open == nil {
+		asker = prompt.NewAsker()
 	}
+
+	answers, err := resolveAnswers(opts, asker)
+	if err != nil {
+		return err
+	}
+	applyAnswers(&opts, answers)
 
 	containerRuns := false
 	if mode == ModeLocal {
 		containerRuns = checkContainerRunning(ctx, opts.PodmanPath)
 	}
 
-	conflicts := planConflicts(opts, mode, containerRuns)
+	conflicts, conflictErr := planConflictsWithErr(opts, mode, containerRuns)
 	for _, c := range conflicts {
 		out.Line(stepline.StatusFail, c, "")
 	}
-	if len(conflicts) > 0 {
-		return fmt.Errorf("plan conflicts: %s", strings.Join(conflicts, "; "))
+	if conflictErr != nil {
+		return conflictErr
+	}
+
+	var keptJWT string
+	if mode == ModeRemote {
+		keptJWT = checkKeptRemoteEntry(opts)
 	}
 
 	var lock *hoststate.Lock
@@ -72,32 +81,31 @@ func run(ctx context.Context, opts Options) error {
 		if mode == ModeLocal {
 			containerRuns = checkContainerRunning(ctx, opts.PodmanPath)
 		}
-		conflicts = planConflicts(opts, mode, containerRuns)
+		conflicts, conflictErr = planConflictsWithErr(opts, mode, containerRuns)
 		for _, c := range conflicts {
 			out.Line(stepline.StatusFail, c, "")
 		}
-		if len(conflicts) > 0 {
-			return fmt.Errorf("plan conflicts after lock: %s", strings.Join(conflicts, "; "))
+		if conflictErr != nil {
+			return conflictErr
 		}
 	}
 
-	var jwtCred secret.Credential
+	var jwtFunc func() (secret.Credential, error)
 	switch mode {
 	case ModeRemote:
-		cred, err := remoteJWT(ctx, opts)
-		if err != nil {
-			return err
+		captured := keptJWT
+		if captured != "" {
+			jwtFunc = func() (secret.Credential, error) {
+				return secret.NewCredential("jwt-"+opts.Sub, []byte(captured)), nil
+			}
+		} else {
+			jwtFunc = func() (secret.Credential, error) { return remoteJWT(ctx, opts) }
 		}
-		jwtCred = cred
 	default:
-		cred, err := issueJWT(ctx, opts)
-		if err != nil {
-			return err
-		}
-		jwtCred = cred
+		jwtFunc = func() (secret.Credential, error) { return issueJWT(ctx, opts) }
 	}
 
-	if err := registerMCP(ctx, opts, jwtCred); err != nil {
+	if err := registerMCP(ctx, opts, jwtFunc); err != nil {
 		return err
 	}
 
@@ -146,40 +154,203 @@ func planOnly(ctx context.Context, opts Options) (Plan, error) {
 			return Plan{}, err
 		}
 	}
+
+	asker := opts.Asker
+	if asker.Open == nil {
+		asker = prompt.NewAsker()
+	}
+
+	answers, err := resolveAnswers(opts, asker)
+	if err != nil {
+		return Plan{}, err
+	}
+	applyAnswers(&opts, answers)
+
 	containerRuns := false
 	if mode == ModeLocal {
 		containerRuns = checkContainerRunning(ctx, opts.PodmanPath)
 	}
-	conflicts := planConflicts(opts, mode, containerRuns)
-	return Plan{Conflicts: conflicts}, nil
+
+	conflicts, conflictErr := planConflictsWithErr(opts, mode, containerRuns)
+	out := stepline.New(agentOut)
+	for _, c := range conflicts {
+		out.Line(stepline.StatusFail, c, "")
+	}
+	if conflictErr != nil {
+		return Plan{}, conflictErr
+	}
+
+	if mode == ModeRemote {
+		keptJWT := checkKeptRemoteEntry(opts)
+		if keptJWT == "" {
+			tty, err := remoteOpenTTY()
+			if err != nil {
+				return Plan{}, &prompt.RefusalError{Flag: "--url"}
+			}
+			tty.Close()
+		}
+	}
+
+	return Plan{Answers: answers, Conflicts: conflicts}, nil
 }
 
-func needsInteractiveAnswer(opts Options) (flag string, needed bool) {
+func resolveAnswers(opts Options, asker prompt.Asker) (ResolvedAnswers, error) {
+	var answers ResolvedAnswers
+	var stored hoststate.Answers
+	if opts.AnswersPath != "" {
+		data, err := os.ReadFile(opts.AnswersPath)
+		if err == nil {
+			_ = json.Unmarshal(data, &stored)
+		}
+	}
+	paths := harnessPathsFromOpts(opts)
 	switch opts.Harness {
 	case HarnessClaudeCode:
-		if opts.DenyRules != "" {
-			return "", false
-		}
-		paths := harnessPathsFromOpts(opts)
 		current, _ := readDenyRules(paths.SettingsFile)
 		if len(appendMissingRules(current, sagDenyRules)) > len(current) {
-			return "--deny-rules", true
+			storedVal := ""
+			if stored.DenyRules != nil {
+				storedVal = stored.DenyRules[paths.SettingsFile]
+			}
+			question := fmt.Sprintf("Add 3 deny rules to %s? [y/N] ", paths.SettingsFile)
+			val, err := prompt.ResolveYesNo(asker, opts.DenyRules, storedVal, question, "--deny-rules")
+			if err != nil {
+				return ResolvedAnswers{}, err
+			}
+			answers.DenyRules = val
+			if opts.AnswersPath != "" && opts.DenyRules == "" && storedVal == "" {
+				saveAnswerDenyRules(opts.AnswersPath, paths.SettingsFile, val)
+			}
+		} else {
+			answers.DenyRules = opts.DenyRules
 		}
 	case HarnessPi:
-		if opts.ShellProfile != "" {
-			return "", false
-		}
 		shell := opts.Env["SHELL"]
 		zdotdir := opts.Env["ZDOTDIR"]
 		profile, ok := ShellProfile(opts.GOOS, shell, zdotdir, opts.Home)
-		if !ok {
-			return "--shell-profile", true
+		if ok && !fileContainsLine(profile, `export NODE_EXTRA_CA_CERTS="`+caFilePath(opts)+`"`) {
+			storedVal := ""
+			if stored.ShellProfile != nil {
+				storedVal = stored.ShellProfile[profile]
+			}
+			question := fmt.Sprintf("Add \"export NODE_EXTRA_CA_CERTS=%s/ca.pem\" to %s? [y/N] ", opts.CfgDir, profile)
+			val, err := prompt.ResolveYesNo(asker, opts.ShellProfile, storedVal, question, "--shell-profile")
+			if err != nil {
+				return ResolvedAnswers{}, err
+			}
+			answers.ShellProfile = val
+			if opts.AnswersPath != "" && opts.ShellProfile == "" && storedVal == "" {
+				saveAnswerShellProfile(opts.AnswersPath, profile, val)
+			}
+		} else {
+			answers.ShellProfile = opts.ShellProfile
 		}
-		if !fileContainsLine(profile, `export NODE_EXTRA_CA_CERTS="`+caFilePath(opts)+`"`) {
-			return "--shell-profile", true
+
+		guardPath := paths.GuardFile
+		if guardPath != "" {
+			if _, err := os.Stat(guardPath); os.IsNotExist(err) {
+				storedVal := ""
+				if stored.Guard != nil {
+					storedVal = stored.Guard[guardPath]
+				}
+				question := fmt.Sprintf("Install %s to block SAG secret commands in bash? [y/N] ", guardPath)
+				val, err := prompt.ResolveYesNo(asker, opts.Guard, storedVal, question, "--guard")
+				if err != nil {
+					return ResolvedAnswers{}, err
+				}
+				answers.Guard = val
+				if opts.AnswersPath != "" && opts.Guard == "" && storedVal == "" {
+					saveAnswerGuard(opts.AnswersPath, guardPath, val)
+				}
+			} else {
+				answers.Guard = opts.Guard
+			}
 		}
 	}
-	return "", false
+	return answers, nil
+}
+
+func applyAnswers(opts *Options, answers ResolvedAnswers) {
+	if answers.DenyRules != "" && opts.DenyRules == "" {
+		opts.DenyRules = answers.DenyRules
+	}
+	if answers.ShellProfile != "" && opts.ShellProfile == "" {
+		opts.ShellProfile = answers.ShellProfile
+	}
+	if answers.Guard != "" && opts.Guard == "" {
+		opts.Guard = answers.Guard
+	}
+}
+
+func saveAnswerDenyRules(answersPath, settingsFile, val string) {
+	var a hoststate.Answers
+	data, err := os.ReadFile(answersPath)
+	if err == nil {
+		_ = json.Unmarshal(data, &a)
+	}
+	if a.DenyRules == nil {
+		a.DenyRules = map[string]string{}
+	}
+	a.DenyRules[settingsFile] = val
+	raw, err := json.Marshal(a)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(answersPath, raw, 0o600)
+}
+
+func saveAnswerShellProfile(answersPath, profile, val string) {
+	var a hoststate.Answers
+	data, err := os.ReadFile(answersPath)
+	if err == nil {
+		_ = json.Unmarshal(data, &a)
+	}
+	if a.ShellProfile == nil {
+		a.ShellProfile = map[string]string{}
+	}
+	a.ShellProfile[profile] = val
+	raw, err := json.Marshal(a)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(answersPath, raw, 0o600)
+}
+
+func saveAnswerGuard(answersPath, guardPath, val string) {
+	var a hoststate.Answers
+	data, err := os.ReadFile(answersPath)
+	if err == nil {
+		_ = json.Unmarshal(data, &a)
+	}
+	if a.Guard == nil {
+		a.Guard = map[string]string{}
+	}
+	a.Guard[guardPath] = val
+	raw, err := json.Marshal(a)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(answersPath, raw, 0o600)
+}
+
+func checkKeptRemoteEntry(opts Options) string {
+	paths := harnessPathsFromOpts(opts)
+	jwtStr, entryURL := readKeptEntry(paths.MCPFile, opts.Harness)
+	if jwtStr == "" || entryURL != opts.URL {
+		return ""
+	}
+	if subFromRawJWT(jwtStr) != opts.Sub {
+		return ""
+	}
+	return jwtStr
+}
+
+func planConflictsWithErr(opts Options, mode Mode, containerRuns bool) ([]string, error) {
+	conflicts := planConflicts(opts, mode, containerRuns)
+	if len(conflicts) > 0 {
+		return conflicts, &ConflictError{conflicts: conflicts}
+	}
+	return nil, nil
 }
 
 func planConflicts(opts Options, mode Mode, containerRuns bool) []string {
@@ -201,7 +372,7 @@ func planConflicts(opts Options, mode Mode, containerRuns bool) []string {
 		}
 	}
 
-	if c := checkMCPFile(paths.MCPFile); c != "" {
+	if c := checkMCPFile(paths.MCPFile, opts.URL); c != "" {
 		conflicts = append(conflicts, c)
 	}
 
@@ -247,13 +418,13 @@ func harnessInPATH(opts Options) bool {
 	return err == nil
 }
 
-func checkMCPFile(path string) string {
+func checkMCPFile(path, wantURL string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
 	var top map[string]json.RawMessage
-	if err := json.Unmarshal(data, &top); err != nil {
+	if err := json.Unmarshal(data, &top); err != nil || top == nil {
 		return "mcp-config " + path + " is not valid JSON"
 	}
 	mcpRaw, ok := top["mcpServers"]
@@ -283,6 +454,9 @@ func checkMCPFile(path string) string {
 	if err := json.Unmarshal(urlRaw, &entryURL); err != nil {
 		return "mcp-server sag in " + path + " has another form; remove it"
 	}
+	if wantURL != "" && entryURL != wantURL {
+		return "mcp-server sag in " + path + " has another form; remove it"
+	}
 	headersRaw, ok := entry["headers"]
 	if !ok {
 		return ""
@@ -292,19 +466,37 @@ func checkMCPFile(path string) string {
 		return "mcp-server sag in " + path + " has another form; remove it"
 	}
 	auth := headers["Authorization"]
-	if auth != "" && !strings.HasPrefix(auth, "Bearer ") {
+	if auth == "" {
+		return ""
+	}
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return "mcp-server sag in " + path + " has another form; remove it"
+	}
+	token := strings.TrimPrefix(auth, "Bearer ")
+	if !isJWT(token) {
 		return "mcp-server sag in " + path + " has another form; remove it"
 	}
 	return ""
 }
 
+func isJWT(s string) bool {
+	parts := strings.Split(s, ".")
+	return len(parts) == 3
+}
+
 func checkJSONFile(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ""
+		}
+		return "settings " + path + " cannot be read"
+	}
+	if len(data) == 0 {
 		return ""
 	}
-	var v any
-	if err := json.Unmarshal(data, &v); err != nil {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil || top == nil {
 		return "settings " + path + " is not valid JSON"
 	}
 	return ""
@@ -329,40 +521,6 @@ func checkGuardFile(path string) string {
 	lines := strings.SplitN(string(data), "\n", 2)
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != guardMarker {
 		return "guard " + path + " exists without the managed marker in line 1"
-	}
-	return ""
-}
-
-func checkCATrustConflict(opts Options, paths HarnessPaths) string {
-	caPath := caFilePath(opts)
-	switch opts.Harness {
-	case HarnessPi:
-		shell := opts.Env["SHELL"]
-		zdotdir := opts.Env["ZDOTDIR"]
-		profile, ok := ShellProfile(opts.GOOS, shell, zdotdir, opts.Home)
-		if !ok {
-			return ""
-		}
-		current := currentNECCPi(opts, profile)
-		if current != "" && !acceptsCATrust(current, caPath) {
-			bundlePath := caPath[:len(caPath)-len(".pem")] + "-bundle.pem"
-			return fmt.Sprintf("ca-trust NODE_EXTRA_CA_CERTS is %s; run: cat %q %q > %q; then set NODE_EXTRA_CA_CERTS to %s in %s",
-				current, current, caPath, bundlePath, bundlePath, profile)
-		}
-	default:
-		if paths.SettingsFile == "" {
-			return ""
-		}
-		current := currentNECCClaudeCode(opts, paths.SettingsFile)
-		if current != "" && !acceptsCATrust(current, caPath) {
-			bundlePath := caPath[:len(caPath)-len(".pem")] + "-bundle.pem"
-			src := opts.Env["NODE_EXTRA_CA_CERTS"]
-			if src == "" {
-				src = paths.SettingsFile
-			}
-			return fmt.Sprintf("ca-trust NODE_EXTRA_CA_CERTS is %s; run: cat %q %q > %q; then set NODE_EXTRA_CA_CERTS to %s in %s",
-				current, current, caPath, bundlePath, bundlePath, src)
-		}
 	}
 	return ""
 }
