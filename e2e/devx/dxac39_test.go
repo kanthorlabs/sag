@@ -63,7 +63,7 @@ func DXAC39_ClaudeCodeSetup(t *testing.T, ctx context.Context) {
 	}
 
 	mcpFile := filepath.Join(claudeDir, ".claude.json")
-	initMCP := `{"mcpServers":{"other-server":{"type":"http","url":"https://other.example/mcp","headers":{}}},"topInt":9007199254740993,"topUnicode":"Another","topSpecial":"a<b>&c"}`
+	initMCP := `{"mcpServers":{"other-server":{"type":"http","url":"https://other.example/mcp","headers":{}}},"topInt":9007199254740993,"topUnicode":"\u0041nother","topSpecial":"a<b>&c"}`
 	if err := os.WriteFile(mcpFile, []byte(initMCP), 0o644); err != nil {
 		t.Fatalf("DXAC39: write initial .claude.json: %v", err)
 	}
@@ -185,7 +185,7 @@ func DXAC39_ClaudeCodeSetup(t *testing.T, ctx context.Context) {
 			}
 		}
 		dxac39CheckRaw(t, "DXAC39-D topInt", mcpTop["topInt"], `9007199254740993`)
-		dxac39CheckRaw(t, "DXAC39-D topUnicode", mcpTop["topUnicode"], `"Another"`)
+		dxac39CheckRaw(t, "DXAC39-D topUnicode", mcpTop["topUnicode"], `"\u0041nother"`)
 		dxac39CheckRaw(t, "DXAC39-D topSpecial", mcpTop["topSpecial"], `"a<b>&c"`)
 	})
 

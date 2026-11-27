@@ -31,7 +31,7 @@ func TestKeepsBigIntegerText(t *testing.T) {
 func TestKeepsUnicodeEscape(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
-	input := `{"other":"A","key":"old"}`
+	input := `{"other":"\u0041nother","key":"old"}`
 	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestKeepsUnicodeEscape(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if string(got["other"]) != `"A"` {
+	if string(got["other"]) != `"\u0041nother"` {
 		t.Errorf("other = %s; want \\u0041 literal", got["other"])
 	}
 }
