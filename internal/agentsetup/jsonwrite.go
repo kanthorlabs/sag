@@ -10,13 +10,23 @@ import (
 )
 
 func writeJSON(path string, keyPath []string, value any) error {
+	return writeJSONFull(path, keyPath, value, 0)
+}
+
+func writeJSONMode(path string, keyPath []string, value any, forcedMode fs.FileMode) error {
+	return writeJSONFull(path, keyPath, value, forcedMode)
+}
+
+func writeJSONFull(path string, keyPath []string, value any, forcedMode fs.FileMode) error {
 	target, err := resolveTarget(path)
 	if err != nil {
 		return err
 	}
 
 	mode := fs.FileMode(0o600)
-	if info, err := os.Stat(target); err == nil {
+	if forcedMode != 0 {
+		mode = forcedMode
+	} else if info, err := os.Stat(target); err == nil {
 		mode = info.Mode() & 0o777
 	}
 
@@ -54,11 +64,11 @@ func writeJSON(path string, keyPath []string, value any) error {
 		_ = os.Remove(tmpName)
 	}()
 
-	if err := tmp.Chmod(mode); err != nil {
+	if _, err := tmp.Write(out); err != nil {
 		tmp.Close()
 		return err
 	}
-	if _, err := tmp.Write(out); err != nil {
+	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		return err
 	}

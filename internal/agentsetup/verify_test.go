@@ -142,6 +142,120 @@ func TestNotConnectedExit1(t *testing.T) {
 	}
 }
 
+func TestVerifyClaudeCodeConnectedLine(t *testing.T) {
+	const sagLine = "sag: https://localhost:8443/mcp (HTTP) - ✔ Connected"
+	origRun := runVerifyChild
+	runVerifyChild = func(_ context.Context, name string, args []string, env []string, dir string) ([]byte, error) {
+		return []byte("other: something\n" + sagLine + "\n"), nil
+	}
+	defer func() { runVerifyChild = origRun }()
+
+	var out bytes.Buffer
+	SetOut(&out)
+	defer SetOut(os.Stdout)
+
+	binDir := fakeHarnessBin(t, "claude", "")
+	opts := Options{
+		Harness:    HarnessClaudeCode,
+		Sub:        "claude-code",
+		URL:        "https://localhost:8443/mcp",
+		CfgDir:     t.TempDir(),
+		PodmanPath: "podman",
+		Env: map[string]string{
+			"CLAUDE_CONFIG_DIR": t.TempDir(),
+			"PATH":              binDir + ":/usr/bin:/bin",
+		},
+		Home: t.TempDir(),
+	}
+	err := verify(context.Background(), opts)
+	if err != nil {
+		t.Errorf("B83: verify returned error; want nil for connected line: %v", err)
+	}
+	if !strings.Contains(out.String(), "ok") {
+		t.Errorf("B83: output %q: missing 'ok' line", out.String())
+	}
+}
+
+func TestVerifyClaudeCodeFailedLine(t *testing.T) {
+	const sagLine = "sag: https://localhost:8443/mcp (HTTP) - ✗ Failed to connect"
+	origRun := runVerifyChild
+	runVerifyChild = func(_ context.Context, name string, args []string, env []string, dir string) ([]byte, error) {
+		return []byte(sagLine + "\n"), nil
+	}
+	defer func() { runVerifyChild = origRun }()
+
+	var out bytes.Buffer
+	SetOut(&out)
+	defer SetOut(os.Stdout)
+
+	binDir := fakeHarnessBin(t, "claude", "")
+	opts := Options{
+		Harness:    HarnessClaudeCode,
+		Sub:        "claude-code",
+		URL:        "https://localhost:8443/mcp",
+		CfgDir:     t.TempDir(),
+		PodmanPath: "podman",
+		Env: map[string]string{
+			"CLAUDE_CONFIG_DIR": t.TempDir(),
+			"PATH":              binDir + ":/usr/bin:/bin",
+		},
+		Home: t.TempDir(),
+	}
+	err := verify(context.Background(), opts)
+	if err == nil {
+		t.Error("B83: verify returned nil; want error for failed line")
+	}
+	outStr := out.String()
+	if !strings.Contains(outStr, "fail") {
+		t.Errorf("B83: output %q: missing 'fail' line", outStr)
+	}
+	if !strings.Contains(outStr, sagLine) {
+		t.Errorf("B83: output %q: missing sag line as detail", outStr)
+	}
+}
+
+func TestVerifyPiFailedState(t *testing.T) {
+	origRun := runVerifyChild
+	runVerifyChild = func(_ context.Context, name string, args []string, env []string, dir string) ([]byte, error) {
+		result := piMCPListOutput{
+			Servers: []struct {
+				Name  string `json:"name"`
+				State string `json:"state"`
+			}{
+				{Name: "sag", State: "failed"},
+			},
+		}
+		data, _ := json.Marshal(result)
+		return data, nil
+	}
+	defer func() { runVerifyChild = origRun }()
+
+	var out bytes.Buffer
+	SetOut(&out)
+	defer SetOut(os.Stdout)
+
+	binDir := fakeHarnessBin(t, "pi", "")
+	opts := Options{
+		Harness:    HarnessPi,
+		Sub:        "pi",
+		URL:        "https://localhost:8443/mcp",
+		CfgDir:     t.TempDir(),
+		PodmanPath: "podman",
+		Env: map[string]string{
+			"PI_CODING_AGENT_DIR": t.TempDir(),
+			"PATH":                binDir + ":/usr/bin:/bin",
+		},
+		Home: t.TempDir(),
+	}
+	err := verify(context.Background(), opts)
+	if err == nil {
+		t.Error("B83: verify pi returned nil; want error for failed state")
+	}
+	if !strings.Contains(out.String(), "fail") {
+		t.Errorf("B83: output %q: missing 'fail' line for pi failed state", out.String())
+	}
+}
+
 func cutEnv(e string) (string, string, bool) {
 	for i, c := range e {
 		if c == '=' {

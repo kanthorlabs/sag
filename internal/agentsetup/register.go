@@ -52,7 +52,7 @@ var mcpProbe = func(ctx context.Context, url, caPath string, cred secret.Credent
 	return resp.StatusCode, nil
 }
 
-func registerMCP(ctx context.Context, opts Options, jwtCred secret.Credential) error {
+func registerMCP(ctx context.Context, opts Options, jwtFunc func() (secret.Credential, error)) error {
 	paths := harnessPathsFromOpts(opts)
 	out := stepline.New(agentOut)
 
@@ -80,9 +80,13 @@ func registerMCP(ctx context.Context, opts Options, jwtCred secret.Credential) e
 		}
 	}
 
+	jwtCred, err := jwtFunc()
+	if err != nil {
+		return err
+	}
 	entry := buildEntry(opts.Harness, opts.URL, jwtCred)
 	keyPath := []string{"mcpServers", "sag"}
-	if err := writeJSON(mcpFile, keyPath, entry); err != nil {
+	if err := writeJSONMode(mcpFile, keyPath, entry, 0o600); err != nil {
 		return err
 	}
 	if err := ensureMode0600(mcpFile); err != nil {

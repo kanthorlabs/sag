@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/kanthorlabs/sag/internal/prompt"
 	"github.com/kanthorlabs/sag/internal/secret"
 )
 
@@ -114,7 +117,7 @@ func TestKeptEntryByteEqual(t *testing.T) {
 		Home:       dir,
 	}
 	newCred := secret.NewCredential("jwt-claude-code", []byte(makeTestJWT("other")))
-	if err := registerMCP(context.Background(), opts, newCred); err != nil {
+	if err := registerMCP(context.Background(), opts, func() (secret.Credential, error) { return newCred, nil }); err != nil {
 		t.Fatalf("registerMCP: %v", err)
 	}
 
@@ -163,7 +166,7 @@ func TestOtherSubNewJWT(t *testing.T) {
 		Env:        map[string]string{"CLAUDE_CONFIG_DIR": dir},
 		Home:       dir,
 	}
-	if err := registerMCP(context.Background(), opts, newCred); err != nil {
+	if err := registerMCP(context.Background(), opts, func() (secret.Credential, error) { return newCred, nil }); err != nil {
 		t.Fatalf("registerMCP: %v", err)
 	}
 
@@ -221,7 +224,7 @@ func TestUnauthorizedNewJWT(t *testing.T) {
 		Env:        map[string]string{"CLAUDE_CONFIG_DIR": dir},
 		Home:       dir,
 	}
-	if err := registerMCP(context.Background(), opts, newCred); err != nil {
+	if err := registerMCP(context.Background(), opts, func() (secret.Credential, error) { return newCred, nil }); err != nil {
 		t.Fatalf("registerMCP: %v", err)
 	}
 
@@ -232,38 +235,207 @@ func TestUnauthorizedNewJWT(t *testing.T) {
 }
 
 func TestJWTNotInArgsOrEnv(t *testing.T) {
-	var capturedArgs []string
+	var capturedPodmanArgs []string
+	var capturedVerifyArgs []string
+	var capturedVerifyEnv []string
+
+	jwtStr := makeTestJWT("claude-code")
+
 	origExec := execPodmanExec
 	execPodmanExec = func(_ context.Context, path string, args []string) ([]byte, error) {
-		capturedArgs = args
-		return []byte(makeTestJWT("claude-code") + "\n"), nil
+		capturedPodmanArgs = append(capturedPodmanArgs, args...)
+		return []byte(jwtStr + "\n"), nil
 	}
 	defer func() { execPodmanExec = origExec }()
 
-	ctx := context.Background()
+	origRun := runVerifyChild
+	runVerifyChild = func(_ context.Context, name string, args []string, env []string, dir string) ([]byte, error) {
+		capturedVerifyArgs = append(capturedVerifyArgs, args...)
+		capturedVerifyEnv = append(capturedVerifyEnv, env...)
+		return []byte("sag: https://localhost:8443/mcp (HTTP) - ✔ Connected\n"), nil
+	}
+	defer func() { runVerifyChild = origRun }()
+
+	var out bytes.Buffer
+	SetOut(&out)
+	defer SetOut(os.Stdout)
+
+	binDir := fakeHarnessBin(t, "claude", `echo "sag: Connected"`)
+	dir := t.TempDir()
 	opts := Options{
 		Harness:    HarnessClaudeCode,
 		Sub:        "claude-code",
 		URL:        "https://localhost:8443/mcp",
-		CfgDir:     t.TempDir(),
+		CfgDir:     dir,
 		PodmanPath: "podman",
-		Env:        map[string]string{"CLAUDE_CONFIG_DIR": t.TempDir()},
-		Home:       t.TempDir(),
+		Env: map[string]string{
+			"CLAUDE_CONFIG_DIR": dir,
+			"PATH":              binDir + ":/usr/bin:/bin",
+		},
+		Home: dir,
+		GOOS: "darwin",
+		Asker: prompt.Asker{Open: func() (io.ReadWriteCloser, error) {
+			return nil, errors.New("no terminal")
+		}},
+		DenyRules: "no",
 	}
-	cred, err := issueJWT(ctx, opts)
-	if err != nil {
-		t.Fatalf("issueJWT: %v", err)
-	}
-	jwtStr := string(cred.Reveal())
-	for _, a := range capturedArgs {
+
+	origCheck := checkContainerRunning
+	checkContainerRunning = func(_ context.Context, _ string) bool { return true }
+	defer func() { checkContainerRunning = origCheck }()
+
+	_ = run(context.Background(), opts)
+
+	for _, a := range capturedPodmanArgs {
 		if strings.Contains(a, jwtStr) {
-			t.Errorf("JWT found in arg %q", a)
+			t.Errorf("S57: JWT found in podman arg %q", a)
+		}
+	}
+	for _, a := range capturedVerifyArgs {
+		if strings.Contains(a, jwtStr) {
+			t.Errorf("S57: JWT found in verify child arg %q", a)
+		}
+	}
+	for _, e := range capturedVerifyEnv {
+		if strings.Contains(e, jwtStr) {
+			t.Errorf("S57: JWT found in verify child env %q", e)
 		}
 	}
 	for _, e := range os.Environ() {
 		if strings.Contains(e, jwtStr) {
-			t.Errorf("JWT found in env %q", e)
+			t.Errorf("S57: JWT found in process env %q", e)
 		}
+	}
+}
+
+func TestKeptEntryMode0644Ends0600(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mcpFile := filepath.Join(dir, ".claude.json")
+	keptJWT := makeTestJWT("claude-code")
+
+	entry := map[string]any{
+		"mcpServers": map[string]any{
+			"sag": map[string]any{
+				"type": "http",
+				"url":  srv.URL,
+				"headers": map[string]string{
+					"Authorization": "Bearer " + keptJWT,
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(entry)
+	if err := os.WriteFile(mcpFile, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	origProbe := mcpProbe
+	mcpProbe = func(_ context.Context, url, _ string, cred secret.Credential) (int, error) {
+		return http.StatusOK, nil
+	}
+	defer func() { mcpProbe = origProbe }()
+
+	var out bytes.Buffer
+	SetOut(&out)
+	defer SetOut(os.Stdout)
+
+	cfgDir := t.TempDir()
+	pemData := saveTLSCertPEM(t, srv)
+	os.WriteFile(filepath.Join(cfgDir, "ca.pem"), pemData, 0o600)
+
+	opts := Options{
+		Harness:    HarnessClaudeCode,
+		Sub:        "claude-code",
+		URL:        srv.URL,
+		CfgDir:     cfgDir,
+		PodmanPath: "podman",
+		Env:        map[string]string{"CLAUDE_CONFIG_DIR": dir},
+		Home:       dir,
+	}
+	newCred := secret.NewCredential("jwt-claude-code", []byte(makeTestJWT("other")))
+	if err := registerMCP(context.Background(), opts, func() (secret.Credential, error) { return newCred, nil }); err != nil {
+		t.Fatalf("registerMCP: %v", err)
+	}
+
+	fi, err := os.Stat(mcpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&0o177 != 0 {
+		t.Errorf("B92b: mode = %04o after kept entry; want 0600", fi.Mode()&0o777)
+	}
+}
+
+func TestKeptEntryNoPodmanExec(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mcpFile := filepath.Join(dir, ".claude.json")
+	keptJWT := makeTestJWT("claude-code")
+
+	entry := map[string]any{
+		"mcpServers": map[string]any{
+			"sag": map[string]any{
+				"type": "http",
+				"url":  srv.URL,
+				"headers": map[string]string{
+					"Authorization": "Bearer " + keptJWT,
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(entry)
+	os.WriteFile(mcpFile, data, 0o600)
+
+	origProbe := mcpProbe
+	mcpProbe = func(_ context.Context, url, _ string, cred secret.Credential) (int, error) {
+		return http.StatusOK, nil
+	}
+	defer func() { mcpProbe = origProbe }()
+
+	podmanCalled := false
+	origExec := execPodmanExec
+	execPodmanExec = func(_ context.Context, path string, args []string) ([]byte, error) {
+		podmanCalled = true
+		return nil, nil
+	}
+	defer func() { execPodmanExec = origExec }()
+
+	var out bytes.Buffer
+	SetOut(&out)
+	defer SetOut(os.Stdout)
+
+	cfgDir := t.TempDir()
+	pemData := saveTLSCertPEM(t, srv)
+	os.WriteFile(filepath.Join(cfgDir, "ca.pem"), pemData, 0o600)
+
+	opts := Options{
+		Harness:    HarnessClaudeCode,
+		Sub:        "claude-code",
+		URL:        srv.URL,
+		CfgDir:     cfgDir,
+		PodmanPath: "podman",
+		Env:        map[string]string{"CLAUDE_CONFIG_DIR": dir},
+		Home:       dir,
+	}
+	jwtFunc := func() (secret.Credential, error) {
+		podmanCalled = true
+		return secret.NewCredential("jwt-claude-code", []byte(makeTestJWT("claude-code"))), nil
+	}
+	if err := registerMCP(context.Background(), opts, jwtFunc); err != nil {
+		t.Fatalf("registerMCP: %v", err)
+	}
+
+	if podmanCalled {
+		t.Error("S51: jwtFunc was called for kept entry; want no call")
 	}
 }
 

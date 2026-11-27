@@ -90,27 +90,22 @@ func run(ctx context.Context, opts Options) error {
 		}
 	}
 
-	var jwtCred secret.Credential
+	var jwtFunc func() (secret.Credential, error)
 	switch mode {
 	case ModeRemote:
-		if keptJWT != "" {
-			jwtCred = secret.NewCredential("jwt-"+opts.Sub, []byte(keptJWT))
-		} else {
-			cred, err := remoteJWT(ctx, opts)
-			if err != nil {
-				return err
+		captured := keptJWT
+		if captured != "" {
+			jwtFunc = func() (secret.Credential, error) {
+				return secret.NewCredential("jwt-"+opts.Sub, []byte(captured)), nil
 			}
-			jwtCred = cred
+		} else {
+			jwtFunc = func() (secret.Credential, error) { return remoteJWT(ctx, opts) }
 		}
 	default:
-		cred, err := issueJWT(ctx, opts)
-		if err != nil {
-			return err
-		}
-		jwtCred = cred
+		jwtFunc = func() (secret.Credential, error) { return issueJWT(ctx, opts) }
 	}
 
-	if err := registerMCP(ctx, opts, jwtCred); err != nil {
+	if err := registerMCP(ctx, opts, jwtFunc); err != nil {
 		return err
 	}
 
@@ -429,7 +424,7 @@ func checkMCPFile(path, wantURL string) string {
 		return ""
 	}
 	var top map[string]json.RawMessage
-	if err := json.Unmarshal(data, &top); err != nil {
+	if err := json.Unmarshal(data, &top); err != nil || top == nil {
 		return "mcp-config " + path + " is not valid JSON"
 	}
 	mcpRaw, ok := top["mcpServers"]
@@ -501,7 +496,7 @@ func checkJSONFile(path string) string {
 		return ""
 	}
 	var top map[string]json.RawMessage
-	if err := json.Unmarshal(data, &top); err != nil {
+	if err := json.Unmarshal(data, &top); err != nil || top == nil {
 		return "settings " + path + " is not valid JSON"
 	}
 	return ""
