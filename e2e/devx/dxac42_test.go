@@ -100,8 +100,7 @@ func dxac42PiEnvConflict(t *testing.T, ctx context.Context, bin, podmanPath, fak
 
 	bundleCmd := dxac42ParseBundleCmd(out)
 	if bundleCmd == "" {
-		t.Log("DXAC42 pi-env: bundle command not found in output (expected until D6.1 merges)")
-		return
+		t.Fatalf("DXAC42 pi-env: output holds no bundle command; got %q", out)
 	}
 	if err := dxac42RunBundleCmd(bundleCmd); err != nil {
 		t.Fatalf("DXAC42 pi-env: run bundle command: %v", err)
@@ -170,8 +169,7 @@ func dxac42ClaudeSettingsConflict(t *testing.T, ctx context.Context, bin, podman
 
 	bundleCmd := dxac42ParseBundleCmd(out)
 	if bundleCmd == "" {
-		t.Log("DXAC42 claude-settings: bundle command not found in output (expected until D6.1 merges)")
-		return
+		t.Fatalf("DXAC42 claude-settings: output holds no bundle command; got %q", out)
 	}
 	if err := dxac42RunBundleCmd(bundleCmd); err != nil {
 		t.Fatalf("DXAC42 claude-settings: run bundle command: %v", err)
@@ -230,9 +228,13 @@ func dxac42AssertUnchanged(t *testing.T, label string, before, after map[string]
 
 func dxac42ParseBundleCmd(output string) string {
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "cat ") && strings.Contains(line, "ca.pem") {
-			return line
+		_, after, ok := strings.Cut(line, "run: cat ")
+		if !ok {
+			continue
+		}
+		cmd, _, _ := strings.Cut(after, "; then")
+		if strings.Contains(cmd, "ca.pem") {
+			return "cat " + cmd
 		}
 	}
 	return ""

@@ -321,7 +321,7 @@ func dxac41AssertStubReceived(t *testing.T, fakeBinDir, cfgDir, label string) {
 	recordPath := filepath.Join(fakeBinDir, "stub_records.json")
 	data, err := os.ReadFile(recordPath)
 	if err != nil {
-		t.Logf("DXAC41 %s: stub_records.json not found (expected until D6.1 merges): %v", label, err)
+		t.Errorf("DXAC41 %s: read stub_records.json: %v", label, err)
 		return
 	}
 	want := filepath.Join(cfgDir, "ca.pem")
