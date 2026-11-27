@@ -155,6 +155,8 @@ func DXAC25_Logs(t *testing.T, ctx context.Context) {
 	}
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Mcp-Protocol-Version", "2025-06-18")
 
 	resp, err := mcpClient.Do(req)
 	if err != nil {
