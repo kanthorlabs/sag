@@ -4,6 +4,7 @@ package devx_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,8 +25,28 @@ func DXAC20_Delete(t *testing.T, ctx context.Context) {
 	dxh.EnsureCanary(t)
 
 	uid := fmt.Sprintf("%d", os.Getuid())
-	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
+	r := dxh.NewRunner()
+	if err := dxh.WaitLaunchAgentIdle(ctx, r, uid); err != nil {
 		t.Fatalf("DXAC20: wait launch agent idle: %v", err)
+	}
+
+	out, err := r.Output(ctx, "podman", "container", "inspect", "sag")
+	if err != nil {
+		t.Fatalf("DXAC20: container inspect before delete: %v", err)
+	}
+	var before []inspectResult
+	if err := json.Unmarshal(out, &before); err != nil || len(before) != 1 {
+		t.Fatalf("DXAC20: container inspect parse before delete: %v", err)
+	}
+	foundBefore := false
+	for _, s := range before[0].Config.Secrets {
+		if s.Name == "sag-res-canary.conn" {
+			foundBefore = true
+			break
+		}
+	}
+	if !foundBefore {
+		t.Fatal("DXAC20: sag-res-canary.conn not in container inspect before delete; positive control failed")
 	}
 
 	code, tty := deleteViaStartTTY(t, ctx, "canary")
@@ -47,16 +68,29 @@ func DXAC20_Delete(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC20: canary still in sag.yaml")
 	}
 
-	r := dxh.NewRunner()
 	if _, err := r.Output(ctx, "podman", "cp", "sag:/var/lib/sag/approvals/canary.revoked.json", "-"); err != nil {
 		t.Fatalf("DXAC20: tombstone missing: %v", err)
 	}
 
-	out, err := r.Output(ctx, "podman", "secret", "ls", "--filter", "name=sag-res-canary", "--format", "{{.Name}}")
+	out, err = r.Output(ctx, "podman", "secret", "ls", "--filter", "name=sag-res-canary", "--format", "{{.Name}}")
 	if err != nil {
 		t.Fatalf("DXAC20: secret ls: %v", err)
 	}
 	if strings.Contains(string(out), "sag-res-canary") {
 		t.Fatalf("DXAC20: canary secret still exists: %s", out)
+	}
+
+	out, err = r.Output(ctx, "podman", "container", "inspect", "sag")
+	if err != nil {
+		t.Fatalf("DXAC20: container inspect after delete: %v", err)
+	}
+	var after []inspectResult
+	if err := json.Unmarshal(out, &after); err != nil || len(after) != 1 {
+		t.Fatalf("DXAC20: container inspect parse after delete: %v", err)
+	}
+	for _, s := range after[0].Config.Secrets {
+		if s.Name == "sag-res-canary.conn" {
+			t.Fatal("DXAC20: sag-res-canary.conn still in container inspect after delete")
+		}
 	}
 }

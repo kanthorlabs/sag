@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,46 +55,35 @@ func DXAC25_Logs(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC25: sag logs daemon output has no 'sag starting'")
 	}
 
-	dxac25Secret := "sag-res-dxac25r-conn"
-	secretFile := filepath.Join(t.TempDir(), "dxac25-conn")
-	if err := os.WriteFile(secretFile, []byte("postgres://dxac25test:dxac25pass@127.0.0.1:65432/dxac25testdb?sslmode=disable"), 0o600); err != nil {
-		t.Fatalf("DXAC25: write secret file: %v", err)
-	}
-	if _, err := r.Output(ctx, "podman", "secret", "create",
-		"--label", "sag.devx-e2e=1",
-		"--label", "sag.resource=dxac25r",
-		dxac25Secret, secretFile); err != nil {
-		t.Fatalf("DXAC25: create secret: %v", err)
+	n := time.Now().UnixNano()
+	dsn := fmt.Sprintf("postgres://dxu%016x:dxp%016x@127.0.0.1:1/dxdb%016x",
+		n, n^0x5a5a5a5a5a5a5a5a, n^0x2b2b2b2b2b2b2b2b)
+
+	code25, out25 := runSAGWithInput(t, ctx, []byte(dsn),
+		"credential", "create", "dxac25r",
+		"--kind", "postgres",
+		"--agent", "dxac25pi",
+		"--tls", "disable",
+		"--stdin",
+		"--accept-failed-check",
+	)
+	if code25 != 0 {
+		t.Fatalf("DXAC25: credential create dxac25r: exit %d; output: %s", code25, out25)
 	}
 
-	sagYAMLPath := filepath.Join(cfgDir, "sag.yaml")
-	sagYAML, err := os.ReadFile(sagYAMLPath)
-	if err != nil {
-		t.Fatalf("DXAC25: read sag.yaml: %v", err)
-	}
-	resourceBlock := "  dxac25r:\n    kind: postgres\n    connection: secret:" + dxac25Secret + "\n    agents:\n    - dxac25pi"
-	yamlContent := string(sagYAML)
-	var modified string
-	switch {
-	case strings.Contains(yamlContent, "dxac25r:"):
-		modified = yamlContent
-	case strings.Contains(yamlContent, "resources: {}"):
-		modified = strings.Replace(yamlContent, "resources: {}", "resources:\n"+resourceBlock, 1)
-	default:
-		idx := strings.Index(yamlContent, "\nresources:\n")
-		if idx >= 0 {
-			insertAt := idx + len("\nresources:\n")
-			modified = yamlContent[:insertAt] + resourceBlock + "\n" + yamlContent[insertAt:]
-		} else {
-			modified = strings.TrimRight(yamlContent, "\n") + "\nresources:\n" + resourceBlock + "\n"
+	t.Cleanup(func() {
+		if err := dxh.WaitLaunchAgentIdle(ctx, r, uid); err != nil {
+			t.Logf("DXAC25: cleanup wait idle: %v", err)
+			return
 		}
-	}
-	if err := os.WriteFile(sagYAMLPath, []byte(modified), 0o644); err != nil {
-		t.Fatalf("DXAC25: write sag.yaml: %v", err)
-	}
+		code, _ := deleteViaStartTTY(t, ctx, "dxac25r")
+		if code != 0 {
+			t.Logf("DXAC25: cleanup delete dxac25r: exit %d", code)
+		}
+	})
 
 	if err := dxh.WaitLaunchAgentIdle(ctx, r, uid); err != nil {
-		t.Fatalf("DXAC25: wait idle before restart: %v", err)
+		t.Fatalf("DXAC25: wait idle after create: %v", err)
 	}
 	if out, err := runSAG(t, ctx, "service", "stop"); err != nil {
 		t.Fatalf("DXAC25: service stop: %v\n%s", err, out)
@@ -111,7 +99,7 @@ func DXAC25_Logs(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC25: start jwt generate tty: %v", err)
 	}
 	if err := tty.Expect(ctx, "\n"); err != nil {
-		t.Fatalf("DXAC25: jwt generate did not print a line: %v", err)
+		t.Fatal("DXAC25: jwt generate did not print a line")
 	}
 	raw := tty.RawOutput()
 	jwt := jwtRe.FindString(raw)
@@ -129,8 +117,6 @@ func DXAC25_Logs(t *testing.T, ctx context.Context) {
 		t.Fatal("DXAC25: jwt generate: no JWT found in terminal output")
 	}
 
-	jti := dxac25JTIFromJWT(t, jwt)
-
 	caPath := filepath.Join(cfgDir, "ca.pem")
 	caPEM, err := os.ReadFile(caPath)
 	if err != nil {
@@ -147,9 +133,9 @@ func DXAC25_Logs(t *testing.T, ctx context.Context) {
 		Timeout: 15 * time.Second,
 	}
 
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_resources","arguments":{}}}`
+	mcpBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"sql_list_tables","arguments":{"resource":"dxac25r"}}}`
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://localhost:8443/mcp",
-		strings.NewReader(body))
+		strings.NewReader(mcpBody))
 	if err != nil {
 		t.Fatalf("DXAC25: build MCP request: %v", err)
 	}
@@ -163,9 +149,17 @@ func DXAC25_Logs(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC25: tools/call: %v", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("DXAC25: read tools/call response: %v", err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("DXAC25: tools/call: HTTP %d; want 200", resp.StatusCode)
+	}
+
+	requestID := dxac25ExtractRequestID(t, respBody)
+	if requestID == "" {
+		t.Fatal("DXAC25: tools/call response has no request_id")
 	}
 
 	auditOut, err := setsidR.Output(ctx, bin, "logs", "audit")
@@ -173,39 +167,8 @@ func DXAC25_Logs(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC25: sag logs audit (setsid): %v", err)
 	}
 
-	requestID := dxac25FindRequestID(string(auditOut), jti)
-	if requestID == "" {
-		t.Fatalf("DXAC25: audit output has no line with jti matching the tools/call")
-	}
-}
-
-func dxac25UID() string {
-	return fmt.Sprintf("%d", os.Getuid())
-}
-
-func dxac25JTIFromJWT(t *testing.T, raw string) string {
-	t.Helper()
-	parts := strings.Split(raw, ".")
-	if len(parts) != 3 {
-		t.Fatalf("DXAC25: JWT does not have 3 parts")
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		t.Fatalf("DXAC25: decode JWT payload: %v", err)
-	}
-	var claims map[string]any
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		t.Fatalf("DXAC25: unmarshal JWT claims: %v", err)
-	}
-	jti, _ := claims["jti"].(string)
-	if jti == "" {
-		t.Fatal("DXAC25: JWT has no jti claim")
-	}
-	return jti
-}
-
-func dxac25FindRequestID(auditOutput, jti string) string {
-	for _, line := range strings.Split(auditOutput, "\n") {
+	count := 0
+	for _, line := range strings.Split(string(auditOut), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -214,11 +177,50 @@ func dxac25FindRequestID(auditOutput, jti string) string {
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			continue
 		}
-		if rec["jti"] == jti {
-			if id, ok := rec["request_id"].(string); ok && id != "" {
-				return id
-			}
+		if id, ok := rec["request_id"].(string); ok && id == requestID {
+			count++
 		}
 	}
-	return ""
+	if count != 1 {
+		t.Fatalf("DXAC25: audit has %d lines with request_id; want 1", count)
+	}
+}
+
+func dxac25UID() string {
+	return fmt.Sprintf("%d", os.Getuid())
+}
+
+func dxac25ExtractRequestID(t *testing.T, body []byte) string {
+	t.Helper()
+	bodyStr := string(body)
+	var mcpJSON string
+	for _, line := range strings.Split(bodyStr, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, "data: ") {
+			mcpJSON = strings.TrimPrefix(line, "data: ")
+			break
+		}
+	}
+	if mcpJSON == "" {
+		mcpJSON = strings.TrimSpace(bodyStr)
+	}
+	var rpcResp struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(mcpJSON), &rpcResp); err != nil {
+		t.Fatalf("DXAC25: parse tools/call response: %v", err)
+	}
+	if len(rpcResp.Result.Content) == 0 {
+		return ""
+	}
+	var toolResult map[string]any
+	if err := json.Unmarshal([]byte(rpcResp.Result.Content[0].Text), &toolResult); err != nil {
+		t.Fatalf("DXAC25: parse tools/call content text: %v", err)
+	}
+	id, _ := toolResult["request_id"].(string)
+	return id
 }
