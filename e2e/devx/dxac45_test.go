@@ -64,8 +64,7 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 
 	groupDir := t.TempDir()
 	binDir := t.TempDir()
-	harnessDir := dxac39BuildFakeHarness(t, binDir)
-	_ = harnessDir
+	dxac39BuildFakeHarness(t, binDir)
 
 	env, err := dxh.ChildEnv(os.Environ(), groupDir)
 	if err != nil {
@@ -182,17 +181,12 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 		if strings.Contains(raw, "eyJ") {
 			t.Fatal("DXAC45-3: PTY output contains a JWT; want none for unlisted sub")
 		}
-		if code == 0 {
-			t.Errorf("DXAC45-3: exit = 0; want non-zero (sub not in any resource agents list)")
+		if code != 1 {
+			t.Errorf("DXAC45-3: exit = %d; want 1 (sub not in any resource agents list)", code)
 		}
 	})
 
 	credName := fmt.Sprintf("dxac45-%d", time.Now().UnixMilli()%100000)
-	t.Cleanup(func() {
-		ctx2, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		dxac45DeleteCred(t, ctx2, sagBin, credName)
-	})
 
 	t.Run("credential_create_with_agent", func(t *testing.T) {
 		code, out := runSAGWithInput(t, ctx, []byte(canaryDSN),
@@ -271,6 +265,10 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 	})
 
 	t.Run("auth_version_bump_new_jwt_authenticates", func(t *testing.T) {
+		preBumpCode, preBumpOut := runAgentSetup(t, ctx, "--sub", "claude-code", "--deny-rules", "no")
+		if preBumpCode != 0 {
+			t.Fatalf("DXAC45-9: pre-bump setup exit %d; output length=%d", preBumpCode, len(preBumpOut))
+		}
 		entryBefore := readMCPEntry(t)
 
 		if err := dxac45BumpAuthVersion(t, sagCfgDir); err != nil {
@@ -290,9 +288,9 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 			t.Fatalf("DXAC45-9: healthz after restart: %v", err)
 		}
 
-		code, out := runAgentSetup(t, ctx, "--sub", "claude-code", "--deny-rules", "no")
-		if code != 0 {
-			t.Fatalf("DXAC45-9: setup after version bump exit %d; output length=%d", code, len(out))
+		postBumpCode, postBumpOut := runAgentSetup(t, ctx, "--sub", "claude-code", "--deny-rules", "no")
+		if postBumpCode != 0 {
+			t.Fatalf("DXAC45-9: setup after version bump exit %d; output length=%d", postBumpCode, len(postBumpOut))
 		}
 
 		entryAfter := readMCPEntry(t)
@@ -412,16 +410,4 @@ func dxac45BumpAuthVersion(t *testing.T, sagCfgDir string) error {
 	}
 	newData := strings.Join(newLines, "\n")
 	return os.WriteFile(yamlPath, []byte(newData), 0o644)
-}
-
-func dxac45DeleteCred(t *testing.T, ctx context.Context, sagBin, name string) {
-	t.Helper()
-	tty, err := dxh.StartTTY(ctx, t.TempDir(), t.TempDir(), sagBin, "credential", "delete", name)
-	if err != nil {
-		t.Logf("DXAC45 cleanup: start TTY for credential delete %s: %v", name, err)
-		return
-	}
-	_ = tty.Expect(ctx, "confirm")
-	_ = tty.Expect(ctx, "y/n")
-	_ = tty.Expect(ctx, name)
 }

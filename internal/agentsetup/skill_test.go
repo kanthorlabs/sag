@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/kanthorlabs/sag/internal/core"
+	"github.com/kanthorlabs/sag/internal/mcpserver"
 	"github.com/kanthorlabs/sag/internal/sql"
 )
 
@@ -20,7 +21,7 @@ func TestSkillMarker(t *testing.T) {
 
 func TestDXAC49_SkillNamesToolsAndCodes(t *testing.T) {
 	toolNames := []string{
-		"mcp__sag__list_resources",
+		"mcp__sag__" + mcpserver.ListResourcesName,
 		"mcp__sag__" + sql.CapabilityName + "_" + sql.OperationListTables,
 		"mcp__sag__" + sql.CapabilityName + "_" + sql.OperationDescribeTable,
 		"mcp__sag__" + sql.CapabilityName + "_" + sql.OperationQuery,

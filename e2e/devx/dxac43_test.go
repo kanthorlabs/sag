@@ -67,6 +67,10 @@ func DXAC43_AgentSetupRefusals(t *testing.T, ctx context.Context) {
 	t.Run("not_connected_pi", func(t *testing.T) {
 		dxac43NotConnectedPi(t, ctx, bin, podmanPath)
 	})
+
+	t.Run("claude_sag_line", func(t *testing.T) {
+		dxac43ClaudeSagLine(t, ctx, bin, podmanPath)
+	})
 }
 
 func dxac43NoTerminalNoFlags(t *testing.T, ctx context.Context, bin, podmanPath, harness, flagName string) {
@@ -97,6 +101,13 @@ func dxac43ExistingMCPCommandKey(t *testing.T, ctx context.Context, bin, podmanP
 	claudeDir := t.TempDir()
 	piDir := t.TempDir()
 	binDir := t.TempDir()
+	root, err := dxh.RepoRoot()
+	if err != nil {
+		t.Fatalf("DXAC43 mcp-command-key: repo root: %v", err)
+	}
+	if err := dxh.BuildFakeHarness(root, binDir); err != nil {
+		t.Fatalf("DXAC43 mcp-command-key: build fakeharness: %v", err)
+	}
 	if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +133,12 @@ func dxac43ExistingMCPCommandKey(t *testing.T, ctx context.Context, bin, podmanP
 	if code != 1 {
 		t.Fatalf("DXAC43 mcp-command-key: expected exit 1; got %d\n%s", code, out)
 	}
+	if !strings.Contains(out, "fail mcp-server sag") {
+		t.Errorf("DXAC43 mcp-command-key: output missing 'fail mcp-server sag'; got %q", out)
+	}
+	if strings.Contains(out, "not in PATH") {
+		t.Errorf("DXAC43 mcp-command-key: output contains 'not in PATH'; got %q", out)
+	}
 
 	snapAfter := dxac43SnapshotDirs(claudeDir, piDir)
 	dxac43AssertUnchanged(t, "mcp-command-key", snapBefore, snapAfter)
@@ -131,6 +148,13 @@ func dxac43GuardWithoutMarker(t *testing.T, ctx context.Context, bin, podmanPath
 	t.Helper()
 	piDir := t.TempDir()
 	binDir := t.TempDir()
+	root, err := dxh.RepoRoot()
+	if err != nil {
+		t.Fatalf("DXAC43 guard-no-marker: repo root: %v", err)
+	}
+	if err := dxh.BuildFakeHarness(root, binDir); err != nil {
+		t.Fatalf("DXAC43 guard-no-marker: build fakeharness: %v", err)
+	}
 	if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +179,12 @@ func dxac43GuardWithoutMarker(t *testing.T, ctx context.Context, bin, podmanPath
 	if code != 1 {
 		t.Fatalf("DXAC43 guard-no-marker: expected exit 1; got %d\n%s", code, out)
 	}
+	if !strings.Contains(out, "fail guard") {
+		t.Errorf("DXAC43 guard-no-marker: output missing 'fail guard'; got %q", out)
+	}
+	if strings.Contains(out, "not in PATH") {
+		t.Errorf("DXAC43 guard-no-marker: output contains 'not in PATH'; got %q", out)
+	}
 
 	snapAfter := dxac43SnapshotDirs(claudeDir, piDir)
 	dxac43AssertUnchanged(t, "guard-no-marker", snapBefore, snapAfter)
@@ -165,6 +195,13 @@ func dxac43SkillWithoutMarker(t *testing.T, ctx context.Context, bin, podmanPath
 	claudeDir := t.TempDir()
 	piDir := t.TempDir()
 	binDir := t.TempDir()
+	root, err := dxh.RepoRoot()
+	if err != nil {
+		t.Fatalf("DXAC43 skill-no-marker: repo root: %v", err)
+	}
+	if err := dxh.BuildFakeHarness(root, binDir); err != nil {
+		t.Fatalf("DXAC43 skill-no-marker: build fakeharness: %v", err)
+	}
 	if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
 		t.Fatal(err)
 	}
@@ -185,6 +222,12 @@ func dxac43SkillWithoutMarker(t *testing.T, ctx context.Context, bin, podmanPath
 	if code != 1 {
 		t.Fatalf("DXAC43 skill-no-marker: expected exit 1; got %d\n%s", code, out)
 	}
+	if !strings.Contains(out, "fail skill") {
+		t.Errorf("DXAC43 skill-no-marker: output missing 'fail skill'; got %q", out)
+	}
+	if strings.Contains(out, "not in PATH") {
+		t.Errorf("DXAC43 skill-no-marker: output contains 'not in PATH'; got %q", out)
+	}
 
 	snapAfter := dxac43SnapshotDirs(claudeDir, piDir)
 	dxac43AssertUnchanged(t, "skill-no-marker", snapBefore, snapAfter)
@@ -195,6 +238,13 @@ func dxac43InvalidSettingsJSON(t *testing.T, ctx context.Context, bin, podmanPat
 	claudeDir := t.TempDir()
 	piDir := t.TempDir()
 	binDir := t.TempDir()
+	root, err := dxh.RepoRoot()
+	if err != nil {
+		t.Fatalf("DXAC43 invalid-json: repo root: %v", err)
+	}
+	if err := dxh.BuildFakeHarness(root, binDir); err != nil {
+		t.Fatalf("DXAC43 invalid-json: build fakeharness: %v", err)
+	}
 	if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +261,12 @@ func dxac43InvalidSettingsJSON(t *testing.T, ctx context.Context, bin, podmanPat
 	if code != 1 {
 		t.Fatalf("DXAC43 invalid-json: expected exit 1; got %d\n%s", code, out)
 	}
+	if !strings.Contains(out, "fail settings") {
+		t.Errorf("DXAC43 invalid-json: output missing 'fail settings'; got %q", out)
+	}
+	if strings.Contains(out, "not in PATH") {
+		t.Errorf("DXAC43 invalid-json: output contains 'not in PATH'; got %q", out)
+	}
 
 	snapAfter := dxac43SnapshotDirs(claudeDir, piDir)
 	dxac43AssertUnchanged(t, "invalid-json", snapBefore, snapAfter)
@@ -221,6 +277,13 @@ func dxac43FishShellRefused(t *testing.T, ctx context.Context, bin, podmanPath s
 	piDir := t.TempDir()
 	claudeDir := t.TempDir()
 	binDir := t.TempDir()
+	root, err := dxh.RepoRoot()
+	if err != nil {
+		t.Fatalf("DXAC43 fish-shell: repo root: %v", err)
+	}
+	if err := dxh.BuildFakeHarness(root, binDir); err != nil {
+		t.Fatalf("DXAC43 fish-shell: build fakeharness: %v", err)
+	}
 	if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +296,12 @@ func dxac43FishShellRefused(t *testing.T, ctx context.Context, bin, podmanPath s
 		"--shell-profile", "yes", "--guard", "yes")
 	if code != 1 {
 		t.Fatalf("DXAC43 fish-shell: expected exit 1; got %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "fail shell-profile") {
+		t.Errorf("DXAC43 fish-shell: output missing 'fail shell-profile'; got %q", out)
+	}
+	if strings.Contains(out, "not in PATH") {
+		t.Errorf("DXAC43 fish-shell: output contains 'not in PATH'; got %q", out)
 	}
 
 	snapAfter := dxac43SnapshotDirs(claudeDir, piDir)
@@ -267,6 +336,50 @@ func dxac43NotConnectedPi(t *testing.T, ctx context.Context, bin, podmanPath str
 		"--shell-profile", "yes", "--guard", "yes")
 	if code != 1 {
 		t.Fatalf("DXAC43 not-connected: expected exit 1; got %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "fail verify pi") {
+		t.Errorf("DXAC43 not-connected: output missing 'fail verify pi'; got %q", out)
+	}
+	if strings.Contains(out, "not in PATH") {
+		t.Errorf("DXAC43 not-connected: output contains 'not in PATH'; got %q", out)
+	}
+}
+
+func dxac43ClaudeSagLine(t *testing.T, ctx context.Context, bin, podmanPath string) {
+	t.Helper()
+	claudeDir := t.TempDir()
+	piDir := t.TempDir()
+	binDir := t.TempDir()
+	root, err := dxh.RepoRoot()
+	if err != nil {
+		t.Fatalf("DXAC43 claude-sag-line: repo root: %v", err)
+	}
+	if err := dxh.BuildFakeHarness(root, binDir); err != nil {
+		t.Fatalf("DXAC43 claude-sag-line: build fakeharness: %v", err)
+	}
+	if err := dxh.AddRealProgramLink(binDir, "podman", podmanPath); err != nil {
+		t.Fatal(err)
+	}
+
+	const failedSagLine = "sag: https://localhost:8443/mcp (HTTP) - ✗ Failed to connect"
+	sagLinePath := filepath.Join(binDir, "claude_sag_line")
+	if err := os.WriteFile(sagLinePath, []byte(failedSagLine+"\n"), 0o600); err != nil {
+		t.Fatalf("DXAC43 claude-sag-line: write claude_sag_line: %v", err)
+	}
+
+	env := dxac43BaseEnv(claudeDir, piDir, binDir)
+	code, out := dxac43RunSetsid(ctx, bin, env, "agent", "setup", "claude-code", "--deny-rules", "yes")
+	if code != 1 {
+		t.Fatalf("DXAC43 claude-sag-line: expected exit 1; got %d\n%s (waits for D6.6c B83)", code, out)
+	}
+	if !strings.Contains(out, "fail verify claude-code") {
+		t.Errorf("DXAC43 claude-sag-line: output missing 'fail verify claude-code'; got %q", out)
+	}
+	if !strings.Contains(out, failedSagLine) {
+		t.Errorf("DXAC43 claude-sag-line: output missing sag result line %q; got %q (waits for D6.6c B83)", failedSagLine, out)
+	}
+	if strings.Contains(out, "not in PATH") {
+		t.Errorf("DXAC43 claude-sag-line: output contains 'not in PATH'; got %q", out)
 	}
 }
 
