@@ -3,10 +3,12 @@ package credential
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/kanthorlabs/sag/internal/podman"
@@ -117,7 +119,7 @@ func writeTTY(t *testing.T, input string) *os.File {
 }
 
 func TestFlagsExit2(t *testing.T) {
-	for _, arg := range []string{"--yes", "--stdin", "--json"} {
+	for _, arg := range []string{"--yes", "--stdin", "--json", "--yes=false", "--stdin=false", "--json=false"} {
 		_, err := ParseDeleteArgs([]string{arg, "myres"})
 		if !errors.Is(err, ErrDeleteFlagRejected) {
 			t.Errorf("ParseDeleteArgs([%s myres]) error = %v; want ErrDeleteFlagRejected", arg, err)
@@ -128,12 +130,14 @@ func TestFlagsExit2(t *testing.T) {
 func TestNoTTYExit3NoChange(t *testing.T) {
 	dir := t.TempDir()
 	writeSAGYAML(t, dir, yamlWithCanary)
+	before, _ := os.ReadFile(filepath.Join(dir, "sag.yaml"))
 
+	cmd := &fakePodmanCmd{}
 	ds := newDeleteStorage([]string{"sag-res-test-res.conn"}, "test-res")
 	opts := DeleteOptions{
 		CfgDir:  dir,
 		Backend: ds,
-		Podman:  &fakePodmanCmd{},
+		Podman:  cmd,
 		Out:     io.Discard,
 		Err:     io.Discard,
 	}
@@ -145,17 +149,28 @@ func TestNoTTYExit3NoChange(t *testing.T) {
 	if len(ds.deleted) != 0 {
 		t.Errorf("secrets deleted despite no terminal: %v", ds.deleted)
 	}
+	for _, a := range cmd.args {
+		if len(a) > 0 && (a[0] == "exec" || a[0] == "run") {
+			t.Errorf("podman %v called despite no terminal", a)
+		}
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "sag.yaml"))
+	if string(before) != string(after) {
+		t.Errorf("sag.yaml changed despite no terminal")
+	}
 }
 
 func TestWrongNameExit3(t *testing.T) {
 	dir := t.TempDir()
 	writeSAGYAML(t, dir, yamlWithCanary)
+	before, _ := os.ReadFile(filepath.Join(dir, "sag.yaml"))
 
+	cmd := &fakePodmanCmd{}
 	ds := newDeleteStorage([]string{"sag-res-test-res.conn"}, "test-res")
 	opts := DeleteOptions{
 		CfgDir:  dir,
 		Backend: ds,
-		Podman:  &fakePodmanCmd{},
+		Podman:  cmd,
 		Out:     io.Discard,
 		Err:     io.Discard,
 	}
@@ -168,6 +183,15 @@ func TestWrongNameExit3(t *testing.T) {
 	}
 	if len(ds.deleted) != 0 {
 		t.Errorf("secrets deleted after wrong name: %v", ds.deleted)
+	}
+	for _, a := range cmd.args {
+		if len(a) > 0 && (a[0] == "exec" || a[0] == "run") {
+			t.Errorf("podman %v called after wrong name", a)
+		}
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "sag.yaml"))
+	if string(before) != string(after) {
+		t.Errorf("sag.yaml changed after wrong name")
 	}
 }
 
@@ -266,8 +290,9 @@ resources:
 	if err != nil {
 		t.Fatalf("want nil, got %v", err)
 	}
-	if !strings.Contains(outBuf.String(), "skip") {
-		t.Errorf("expected skip line for foreign secret; got %q", outBuf.String())
+	want := "skip foreign-conn not created by sag; not removed\n"
+	if !strings.Contains(outBuf.String(), want) {
+		t.Errorf("expected exact skip line %q; got %q", want, outBuf.String())
 	}
 	if len(ds.deleted) != 0 {
 		t.Errorf("foreign secret deleted; deleted = %v", ds.deleted)
@@ -397,5 +422,353 @@ resources:
 	yamlOut, _ := os.ReadFile(filepath.Join(dir, "sag.yaml"))
 	if strings.Contains(string(yamlOut), "test-res") {
 		t.Errorf("test-res still in sag.yaml after second delete")
+	}
+}
+
+func TestStep3Output(t *testing.T) {
+	dir := t.TempDir()
+	writeSAGYAML(t, dir, yamlWithCanary)
+
+	ds := newDeleteStorage([]string{"sag-res-test-res.conn"}, "test-res")
+	opts := DeleteOptions{
+		CfgDir:  dir,
+		Backend: ds,
+		Podman:  &fakePodmanCmd{running: true},
+		Out:     io.Discard,
+		Err:     io.Discard,
+	}
+
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ttyFile := os.NewFile(uintptr(fds[0]), "tty")
+	peer := os.NewFile(uintptr(fds[1]), "peer")
+	t.Cleanup(func() { peer.Close() })
+
+	if _, err := io.WriteString(peer, "test-res\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Delete(context.Background(), "test-res", ttyFile, opts); err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+	ttyFile.Close()
+
+	out, _ := io.ReadAll(peer)
+	text := string(out)
+	for _, want := range []string{
+		"resource: test-res",
+		"kind: fakedb",
+		"agents: agent-a",
+		"secret: sag-res-test-res.conn",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("step 3 output missing %q; got %q", want, text)
+		}
+	}
+}
+
+type orderPodman struct {
+	running  bool
+	addEvent func(string)
+}
+
+func (p *orderPodman) Run(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+	if len(args) >= 2 && args[0] == "container" && args[1] == "inspect" {
+		if p.running {
+			return []byte("true"), nil
+		}
+		return []byte("false"), nil
+	}
+	if len(args) >= 1 && args[0] == "exec" {
+		p.addEvent("revoke")
+	}
+	if len(args) >= 1 && args[0] == "run" {
+		p.addEvent("revoke-oneshot")
+	}
+	return nil, nil
+}
+
+func TestServiceStartOrderRunning(t *testing.T) {
+	dir := t.TempDir()
+	writeSAGYAML(t, dir, yamlWithCanary)
+
+	var events []string
+	addEvent := func(s string) { events = append(events, s) }
+
+	ds := newDeleteStorage([]string{"sag-res-test-res.conn"}, "test-res")
+	opts := DeleteOptions{
+		CfgDir:  dir,
+		Backend: ds,
+		Podman:  &orderPodman{running: true, addEvent: addEvent},
+		Out:     io.Discard,
+		Err:     io.Discard,
+		ServiceStart: func(ctx context.Context, out io.Writer) error {
+			data, _ := os.ReadFile(filepath.Join(dir, "sag.yaml"))
+			if strings.Contains(string(data), "test-res") {
+				t.Error("sag.yaml still has test-res when ServiceStart is called")
+			}
+			addEvent("start")
+			return nil
+		},
+	}
+
+	tty := writeTTY(t, "test-res\n")
+	if err := Delete(context.Background(), "test-res", tty, opts); err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+
+	if len(events) < 2 || events[0] != "revoke" || events[1] != "start" {
+		t.Errorf("event order = %v; want [revoke start]", events)
+	}
+	if len(ds.deleted) == 0 {
+		t.Errorf("secrets not deleted after ServiceStart")
+	}
+}
+
+func TestServiceStartNotCalledWhenStopped(t *testing.T) {
+	dir := t.TempDir()
+	writeSAGYAML(t, dir, yamlWithCanary)
+
+	ds := newDeleteStorage([]string{"sag-res-test-res.conn"}, "test-res")
+	startCalled := false
+	opts := DeleteOptions{
+		CfgDir:  dir,
+		Backend: ds,
+		Podman:  &fakePodmanCmd{running: false},
+		Out:     io.Discard,
+		Err:     io.Discard,
+		Image:   "sag:test",
+		ServiceStart: func(ctx context.Context, out io.Writer) error {
+			startCalled = true
+			return nil
+		},
+	}
+
+	tty := writeTTY(t, "test-res\n")
+	if err := Delete(context.Background(), "test-res", tty, opts); err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+	if startCalled {
+		t.Errorf("ServiceStart called when container was stopped")
+	}
+}
+
+func TestCrossRefSecretSkipped(t *testing.T) {
+	dir := t.TempDir()
+	yaml := `version: 1
+server:
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+resources:
+  test-res:
+    kind: fakedb
+    connection: secret:sag-res-shared.conn
+    agents: [agent-a]
+  other-res:
+    kind: fakedb
+    connection: secret:sag-res-shared.conn
+    agents: [agent-b]
+`
+	writeSAGYAML(t, dir, yaml)
+
+	ds := newDeleteStorage([]string{"sag-res-shared.conn"}, "test-res")
+	var outBuf strings.Builder
+	opts := DeleteOptions{
+		CfgDir:  dir,
+		Backend: ds,
+		Podman:  &fakePodmanCmd{running: true},
+		Out:     &outBuf,
+		Err:     io.Discard,
+	}
+
+	tty := writeTTY(t, "test-res\n")
+	if err := Delete(context.Background(), "test-res", tty, opts); err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+
+	if len(ds.deleted) != 0 {
+		t.Errorf("cross-referenced secret was deleted; deleted = %v", ds.deleted)
+	}
+	want := "skip sag-res-shared.conn not created by sag; not removed\n"
+	if !strings.Contains(outBuf.String(), want) {
+		t.Errorf("expected skip line %q; got %q", want, outBuf.String())
+	}
+}
+
+func TestResumeCase1NoOwnedSecret(t *testing.T) {
+	dir := t.TempDir()
+	yaml := `version: 1
+server:
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+resources:
+  test-res:
+    kind: fakedb
+    connection: secret:foreign-conn
+    agents: [agent-a]
+`
+	writeSAGYAML(t, dir, yaml)
+
+	ds := &deleteStorage{metas: make(map[string]secret.Metadata)}
+	startCalls := 0
+	failStart := true
+	opts := DeleteOptions{
+		CfgDir:  dir,
+		Backend: ds,
+		Podman:  &fakePodmanCmd{running: true},
+		Out:     io.Discard,
+		Err:     io.Discard,
+		ServiceStart: func(ctx context.Context, out io.Writer) error {
+			startCalls++
+			if failStart {
+				failStart = false
+				return fmt.Errorf("start failed")
+			}
+			return nil
+		},
+	}
+
+	tty1 := writeTTY(t, "test-res\n")
+	err := Delete(context.Background(), "test-res", tty1, opts)
+	if err == nil || !strings.Contains(err.Error(), "service start") {
+		t.Fatalf("first delete: want service start error, got %v", err)
+	}
+
+	recPath := filepath.Join(dir, "delete-pending", "test-res.json")
+	fi, statErr := os.Stat(recPath)
+	if statErr != nil {
+		t.Fatalf("pending record not found after failure: %v", statErr)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("pending record mode = %v; want 0600", fi.Mode().Perm())
+	}
+
+	var outBuf strings.Builder
+	opts.Out = &outBuf
+
+	tty2 := writeTTY(t, "test-res\n")
+	err = Delete(context.Background(), "test-res", tty2, opts)
+	if err != nil {
+		t.Fatalf("second delete: want nil, got %v", err)
+	}
+
+	if startCalls != 2 {
+		t.Errorf("ServiceStart called %d times; want 2", startCalls)
+	}
+	if _, err := os.Stat(recPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("pending record should be removed after success")
+	}
+	want := "skip foreign-conn not created by sag; not removed\n"
+	if !strings.Contains(outBuf.String(), want) {
+		t.Errorf("expected skip line %q; got %q", want, outBuf.String())
+	}
+}
+
+func TestResumeCase2StoredWasRunning(t *testing.T) {
+	dir := t.TempDir()
+	writeSAGYAML(t, dir, yamlWithCanary)
+
+	ds := newDeleteStorage([]string{"sag-res-test-res.conn"}, "test-res")
+	startCalls := 0
+	failStart := true
+	cmd := &fakePodmanCmd{running: true}
+	opts := DeleteOptions{
+		CfgDir:  dir,
+		Backend: ds,
+		Podman:  cmd,
+		Out:     io.Discard,
+		Err:     io.Discard,
+		ServiceStart: func(ctx context.Context, out io.Writer) error {
+			startCalls++
+			if failStart {
+				failStart = false
+				return fmt.Errorf("start failed")
+			}
+			return nil
+		},
+	}
+
+	tty1 := writeTTY(t, "test-res\n")
+	err := Delete(context.Background(), "test-res", tty1, opts)
+	if err == nil || !strings.Contains(err.Error(), "service start") {
+		t.Fatalf("first delete: want service start error, got %v", err)
+	}
+
+	recPath := filepath.Join(dir, "delete-pending", "test-res.json")
+	if _, statErr := os.Stat(recPath); statErr != nil {
+		t.Fatalf("pending record not found after failure: %v", statErr)
+	}
+
+	cmd.running = false
+
+	tty2 := writeTTY(t, "test-res\n")
+	err = Delete(context.Background(), "test-res", tty2, opts)
+	if err != nil {
+		t.Fatalf("second delete: want nil, got %v", err)
+	}
+
+	if startCalls != 2 {
+		t.Errorf("ServiceStart called %d times; want 2 (stored WasRunning=true)", startCalls)
+	}
+	if _, err := os.Stat(recPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("pending record should be removed after success")
+	}
+	if len(ds.deleted) == 0 {
+		t.Errorf("owned secrets not deleted on retry")
+	}
+}
+
+func TestResumeCase3StoredUnowned(t *testing.T) {
+	dir := t.TempDir()
+	yaml := `version: 1
+server:
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+resources:
+  test-res:
+    kind: fakedb
+    connection: secret:sag-res-test-res.conn
+    tls_ca: secret:foreign-ca
+    agents: [agent-a]
+`
+	writeSAGYAML(t, dir, yaml)
+
+	ds := newDeleteStorage([]string{"sag-res-test-res.conn"}, "test-res")
+	failStart := true
+	opts := DeleteOptions{
+		CfgDir:  dir,
+		Backend: ds,
+		Podman:  &fakePodmanCmd{running: true},
+		Out:     io.Discard,
+		Err:     io.Discard,
+		ServiceStart: func(ctx context.Context, out io.Writer) error {
+			if failStart {
+				failStart = false
+				return fmt.Errorf("start failed")
+			}
+			return nil
+		},
+	}
+
+	tty1 := writeTTY(t, "test-res\n")
+	err := Delete(context.Background(), "test-res", tty1, opts)
+	if err == nil || !strings.Contains(err.Error(), "service start") {
+		t.Fatalf("first delete: want service start error, got %v", err)
+	}
+
+	var outBuf strings.Builder
+	opts.Out = &outBuf
+
+	tty2 := writeTTY(t, "test-res\n")
+	err = Delete(context.Background(), "test-res", tty2, opts)
+	if err != nil {
+		t.Fatalf("second delete: want nil, got %v", err)
+	}
+
+	want := "skip foreign-ca not created by sag; not removed\n"
+	if !strings.Contains(outBuf.String(), want) {
+		t.Errorf("second delete: expected skip line %q; got %q", want, outBuf.String())
 	}
 }

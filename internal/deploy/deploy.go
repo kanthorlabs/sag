@@ -11,7 +11,7 @@ import (
 
 var ImageDigest = ""
 
-const stateVolumeName = "sag-state"
+const StateVolumeName = "sag-state"
 
 type ProductFlags struct {
 	ReadOnly        bool
@@ -120,7 +120,7 @@ func RunArgs(cfg *config.Config, opts RunOpts) []string {
 	args = append(args, p.SecurityArgs()...)
 	args = append(args, "-p", p.Publish(p.ContainerPort))
 	args = append(args, "-v", p.ConfigVolume(opts.ConfigSource))
-	args = append(args, "-v", p.StateVolume(stateVolumeName))
+	args = append(args, "-v", p.StateVolume(StateVolumeName))
 	if opts.RestartPolicy != "" {
 		args = append(args, "--restart="+opts.RestartPolicy)
 	}
@@ -157,7 +157,7 @@ func Quadlet(cfg *config.Config, opts RunOpts) string {
 	fmt.Fprintln(&b, "LogDriver="+l.Driver)
 	fmt.Fprintln(&b, "PodmanArgs=--log-opt=max-size="+l.MaxSize)
 	fmt.Fprintln(&b, "Volume="+p.ConfigVolume(opts.ConfigSource))
-	fmt.Fprintln(&b, "Volume="+p.StateVolume(stateVolumeName))
+	fmt.Fprintln(&b, "Volume="+p.StateVolume(StateVolumeName))
 	for _, name := range SecretMounts(cfg) {
 		fmt.Fprintln(&b, "Secret="+p.Secret(name, name, ""))
 	}
