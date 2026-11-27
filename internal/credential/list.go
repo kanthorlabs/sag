@@ -19,6 +19,8 @@ import (
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
+var ErrResourceNotFound = errors.New("resource not found")
+
 const (
 	backendPodman      = "podman"
 	roleConn           = "connection"
@@ -98,7 +100,7 @@ func Inspect(ctx context.Context, name string, opts InspectOptions) (Entry, erro
 
 	r, ok := cfg.Resources[name]
 	if !ok {
-		return Entry{}, fmt.Errorf("resource %s not found", name)
+		return Entry{}, fmt.Errorf("resource %s not found: %w", name, ErrResourceNotFound)
 	}
 
 	warnExpiry(opts.CAPem, opts.Stderr, time.Now())

@@ -228,34 +228,46 @@ func TestJSONFieldSetExact(t *testing.T) {
 func TestNoLoadCall(t *testing.T) {
 	dir := t.TempDir()
 	yamlPath := writeSAGYaml(t, dir, minimalYAML)
-	be := &fakeBackend{metas: map[string]secret.Metadata{}}
-	pm := &fakePodman{}
+	ts := time.Now()
 
-	_, err := List(context.Background(), ListOptions{
-		SAGYaml: yamlPath,
-		Backend: be,
-		Podman:  pm,
-		Stderr:  io.Discard,
-	})
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if be.loadCalled {
-		t.Error("List called backend.Load; it must not")
-	}
+	for _, name := range []string{"not-found backend", "found backend"} {
+		metas := map[string]secret.Metadata{}
+		if name == "found backend" {
+			metas["sag-res-canary.conn"] = secret.Metadata{
+				Name:      "sag-res-canary.conn",
+				Labels:    map[string]string{"sag.resource": "canary"},
+				CreatedAt: ts,
+			}
+		}
+		be := &fakeBackend{metas: metas}
+		pm := &fakePodman{}
 
-	be.loadCalled = false
-	_, err = Inspect(context.Background(), "canary", InspectOptions{
-		SAGYaml: yamlPath,
-		Backend: be,
-		Podman:  pm,
-		Stderr:  io.Discard,
-	})
-	if err != nil {
-		t.Fatalf("Inspect: %v", err)
-	}
-	if be.loadCalled {
-		t.Error("Inspect called backend.Load; it must not")
+		_, err := List(context.Background(), ListOptions{
+			SAGYaml: yamlPath,
+			Backend: be,
+			Podman:  pm,
+			Stderr:  io.Discard,
+		})
+		if err != nil {
+			t.Fatalf("%s: List: %v", name, err)
+		}
+		if be.loadCalled {
+			t.Errorf("%s: List called backend.Load; it must not", name)
+		}
+
+		be.loadCalled = false
+		_, err = Inspect(context.Background(), "canary", InspectOptions{
+			SAGYaml: yamlPath,
+			Backend: be,
+			Podman:  pm,
+			Stderr:  io.Discard,
+		})
+		if err != nil {
+			t.Fatalf("%s: Inspect: %v", name, err)
+		}
+		if be.loadCalled {
+			t.Errorf("%s: Inspect called backend.Load; it must not", name)
+		}
 	}
 }
 
