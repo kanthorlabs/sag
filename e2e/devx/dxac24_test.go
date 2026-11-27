@@ -87,7 +87,7 @@ func DXAC24_HostJWTGenerate(t *testing.T, ctx context.Context) {
 			t.Fatalf("DXAC24-B: start tty: %v", err)
 		}
 		if err := tty.Expect(ctx, "sag-exit-3"); err != nil {
-			t.Fatalf("DXAC24-B: expected sag-exit-3 in output: %v; raw: %q", err, tty.RawOutput())
+			t.Fatal("DXAC24-B: expected sag-exit-3 in output")
 		}
 		if _, err := tty.Wait(ctx); err != nil {
 			t.Fatalf("DXAC24-B: wait: %v", err)
@@ -98,6 +98,52 @@ func DXAC24_HostJWTGenerate(t *testing.T, ctx context.Context) {
 		}
 		if len(content) != 0 {
 			t.Fatalf("DXAC24-B: output file has %d bytes; want empty", len(content))
+		}
+	})
+
+	t.Run("stdin_null_exit3", func(t *testing.T) {
+		groupDir := t.TempDir()
+		binDir := t.TempDir()
+		script := sagBin + " jwt generate claude-code-dev </dev/null; echo sag-exit-$?"
+		tty, err := dxh.StartTTY(ctx, groupDir, binDir, "/bin/sh", "-c", script)
+		if err != nil {
+			t.Fatalf("DXAC24-E: start tty: %v", err)
+		}
+		if err := tty.Expect(ctx, "sag-exit-"); err != nil {
+			t.Fatal("DXAC24-E: sag-exit- not found in output")
+		}
+		raw := tty.RawOutput()
+		if strings.Contains(raw, "eyJ") {
+			t.Fatal("DXAC24-E: output contains a token; want none")
+		}
+		if _, err := tty.Wait(ctx); err != nil {
+			t.Fatalf("DXAC24-E: wait: %v", err)
+		}
+		if !strings.Contains(raw, "sag-exit-3") {
+			t.Fatal("DXAC24-E: output does not contain sag-exit-3; want exit 3")
+		}
+	})
+
+	t.Run("stdout_null_exit3", func(t *testing.T) {
+		groupDir := t.TempDir()
+		binDir := t.TempDir()
+		script := sagBin + " jwt generate claude-code-dev >/dev/null; echo sag-exit-$?"
+		tty, err := dxh.StartTTY(ctx, groupDir, binDir, "/bin/sh", "-c", script)
+		if err != nil {
+			t.Fatalf("DXAC24-F: start tty: %v", err)
+		}
+		if err := tty.Expect(ctx, "sag-exit-"); err != nil {
+			t.Fatal("DXAC24-F: sag-exit- not found in output")
+		}
+		raw := tty.RawOutput()
+		if strings.Contains(raw, "eyJ") {
+			t.Fatal("DXAC24-F: output contains a token; want none")
+		}
+		if _, err := tty.Wait(ctx); err != nil {
+			t.Fatalf("DXAC24-F: wait: %v", err)
+		}
+		if !strings.Contains(raw, "sag-exit-3") {
+			t.Fatal("DXAC24-F: output does not contain sag-exit-3; want exit 3")
 		}
 	})
 
@@ -136,7 +182,7 @@ func DXAC24_HostJWTGenerate(t *testing.T, ctx context.Context) {
 			t.Fatalf("DXAC24-D: start tty: %v", err)
 		}
 		if err := tty.Expect(ctx, "\n"); err != nil {
-			t.Fatalf("DXAC24-D: jwt generate did not print a line: %v", err)
+			t.Fatal("DXAC24-D: jwt generate did not print a line")
 		}
 		raw := tty.RawOutput()
 		jwtRe24 := regexp.MustCompile(`eyJ[A-Za-z0-9+/=_-]+\.[A-Za-z0-9+/=_-]+\.[A-Za-z0-9+/=_-]+`)
@@ -155,15 +201,23 @@ func DXAC24_HostJWTGenerate(t *testing.T, ctx context.Context) {
 			t.Fatal("DXAC24-D: no JWT found in terminal output")
 		}
 
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://localhost:8443/mcp", nil)
+		mcpBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_resources","arguments":{}}}`
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://localhost:8443/mcp",
+			strings.NewReader(mcpBody))
+		if err != nil {
+			t.Fatalf("DXAC24-D: build MCP request: %v", err)
+		}
 		req.Header.Set("Authorization", "Bearer "+jwt)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set("Mcp-Protocol-Version", "2025-06-18")
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("DXAC24-D: POST /mcp: %v", err)
 		}
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusUnauthorized {
-			t.Fatal("DXAC24-D: POST /mcp: status 401; JWT not accepted")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("DXAC24-D: POST /mcp: status %d; want 200", resp.StatusCode)
 		}
 	})
 }

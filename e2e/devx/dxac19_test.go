@@ -31,6 +31,19 @@ func DXAC19_DeleteConfirm(t *testing.T, ctx context.Context) {
 		if code != 2 {
 			t.Fatalf("DXAC19: --yes: exit %d; want 2; output: %s", code, combined)
 		}
+		if !secretExists(ctx, t, "sag-res-canary.conn") {
+			t.Fatal("DXAC19: canary conn secret missing after refused --yes delete")
+		}
+	})
+
+	t.Run("ac_order_exit2", func(t *testing.T) {
+		code, combined := runSAGSetsid(t, ctx, nil, "credential", "delete", "canary", "--yes")
+		if code != 2 {
+			t.Fatalf("DXAC19: canary --yes: exit %d; want 2; output: %s", code, combined)
+		}
+		if !secretExists(ctx, t, "sag-res-canary.conn") {
+			t.Fatal("DXAC19: canary conn secret missing after refused canary --yes delete")
+		}
 	})
 
 	t.Run("wrong_name_exit3", func(t *testing.T) {
@@ -57,9 +70,8 @@ func DXAC19_DeleteConfirm(t *testing.T, ctx context.Context) {
 		if code != 3 {
 			t.Fatalf("DXAC19: wrong name: exit %d; want 3; output: %s", code, tty.RawOutput())
 		}
+		if !secretExists(ctx, t, "sag-res-canary.conn") {
+			t.Fatal("DXAC19: canary conn secret missing after wrong name delete")
+		}
 	})
-
-	if !secretExists(ctx, t, "sag-res-canary.conn") {
-		t.Fatalf("DXAC19: canary conn secret missing after refused delete")
-	}
 }

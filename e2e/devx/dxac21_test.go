@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
@@ -72,6 +74,26 @@ func DXAC21_DeleteStopped(t *testing.T, ctx context.Context) {
 	code, tty := deleteViaStartTTY(t, ctx, name)
 	if code != 0 {
 		t.Fatalf("DXAC21: delete %s (stopped container): exit %d; want 0; output: %s", name, code, tty.RawOutput())
+	}
+
+	if containerRunning(ctx) {
+		t.Fatal("DXAC21: container running after delete with stopped container; want stopped")
+	}
+
+	home := os.Getenv("HOME")
+	sagYAMLData, err := os.ReadFile(filepath.Join(dxh.CfgDir(home), "sag.yaml"))
+	if err != nil {
+		t.Fatalf("DXAC21: read sag.yaml: %v", err)
+	}
+	if strings.Contains(string(sagYAMLData), name+":") {
+		t.Fatalf("DXAC21: sag.yaml still has %s after delete", name)
+	}
+
+	if _, err := runSAG(t, ctx, "service", "start"); err != nil {
+		t.Fatalf("DXAC21: service start for tombstone check: %v", err)
+	}
+	if _, err := r.Output(ctx, "podman", "cp", "sag:/var/lib/sag/approvals/"+name+".revoked.json", "-"); err != nil {
+		t.Fatalf("DXAC21: tombstone missing: %v", err)
 	}
 
 	if secretExists(ctx, t, "sag-res-"+name+".conn") {

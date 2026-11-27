@@ -107,8 +107,16 @@ func DXAC23_DeleteForeignSecret(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC23: delete %s: exit %d; want 0; output: %s", name, code, outBuf.String())
 	}
 
-	if !strings.Contains(outBuf.String(), "skip") {
-		t.Fatalf("DXAC23: output missing skip line; output: %s", outBuf.String())
+	wantSkip := "skip " + connSecret + " not created by sag; not removed"
+	foundSkip := false
+	for _, line := range strings.Split(outBuf.String(), "\n") {
+		if strings.TrimRight(line, "\r") == wantSkip {
+			foundSkip = true
+			break
+		}
+	}
+	if !foundSkip {
+		t.Fatalf("DXAC23: exact skip line %q not found; output: %s", wantSkip, outBuf.String())
 	}
 
 	if !secretExists(ctx, t, connSecret) {
