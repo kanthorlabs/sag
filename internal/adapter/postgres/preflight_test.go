@@ -203,7 +203,7 @@ func TestPreflightRiskyWithoutApprovalsRefuses(t *testing.T) {
 	if report.Passed || reportCheck(t, report, checkRiskyObjects).Passed {
 		t.Fatalf("report = %+v; want risky_objects refused with nil Approvals", report)
 	}
-	want := "resource main has risky objects dblink, file_fdw, plperlu; to approve, run on the host: podman exec -it sag sag extension approve main"
+	want := "resource main has risky objects dblink, file_fdw, plperlu; to approve, run: sag extension approve main"
 	if report.Hint != want {
 		t.Fatalf("hint = %q; want %q", report.Hint, want)
 	}
@@ -225,7 +225,7 @@ func TestPreflightRefusesNetworkExtensions(t *testing.T) {
 		if report.Passed || reportCheck(t, report, checkRiskyObjects).Passed {
 			t.Errorf("%s: report = %+v; want risky_objects refused", name, report)
 		}
-		want := "resource main has risky objects " + name + "; to approve, run on the host: podman exec -it sag sag extension approve main"
+		want := "resource main has risky objects " + name + "; to approve, run: sag extension approve main"
 		if report.Hint != want {
 			t.Errorf("%s: hint = %q; want %q", name, report.Hint, want)
 		}
@@ -245,7 +245,7 @@ func TestPreflightRiskyVerifyErrorsRefuse(t *testing.T) {
 		if report.Passed || c.Passed {
 			t.Errorf("Verify error %v: report = %+v; want refused", verifyErr, report)
 		}
-		if !strings.Contains(report.Hint, "podman exec -it sag sag extension approve main") || !strings.Contains(report.Hint, "file_fdw") {
+		if !strings.Contains(report.Hint, "sag extension approve main") || !strings.Contains(report.Hint, "file_fdw") {
 			t.Errorf("Verify error %v: hint = %q; want the approval hint with the objects", verifyErr, report.Hint)
 		}
 		if strings.Contains(c.Detail, verifyErr.Error()) && !errors.Is(verifyErr, approval.ErrNotApproved) {
@@ -359,5 +359,16 @@ func TestPreflightQueryErrorIsFixed(t *testing.T) {
 		if strings.Contains(err.Error(), "hunter2") {
 			t.Fatalf("query %q failure: error %q holds driver text", q, err)
 		}
+	}
+}
+
+func TestHintText(t *testing.T) {
+	report := runPreflight(t, testDialect(core.TLSVerifyFull, nil), riskyCatalog())
+	want := "to approve, run: sag extension approve main"
+	if !strings.Contains(report.Hint, want) {
+		t.Fatalf("hint = %q; want to contain %q", report.Hint, want)
+	}
+	if strings.Contains(report.Hint, "podman") {
+		t.Fatalf("hint = %q; must not contain 'podman'", report.Hint)
 	}
 }

@@ -307,14 +307,18 @@ func TestRevokeRemovesRecord(t *testing.T) {
 	}
 }
 
-func TestRevokeWithoutRecordFails(t *testing.T) {
-	revokePaths(t)
-	std, _, errOut := approveIO("", false, false)
-	if code := Run([]string{"extension", "revoke", "ext"}, std); code != ExitFailure {
-		t.Fatalf("exit = %d; want %d", code, ExitFailure)
+func TestRevokeNoRecordExit0(t *testing.T) {
+	dir := revokePaths(t)
+	std, out, errOut := approveIO("", false, false)
+	if code := Run([]string{"extension", "revoke", "ext"}, std); code != ExitOK {
+		t.Fatalf("exit = %d; want %d; stderr %q", code, ExitOK, errOut.String())
 	}
-	if errOut.Len() == 0 {
-		t.Fatal("stderr is empty; want the cause")
+	if !strings.Contains(out.String(), "approval revoked for resource ext") {
+		t.Fatalf("stdout = %q; want revoked message", out.String())
+	}
+	tombstone := filepath.Join(dir, "ext.revoked.json")
+	if _, err := os.Lstat(tombstone); err != nil {
+		t.Fatalf("tombstone %s not found: %v", tombstone, err)
 	}
 }
 

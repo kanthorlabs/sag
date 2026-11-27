@@ -45,7 +45,7 @@ const (
 	detailApprovalInvalid   = "approval record is not valid for the current objects: %s"
 	detailApprovalExpired   = "approval record expired: %s"
 	detailNoOperators       = "none"
-	approvalHint            = "resource %s has risky objects %s; to approve, run on the host: podman exec -it sag sag extension approve %s"
+	approvalHint            = "resource %s has risky objects %s; to approve, run: sag extension approve %s"
 )
 
 var errCatalogValue = errors.New("unexpected catalog value")

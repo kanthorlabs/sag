@@ -20,6 +20,9 @@ const (
 )
 
 func resourceTest(args []string, std IO) int {
+	if std.Mode == ModeHost {
+		return hostResourceTest(args, std)
+	}
 	if len(args) != 1 {
 		fmt.Fprintln(std.Err, resourceTestUsage)
 		return ExitUsage

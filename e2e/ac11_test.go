@@ -22,7 +22,7 @@ const (
 	ac11RecordPath    = "/var/lib/sag/approvals/ext.json"
 	ac11ServeWindow   = 70 * time.Second
 	ac11RecheckWindow = 20 * time.Second
-	ac11Hint          = "podman exec -it sag sag extension approve ext"
+	ac11Hint          = "to approve, run: sag extension approve ext"
 	ac11InvalidRecord = "approval record is not valid for the current objects"
 )
 
