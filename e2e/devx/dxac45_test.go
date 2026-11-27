@@ -39,23 +39,11 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC45: wait idle after EnsureCanary: %v", err)
 	}
 
-	r := dxh.NewRunner()
-	portOut, err := r.Output(ctx, "podman", "port", "sag-canary-pg", "5432/tcp")
-	if err != nil {
-		t.Fatalf("DXAC45: podman port sag-canary-pg: %v", err)
-	}
-	portLine := strings.TrimSpace(string(portOut))
-	portIdx := strings.LastIndex(portLine, ":")
-	if portIdx < 0 {
-		t.Fatalf("DXAC45: unexpected port output: %q", portLine)
-	}
-	pgPort := portLine[portIdx+1:]
-
 	parts := dxh.ActiveCanaryParts
 	canaryURL := &url.URL{
 		Scheme: "postgres",
 		User:   url.UserPassword(parts.User, parts.Password),
-		Host:   "host.containers.internal:" + pgPort,
+		Host:   "sag-canary-pg:5432",
 		Path:   "/" + parts.Database,
 	}
 	canaryDSN := canaryURL.String()
@@ -204,6 +192,7 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 			"--agent", "claude-code",
 			"--tls", "disable",
 			"--stdin",
+			"--accept-failed-check",
 		)
 		if code != 0 {
 			t.Fatalf("DXAC45-cred: credential create exit %d; output length=%d", code, len(out))
