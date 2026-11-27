@@ -3,10 +3,11 @@ package image
 import (
 	"context"
 	"errors"
+	"strings"
 
-	"github.com/kanthorlabs/sag/internal/deploy"
 	"github.com/kanthorlabs/sag/internal/podman"
 	"github.com/kanthorlabs/sag/internal/stepline"
+	"github.com/kanthorlabs/sag/internal/testhook"
 )
 
 func Ensure(ctx context.Context, pm podman.Command, ref string, out stepline.Writer) (changed bool, err error) {
@@ -23,10 +24,16 @@ func Ensure(ctx context.Context, pm podman.Command, ref string, out stepline.Wri
 		return false, err
 	}
 
-	if _, err := pm.Run(ctx, nil, "pull", ref); err != nil {
+	pullArgs := []string{"pull"}
+	if reg := testhook.Registry(); reg != "" && strings.HasPrefix(ref, reg+"/") {
+		pullArgs = append(pullArgs, "--tls-verify=false")
+	}
+	pullArgs = append(pullArgs, ref)
+	if _, err := pm.Run(ctx, nil, pullArgs...); err != nil {
 		return false, err
 	}
-	if deploy.ImageDigest == "" {
+	_, devBuild := Reference()
+	if devBuild {
 		out.Line(stepline.StatusWarn, "image", "dev build; pulls the main tag")
 	}
 	out.Line(stepline.StatusInstall, "image", ref)
