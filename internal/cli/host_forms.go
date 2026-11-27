@@ -75,6 +75,12 @@ func hostJWTGenerate(args []string, std IO) int {
 }
 
 func hostExtensionApprove(args []string, std IO) int {
+	for _, a := range args {
+		if a == "--json" {
+			fmt.Fprintln(std.Err, extensionApproveUsage)
+			return ExitUsage
+		}
+	}
 	if !std.IsTerminal(std.In) || !std.IsTerminal(std.Out) {
 		fmt.Fprintf(std.Err, "sag: %v\n", errApproveNoTerminal)
 		return ExitRefusal

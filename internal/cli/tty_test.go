@@ -45,4 +45,22 @@ func TestIsTerminal(t *testing.T) {
 	if isTerminal(nil) {
 		t.Fatal("isTerminal(nil) = true; want false")
 	}
+
+	devNullR, err := os.Open("/dev/null")
+	if err != nil {
+		t.Fatalf("open /dev/null for read: %v", err)
+	}
+	defer devNullR.Close()
+	if isTerminal(devNullR) {
+		t.Fatal("isTerminal(/dev/null read) = true; want false")
+	}
+
+	devNullW, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open /dev/null for write: %v", err)
+	}
+	defer devNullW.Close()
+	if isTerminal(devNullW) {
+		t.Fatal("isTerminal(/dev/null write) = true; want false")
+	}
 }
