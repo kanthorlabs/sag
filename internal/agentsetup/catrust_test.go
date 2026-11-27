@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -59,10 +60,10 @@ func TestBundleCommand(t *testing.T) {
 		t.Fatal("bundleConflictError returned nil")
 	}
 	msg := err.Error()
-	if !containsString(msg, "cat") {
+	if !strings.Contains(msg, "cat") {
 		t.Errorf("bundle error message missing 'cat': %q", msg)
 	}
-	if !containsString(msg, "NODE_EXTRA_CA_CERTS") {
+	if !strings.Contains(msg, "NODE_EXTRA_CA_CERTS") {
 		t.Errorf("bundle error message missing 'NODE_EXTRA_CA_CERTS': %q", msg)
 	}
 }

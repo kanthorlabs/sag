@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -136,7 +137,7 @@ func TestNotConnectedExit1(t *testing.T) {
 	if err == nil {
 		t.Error("verify returned nil; want error when sag not in output")
 	}
-	if !containsString(out.String(), "fail") {
+	if !strings.Contains(out.String(), "fail") {
 		t.Errorf("output %q: missing 'fail' line", out.String())
 	}
 }

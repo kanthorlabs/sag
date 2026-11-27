@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -27,7 +28,7 @@ func baseOpts(t *testing.T) Options {
 
 func hasConflict(conflicts []string, substr string) bool {
 	for _, c := range conflicts {
-		if containsString(c, substr) {
+		if strings.Contains(c, substr) {
 			return true
 		}
 	}

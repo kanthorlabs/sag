@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -61,10 +62,10 @@ func TestNoHTMLEscape(t *testing.T) {
 		t.Fatalf("writeJSON: %v", err)
 	}
 	data, _ := os.ReadFile(path)
-	if !containsString(string(data), "<value>") {
+	if !strings.Contains(string(data), "<value>") {
 		t.Errorf("output %q: < was escaped; want literal <", data)
 	}
-	if !containsString(string(data), "&more") {
+	if !strings.Contains(string(data), "&more") {
 		t.Errorf("output %q: & was escaped; want literal &", data)
 	}
 }
@@ -133,15 +134,4 @@ func TestNewFileMode0600(t *testing.T) {
 	if fi.Mode()&0o777 != 0o600 {
 		t.Errorf("mode = %o; want 600", fi.Mode()&0o777)
 	}
-}
-
-func containsString(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i <= len(s)-len(sub); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	})()
 }

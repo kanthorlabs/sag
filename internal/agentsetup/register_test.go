@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestNoCommandEntry(t *testing.T) {
 	conflicts := planConflicts(opts, ModeLocal, true)
 	found := false
 	for _, c := range conflicts {
-		if containsString(c, "another form") {
+		if strings.Contains(c, "another form") {
 			found = true
 		}
 	}
@@ -255,12 +256,12 @@ func TestJWTNotInArgsOrEnv(t *testing.T) {
 	}
 	jwtStr := string(cred.Reveal())
 	for _, a := range capturedArgs {
-		if containsString(a, jwtStr) {
+		if strings.Contains(a, jwtStr) {
 			t.Errorf("JWT found in arg %q", a)
 		}
 	}
 	for _, e := range os.Environ() {
-		if containsString(e, jwtStr) {
+		if strings.Contains(e, jwtStr) {
 			t.Errorf("JWT found in env %q", e)
 		}
 	}

@@ -285,8 +285,6 @@ func checkGuardFile(path string) string {
 	return ""
 }
 
-const guardMarker = "// managed by sag agent setup"
-
 func checkCATrustConflict(opts Options, paths HarnessPaths) string {
 	caPath := caFilePath(opts)
 	switch opts.Harness {
