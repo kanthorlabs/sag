@@ -1,19 +1,24 @@
 import test from "node:test";
 import assert from "node:assert";
-import guard from "./sag-guard.ts";
+import register from "./sag-guard.ts";
+
+type Handler = (event: { toolName: string; input: unknown }, ctx: unknown) => Promise<unknown>;
+
+function loadHandler(): Handler {
+  const handlers: Record<string, Handler> = {};
+  register({ on: (name: string, h: Handler) => { handlers[name] = h; } } as any);
+  assert.ok(handlers["tool_call"], "guard registers a tool_call handler");
+  return handlers["tool_call"];
+}
+
+const handler = loadHandler();
 
 function toolCall(command: string) {
-  return guard.tool_call(
-    { tool: { name: "bash" }, input: { command } } as any,
-    {} as any,
-  );
+  return handler({ toolName: "bash", input: { command } }, {}) as Promise<{ block?: boolean; reason?: string } | undefined>;
 }
 
 function otherToolCall(toolName: string, command: string) {
-  return guard.tool_call(
-    { tool: { name: toolName }, input: { command } } as any,
-    {} as any,
-  );
+  return handler({ toolName, input: { command } }, {}) as Promise<{ block?: boolean; reason?: string } | undefined>;
 }
 
 test("blocks sag credential delete anywhere", async () => {
