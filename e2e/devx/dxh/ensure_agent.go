@@ -181,6 +181,19 @@ func agentChildEnv(claudeDir, piDir, binDir string) ([]string, error) {
 	return base, nil
 }
 
+func ResetAgentSetup() {
+	for _, dir := range []string{ActiveAgentClaudeDir, ActiveAgentPiDir, ActiveAgentZDOTDIR, ActiveAgentBinDir} {
+		if dir != "" {
+			os.RemoveAll(dir)
+		}
+	}
+	ActiveAgentClaudeDir = ""
+	ActiveAgentPiDir = ""
+	ActiveAgentZDOTDIR = ""
+	ActiveAgentBinDir = ""
+	ActiveAgentSetupOutput = nil
+}
+
 func NewAgentGroupRunner(extraEnv ...string) Runner {
 	return agentGroupRunner{extraEnv: extraEnv}
 }

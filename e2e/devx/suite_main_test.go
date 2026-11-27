@@ -196,6 +196,7 @@ func TestDevxMain(t *testing.T) {
 			})
 		}
 	})
+	dxh.ResetAgentSetup()
 
 	bootagentOrder := []string{
 		"DXAC46_BootstrapAgentSetup",
