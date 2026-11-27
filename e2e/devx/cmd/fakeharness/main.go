@@ -12,9 +12,10 @@ import (
 const claudeSagLine = "sag: https://localhost:8443/mcp (HTTP) - ✔ Connected"
 
 type callRecord struct {
-	Argv []string          `json:"argv"`
-	Env  map[string]string `json:"env"`
-	Dir  string            `json:"dir"`
+	Argv       []string          `json:"argv"`
+	Env        map[string]string `json:"env"`
+	Dir        string            `json:"dir"`
+	DirEntries []string          `json:"dir_entries"`
 }
 
 func main() {
@@ -61,7 +62,13 @@ func recordCall(dir string, args []string) {
 			env[k] = v
 		}
 	}
-	rec := callRecord{Argv: args, Env: env, Dir: wd}
+	var dirEntries []string
+	if entries, err := os.ReadDir(wd); err == nil {
+		for _, e := range entries {
+			dirEntries = append(dirEntries, e.Name())
+		}
+	}
+	rec := callRecord{Argv: args, Env: env, Dir: wd, DirEntries: dirEntries}
 	line, err := json.Marshal(rec)
 	if err != nil {
 		return
