@@ -1,0 +1,87 @@
+name: image
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+    outputs:
+      digest:
+        value: ${{ jobs.manifest.outputs.digest }}
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  arch:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      IMAGE: docker.io/kanthorlabs/sag
+      TAG: ${{ inputs.tag }}
+      VERSION: ${{ inputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: printf '%s' "$DOCKERHUB_TOKEN" | podman login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
+      - run: podman build --platform "linux/$ARCH" --build-arg "VERSION=$VERSION" -f deploy/Containerfile -t "$IMAGE:$TAG-$ARCH" .
+      - run: podman push --digestfile "digest-$ARCH" "$IMAGE:$TAG-$ARCH"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: image-digest-${{ matrix.arch }}
+          path: digest-${{ matrix.arch }}
+          retention-days: 1
+
+  manifest:
+    needs: [arch]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      IMAGE: docker.io/kanthorlabs/sag
+      TAG: ${{ inputs.tag }}
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: image-digest-*
+          merge-multiple: true
+      - env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: printf '%s' "$DOCKERHUB_TOKEN" | podman login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
+      - id: push
+        run: |
+          podman manifest create sag-list
+          for arch in amd64 arm64; do
+            podman manifest add sag-list "docker://$IMAGE@$(cat "digest-$arch")"
+          done
+          podman manifest push --all --digestfile digest-list sag-list "docker://$IMAGE:$TAG"
+          digest="$(cat digest-list)"
+          case "$digest" in
+            sha256:*) ;;
+            *) echo "no manifest list digest" >&2; exit 1 ;;
+          esac
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
