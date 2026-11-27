@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -151,9 +152,9 @@ func dxac40CollectSources(t *testing.T, ctx context.Context, home, cfgDir string
 
 	r := dxh.NewRunner()
 
-	podmanLogsOut, err := r.Output(ctx, "podman", "logs", "--timestamps=false", "sag")
+	podmanLogsOut, err := exec.CommandContext(ctx, "podman", "logs", "--timestamps=false", "sag").CombinedOutput()
 	if err != nil {
-		t.Fatalf("DXAC40: podman logs sag: %v", err)
+		t.Fatalf("DXAC40: podman logs sag: %v\n%s", err, podmanLogsOut)
 	}
 	if len(podmanLogsOut) == 0 {
 		t.Fatal("DXAC40: podman logs sag: empty")

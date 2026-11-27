@@ -58,19 +58,23 @@ func agentSetup(args []string, std IO) int {
 	}
 
 	agentsetup.SetOut(std.Out)
-	if err := agentsetup.Run(context.Background(), opts); err != nil {
-		var refusal *prompt.RefusalError
-		if errors.As(err, &refusal) {
-			fmt.Fprintf(std.Err, "sag: %v\n", err)
-			return ExitRefusal
-		}
-		var conflict *agentsetup.ConflictError
-		if errors.As(err, &conflict) {
-			return ExitFailure
-		}
-		return fail(std, err)
+	return agentSetupExit(agentsetup.Run(context.Background(), opts), std)
+}
+
+func agentSetupExit(err error, std IO) int {
+	if err == nil {
+		return ExitOK
 	}
-	return ExitOK
+	var refusal *prompt.RefusalError
+	if errors.As(err, &refusal) || errors.Is(err, prompt.ErrNoTerminal) {
+		fmt.Fprintf(std.Err, "sag: %v\n", err)
+		return ExitRefusal
+	}
+	var conflict *agentsetup.ConflictError
+	if errors.As(err, &conflict) {
+		return ExitFailure
+	}
+	return fail(std, err)
 }
 
 func parseAgentSetupFlags(args []string, std IO) (agentsetup.Options, bool) {

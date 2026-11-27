@@ -58,7 +58,7 @@ func ReadJWT(tty io.ReadWriter, sub string) (secret.Credential, error) {
 func remoteJWT(ctx context.Context, opts Options) (secret.Credential, error) {
 	tty, err := remoteOpenTTY()
 	if err != nil {
-		return secret.Credential{}, fmt.Errorf("open /dev/tty: %w", prompt.ErrNoTerminal)
+		return secret.Credential{}, ErrNoTerminalForJWT
 	}
 	defer tty.Close()
 	return ReadJWT(tty, opts.Sub)
@@ -84,4 +84,14 @@ func remoteReadLine(r io.Reader) ([]byte, error) {
 		return []byte{}, nil
 	}
 	return sc.Bytes(), nil
+}
+
+var ErrNoTerminalForJWT = fmt.Errorf("no terminal to read the JWT; run agent setup from a terminal: %w", prompt.ErrNoTerminal)
+
+func checkRemoteTerminal() error {
+	tty, err := remoteOpenTTY()
+	if err != nil {
+		return ErrNoTerminalForJWT
+	}
+	return tty.Close()
 }

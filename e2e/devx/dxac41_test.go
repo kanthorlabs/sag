@@ -106,7 +106,7 @@ func dxac41BashCase(t *testing.T, ctx context.Context, bin, binDir, fakeBinDir, 
 	dxac41AssertPiMCP(t, "bash", mcp)
 	dxac41AssertSkill(t, piDir, "bash")
 	dxac41AssertGuardMarker(t, filepath.Join(piDir, "extensions", "sag-guard.ts"))
-	dxac41AssertStubReceived(t, fakeBinDir, cfgDir, "bash", stubsBefore)
+	dxac41AssertStubReceived(t, fakeBinDir, testCfgDir, "bash", stubsBefore)
 
 	stubsAfterFirst := dxac41CountStubRecords(fakeBinDir)
 	code2, out2 := dxac41RunSetsid(ctx, bin, env, "agent", "setup", "pi")
