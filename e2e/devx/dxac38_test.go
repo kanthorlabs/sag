@@ -42,7 +42,11 @@ func DXAC38_MacPkgChecksum(t *testing.T, ctx context.Context) {
 		groupDir := t.TempDir()
 		binDir := t.TempDir()
 
+		recordFile := filepath.Join(binDir, "install-record.txt")
+		writeFakeInstallerScripts(t, binDir, recordFile)
+
 		t.Setenv("SAG_TEST_ABSENT", "1")
+		t.Setenv("SAG_TEST_STOP_BEFORE_INSTALL", "1")
 		t.Setenv("SAG_TEST_PINS", fmt.Sprintf("podman 5.5.1 darwin/arm64 release %s/fake.pkg %s\n", srv.URL, wrongHash))
 
 		childEnv, err := dxh.ChildEnv(os.Environ(), groupDir)
@@ -63,12 +67,16 @@ func DXAC38_MacPkgChecksum(t *testing.T, ctx context.Context) {
 		if len(pkgFiles) > 0 {
 			t.Fatalf("DXAC38 wrong-hash: pkg file must be absent; found: %v", pkgFiles)
 		}
+		assertInstallRecordAbsent(t, "DXAC38 wrong-hash", recordFile)
 	})
 
 	t.Run("correct-hash", func(t *testing.T) {
 		downloadDir := t.TempDir()
 		groupDir := t.TempDir()
 		binDir := t.TempDir()
+
+		recordFile := filepath.Join(binDir, "install-record.txt")
+		writeFakeInstallerScripts(t, binDir, recordFile)
 
 		t.Setenv("SAG_TEST_ABSENT", "1")
 		t.Setenv("SAG_TEST_STOP_BEFORE_INSTALL", "1")
@@ -103,7 +111,27 @@ func DXAC38_MacPkgChecksum(t *testing.T, ctx context.Context) {
 		if len(pkgFiles) > 0 {
 			t.Fatalf("DXAC38 correct-hash: pkg files not cleaned up: %v", pkgFiles)
 		}
+		assertInstallRecordAbsent(t, "DXAC38 correct-hash", recordFile)
 	})
+}
+
+func writeFakeInstallerScripts(t *testing.T, binDir, recordFile string) {
+	t.Helper()
+	for _, name := range []string{"sudo", "installer"} {
+		script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" >> %s\nexit 1\n", recordFile)
+		p := filepath.Join(binDir, name)
+		if err := os.WriteFile(p, []byte(script), 0755); err != nil {
+			t.Fatalf("DXAC38: write fake %s: %v", name, err)
+		}
+	}
+}
+
+func assertInstallRecordAbsent(t *testing.T, label, recordFile string) {
+	t.Helper()
+	if _, err := os.Stat(recordFile); err == nil {
+		data, _ := os.ReadFile(recordFile)
+		t.Fatalf("%s: sudo or installer was called; record:\n%s", label, data)
+	}
 }
 
 func runPkgBootstrap(t *testing.T, ctx context.Context, sagBin string, childEnv []string) (stdout, stderr string, code int) {
