@@ -307,3 +307,48 @@ func TestAnchoredSecretNameFilter(t *testing.T) {
 		}
 	}
 }
+
+func goodLinuxRunner() *fakeRunner {
+	r := newFake()
+	r.set("podman info --format {{.Store.GraphRoot}}", []byte("/home/u/.local/share/containers/storage\n"), nil)
+	r.set("df -Pk /home/u/.local/share/containers/storage", []byte("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/sda1 102400000 1024000 90000000 2% /\n"), nil)
+	r.set("podman ps -a --filter name=^sag$ --format {{.Names}}", nil, nil)
+	r.set("podman ps -a --filter name=^sag-dev$ --format {{.Names}}", nil, nil)
+	r.set("podman ps -a --filter name=^sag-dev-pg$ --format {{.Names}}", nil, nil)
+	r.set("podman volume inspect sag-state", nil, errors.New("no such volume"))
+	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-master-key$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-tls-cert$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-tls-key$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-aws-credentials$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --format {{.Name}}", nil, nil)
+	r.set("systemctl --user is-active sag.service", nil, errors.New("inactive"))
+	return r
+}
+
+func TestLinuxPreconditions(t *testing.T) {
+	r := goodLinuxRunner()
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	if err := dxh.CheckLinuxPreconditions(context.Background(), r, cfg); err != nil {
+		t.Fatalf("expected no error: %v", err)
+	}
+	for _, call := range r.calls {
+		if len(call) >= 2 && call[0] == "podman" && call[1] == "machine" {
+			t.Errorf("Linux preconditions called 'podman machine': %v", call)
+		}
+	}
+}
+
+func TestLinuxRefusesLowDisk(t *testing.T) {
+	r := goodLinuxRunner()
+	r.set("df -Pk /home/u/.local/share/containers/storage", []byte("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/sda1 102400000 97400000 5000000 95% /\n"), nil)
+
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	err := dxh.CheckLinuxPreconditions(context.Background(), r, cfg)
+	if err == nil {
+		t.Fatal("expected error for low disk")
+	}
+	if !strings.Contains(err.Error(), "free space") {
+		t.Errorf("error = %q, want it to mention 'free space'", err)
+	}
+}
