@@ -1,6 +1,6 @@
 # Development setup
 
-Run these steps on macOS arm64. On Ubuntu, use `sag_linux_<arch>` and `sha256sum` instead of `shasum -a 256`.
+Run these steps on macOS arm64. On Debian 13, use `sag_linux_<arch>` and `sha256sum` instead of `shasum -a 256`.
 
 Prerequisites:
 
