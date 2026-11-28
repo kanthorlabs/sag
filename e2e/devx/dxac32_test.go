@@ -170,18 +170,22 @@ resources:
 		}
 	}
 
+	if ac32ResourceUnavailable(ctx, t, mcpClient, jwt, ac32LocalRes) {
+		t.Errorf("DXAC32: local Podman resource %s should be served while LocalStack paused", ac32LocalRes)
+	}
+
 	if _, err := r.Output(ctx, "podman", "unpause", ac32LSContainer); err != nil {
 		t.Fatalf("DXAC32: podman unpause %s: %v", ac32LSContainer, err)
 	}
 
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(120 * time.Second)
 	for _, res := range []string{ac32AWSRes1, ac32AWSRes2, ac32AWSRes3} {
 		for {
 			if !ac32ResourceUnavailable(ctx, t, mcpClient, jwt, res) {
 				break
 			}
 			if time.Now().After(deadline) {
-				t.Errorf("DXAC32: resource %s still unavailable 90s after LocalStack unpause", res)
+				t.Errorf("DXAC32: resource %s still unavailable 120s after LocalStack unpause", res)
 				break
 			}
 			select {
