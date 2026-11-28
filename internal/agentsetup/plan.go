@@ -21,6 +21,8 @@ var checkContainerRunning = func(ctx context.Context, podmanPath string) bool {
 	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
 
+var newAsker = prompt.NewAsker
+
 func run(ctx context.Context, opts Options) error {
 	out := stepline.New(agentOut)
 
@@ -39,7 +41,7 @@ func run(ctx context.Context, opts Options) error {
 
 	asker := opts.Asker
 	if asker.Open == nil {
-		asker = prompt.NewAsker()
+		asker = newAsker()
 	}
 
 	answers, err := resolveAnswers(opts, asker)
@@ -164,7 +166,7 @@ func planOnly(ctx context.Context, opts Options) (Plan, error) {
 
 	asker := opts.Asker
 	if asker.Open == nil {
-		asker = prompt.NewAsker()
+		asker = newAsker()
 	}
 
 	answers, err := resolveAnswers(opts, asker)
