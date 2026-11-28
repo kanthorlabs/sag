@@ -5,12 +5,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
 
 const testRunToken = "dxh-unit-test-token"
+
+func goodSuiteRunner() *fakeRunner {
+	if runtime.GOOS == "linux" {
+		return goodLinuxRunner()
+	}
+	return goodMachineRunner()
+}
 
 func holdRunLock(t *testing.T, devDir string) {
 	t.Helper()
@@ -30,8 +38,8 @@ func TestSuiteEntryCreatesAndRemovesMarker(t *testing.T) {
 	holdRunLock(t, dir)
 	markerFile := filepath.Join(dir, "sub", "devx-run-active")
 
-	r := goodMachineRunner()
-	pcfg := dxh.PreconditionConfig{}
+	r := goodSuiteRunner()
+	pcfg := dxh.PreconditionConfig{QuadletExists: func() bool { return false }}
 	tcfg := dxh.TeardownConfig{}
 
 	cleanup := dxh.SuiteEntry(t, r, pcfg, tcfg, markerFile)
@@ -59,8 +67,8 @@ func TestSuiteEntryWithExistingMarkerPreconditionsPass(t *testing.T) {
 		t.Fatalf("write marker: %v", err)
 	}
 
-	r := goodMachineRunner()
-	pcfg := dxh.PreconditionConfig{}
+	r := goodSuiteRunner()
+	pcfg := dxh.PreconditionConfig{QuadletExists: func() bool { return false }}
 	tcfg := dxh.TeardownConfig{}
 
 	cleanup := dxh.SuiteEntry(t, r, pcfg, tcfg, markerFile)
