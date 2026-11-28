@@ -33,6 +33,7 @@ type Config struct {
 	Auth      Auth
 	Preflight Preflight
 	Defaults  Defaults
+	Storage   Storage
 	Resources map[string]Resource
 }
 
@@ -92,12 +93,14 @@ const (
 	defaultRecheckInterval = maxRecheckInterval
 	maxDescriptionRunes    = 500
 	secretRefPrefix        = "secret:"
+	awsSMRefPrefix         = "aws-sm:"
 )
 
 var (
 	defaultRedactColumns = []string{"*password*", "*passwd*", "*secret*", "*token*", "*api_key*", "*apikey*", "*private_key*"}
 	namePattern          = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	secretNamePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$`)
+	awsNamePattern       = regexp.MustCompile(`^[A-Za-z0-9/_+=.@-]{1,512}$`)
 	yamlLinePattern      = regexp.MustCompile(`^(?:yaml: )?line (\d+): `)
 	originLabelPattern   = regexp.MustCompile(`^[a-z0-9-]+$`)
 	tlsModes             = []core.TLSMode{core.TLSVerifyFull, core.TLSInsecureSkipVerify, core.TLSDisable}
@@ -192,6 +195,7 @@ func build(raw rawConfig, p *problems) *Config {
 		Server:    buildServer(raw.Server, p),
 		Auth:      buildAuth(raw.Auth, p),
 		Preflight: buildPreflight(raw.Preflight, p),
+		Storage:   buildStorage(raw.Storage, p),
 		Resources: map[string]Resource{},
 	}
 	if cfg.Version != schemaVersion {
@@ -211,7 +215,43 @@ func build(raw rawConfig, p *problems) *Config {
 	for _, name := range slices.Sorted(maps.Keys(raw.Resources)) {
 		cfg.Resources[name] = buildResource(name, raw.Resources[name], raw.Defaults.Limits, cfg.Defaults.RedactColumns, p)
 	}
+
+	if cfg.Storage.AWS.Region != "" || cfg.Storage.AWS.Credentials != "" {
+		for resName, r := range cfg.Resources {
+			if hasAWSSMRef(r.Connection) || hasAWSSMRef(r.TLSCA) {
+				if cfg.Storage.AWS.Region == "" {
+					p.add("storage.aws.region", "is required when an aws-sm: reference is present (resource "+resName+")")
+				}
+				if cfg.Storage.AWS.Credentials == "" {
+					p.add("storage.aws.credentials", "is required when an aws-sm: reference is present (resource "+resName+")")
+				}
+				break
+			}
+		}
+	} else {
+		for resName, r := range cfg.Resources {
+			if hasAWSSMRef(r.Connection) || hasAWSSMRef(r.TLSCA) {
+				p.add("storage.aws", "region and credentials are required when an aws-sm: reference is present (resource "+resName+")")
+				break
+			}
+		}
+	}
+
 	return cfg
+}
+
+func buildStorage(raw rawStorage, p *problems) Storage {
+	s := Storage{}
+	if raw.AWS.Region == "" && raw.AWS.Credentials == "" {
+		return s
+	}
+	s.AWS.Region = raw.AWS.Region
+	s.AWS.Credentials = secretRef(p, "storage.aws.credentials", raw.AWS.Credentials, false)
+	return s
+}
+
+func hasAWSSMRef(ref SecretRef) bool {
+	return strings.HasPrefix(string(ref), awsSMRefPrefix)
 }
 
 func buildServer(raw rawServer, p *problems) Server {
@@ -312,9 +352,9 @@ func buildResource(name string, raw rawResource, defaults rawLimits, redact []st
 		Name:          name,
 		Kind:          raw.Kind,
 		Description:   raw.Description,
-		Connection:    secretRef(p, path+".connection", raw.Connection, true),
+		Connection:    secretOrAWSRef(p, path+".connection", raw.Connection, true),
 		TLS:           core.TLSMode(raw.TLS),
-		TLSCA:         secretRef(p, path+".tls_ca", raw.TLSCA, false),
+		TLSCA:         secretOrAWSRef(p, path+".tls_ca", raw.TLSCA, false),
 		Agents:        raw.Agents,
 		Limits:        resolveLimits(mergeLimits(defaults, raw.Limits)),
 		RedactColumns: slices.Concat(redact, raw.Redact.Columns),
@@ -361,6 +401,31 @@ func secretRef(p *problems, path, value string, required bool) SecretRef {
 	return SecretRef(name)
 }
 
+func secretOrAWSRef(p *problems, path, value string, required bool) SecretRef {
+	if value == "" {
+		if required {
+			p.add(path, "is required")
+		}
+		return ""
+	}
+	if name, ok := strings.CutPrefix(value, secretRefPrefix); ok {
+		if !secretNamePattern.MatchString(name) {
+			p.add(path, "must be a secret reference secret:<name>; inline values are rejected")
+			return ""
+		}
+		return SecretRef(name)
+	}
+	if name, ok := strings.CutPrefix(value, awsSMRefPrefix); ok {
+		if !awsNamePattern.MatchString(name) {
+			p.add(path, "must be a valid aws-sm reference aws-sm:<name> matching "+awsNamePattern.String())
+			return ""
+		}
+		return SecretRef(awsSMRefPrefix + name)
+	}
+	p.add(path, "must be a secret reference secret:<name> or aws-sm:<name>; inline values are rejected")
+	return ""
+}
+
 func checkGlobs(p *problems, key string, patterns []string) {
 	for i, pattern := range patterns {
 		if _, err := postexec.CompileGlob(pattern); err != nil {
@@ -370,10 +435,20 @@ func checkGlobs(p *problems, key string, patterns []string) {
 }
 
 func (c *Config) SecretNames() []string {
-	names := []string{string(c.Server.TLSCert), string(c.Server.TLSKey)}
+	var names []string
+	for _, ref := range []SecretRef{c.Server.TLSCert, c.Server.TLSKey} {
+		if ref != "" && !hasAWSSMRef(ref) {
+			names = append(names, string(ref))
+		}
+	}
+	if c.Storage.AWS.Credentials != "" && !hasAWSSMRef(c.Storage.AWS.Credentials) {
+		names = append(names, string(c.Storage.AWS.Credentials))
+	}
 	for _, r := range c.Resources {
-		names = append(names, string(r.Connection))
-		if r.TLSCA != "" {
+		if r.Connection != "" && !hasAWSSMRef(r.Connection) {
+			names = append(names, string(r.Connection))
+		}
+		if r.TLSCA != "" && !hasAWSSMRef(r.TLSCA) {
 			names = append(names, string(r.TLSCA))
 		}
 	}
