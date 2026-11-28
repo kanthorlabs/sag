@@ -34,10 +34,11 @@ type Scheduler struct {
 }
 
 type scheduled struct {
-	name    string
-	res     core.Resource
-	open    func(ctx context.Context) (core.Resource, error)
-	timeout time.Duration
+	name      string
+	res       core.Resource
+	open      func(ctx context.Context) (core.Resource, error)
+	timeout   time.Duration
+	immediate bool
 }
 
 type outcome struct {
@@ -57,6 +58,10 @@ func (s *Scheduler) AddUnopened(name string, open func(ctx context.Context) (cor
 	s.resources = append(s.resources, scheduled{name: name, open: open, timeout: timeout})
 }
 
+func (s *Scheduler) AddUnopenedImmediate(name string, open func(ctx context.Context) (core.Resource, error), timeout time.Duration) {
+	s.resources = append(s.resources, scheduled{name: name, open: open, timeout: timeout, immediate: true})
+}
+
 func (s *Scheduler) Start(ctx context.Context) {
 	served := make([]bool, len(s.resources))
 	var first sync.WaitGroup
@@ -70,11 +75,25 @@ func (s *Scheduler) Start(ctx context.Context) {
 	n := len(s.resources)
 	for i, r := range s.resources {
 		if r.res == nil {
-			s.loops.Go(func() { s.openLoop(ctx, r, i, n) })
+			if r.immediate {
+				s.loops.Go(func() { s.openLoopImmediate(ctx, r, i, n) })
+			} else {
+				s.loops.Go(func() { s.openLoop(ctx, r, i, n) })
+			}
 			continue
 		}
 		s.loops.Go(func() { s.loop(ctx, r, served[i], i, n) })
 	}
+}
+
+func (s *Scheduler) openLoopImmediate(ctx context.Context, r scheduled, i, n int) {
+	res, err := r.open(ctx)
+	if err == nil {
+		r.res = res
+		s.loop(ctx, r, s.run(ctx, r), n-1, n)
+		return
+	}
+	s.openLoop(ctx, r, i, n)
 }
 
 func (s *Scheduler) openLoop(ctx context.Context, r scheduled, i, n int) {

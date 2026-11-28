@@ -1,0 +1,25 @@
+version: 1
+
+server:
+  listen: 0.0.0.0:8443
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+
+auth:
+  version: 1
+  token_lifetime: 8760h
+
+storage:
+  aws:
+    region: us-east-1
+    credentials: secret:sag-aws-credentials
+
+resources:
+  aws-db:
+    kind: postgres
+    connection: aws-sm:sag/aws-db/conn
+    agents: [skeleton]
+  local-db:
+    kind: postgres
+    connection: secret:sag-local-db
+    agents: [skeleton]
