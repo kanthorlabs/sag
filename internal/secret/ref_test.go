@@ -74,3 +74,14 @@ func repeat(s string, n int) string {
 	}
 	return string(out)
 }
+
+func TestParseRefRejectsBadAWSName(t *testing.T) {
+	for _, s := range []string{"aws-sm:", "aws-sm:name with space", "aws-sm:name!", "aws-sm:" + repeat("x", 513)} {
+		if _, err := ParseRef(s); err == nil {
+			t.Errorf("ParseRef(%q) = nil error; want a name error", s)
+		}
+	}
+	if ref, err := ParseRef("aws-sm:sag/a/conn"); err != nil || ref.Backend != BackendAWSSM || ref.Name != "sag/a/conn" {
+		t.Errorf("ParseRef(aws-sm:sag/a/conn) = %+v, %v", ref, err)
+	}
+}
