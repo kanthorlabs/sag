@@ -202,7 +202,7 @@ Who runs what:
 
 - Layer 10 is blocked until Ulrich gives access to the Debian machine.
 - Ruling of Ulrich (2026-11-28): Debian 13 (trixie), amd64 and arm64. PRD-devx revision 9 records it. The Linux pin is `podman 5.4.2`, the Debian 13 package.
-- The Debian machine is `homelab` (`ssh homelab`). It is the machine of a teammate. The work is in `/home/cantholabs/Projects/kanthorlabs/sag` and its `.dev`.
+- The Debian machine is `homelab` (`ssh homelab`). It is the machine of a teammate. The work is in `/home/cantholabs/Projects/kanthorlabs/sag` and its `.dev`. Go 1.27.4 is in `/usr/local/go`. A non-interactive `ssh` shell does not read `~/.zshrc`, so each remote command starts with `export PATH=/usr/local/go/bin:$PATH`.
 - The constraints of section 2.1 apply to the Debian machine until Ulrich states other rules.
 - The test user needs linger and `sudo -n` (PRD-devx 17.1). DX-AC5 removes and installs Podman on the machine.
 

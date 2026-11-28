@@ -40,7 +40,7 @@ Agents edit code in their worktrees on the macOS development machine. They run e
   - Confirm that `podman container inspect` lists the secrets of a container (PRD-devx 8). Confirm that `apt-get install -y podman` installs `uidmap`. Record both results.
 - Tests first: `dxh/precondition_test.go` with a fake runner: `TestLinuxPreconditions`, `TestLinuxRefusesLowDisk`. The other content has no logic.
 - ACs: none.
-- Verify: `make contract-check && GOOS=linux CGO_ENABLED=0 go vet ./... && go test -count=1 ./e2e/devx/dxh/... -run Linux`. Expected: exit 0.
+- Verify: `make contract-check && GOOS=linux CGO_ENABLED=0 go vet ./internal/deps/... ./internal/bootstrap/... ./internal/service/... ./internal/portcheck/... ./internal/tailscale/... ./e2e/devx/dxh/... && go test -count=1 ./e2e/devx/dxh/... -run Linux`, then on the Debian machine `go vet ./...`. Expected: exit 0. The PostgreSQL adapter needs cgo, so the whole tree has no `CGO_ENABLED=0` vet.
 - Done when: `D10.1` to `D10.3` compile against the signatures, and the machine record exists.
 
 ## D10.1 Linux install
