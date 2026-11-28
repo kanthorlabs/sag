@@ -251,3 +251,25 @@ func TestParsePiGuardResult(t *testing.T) {
 		}
 	})
 }
+
+func TestParsePiGuardResultNamesModelError(t *testing.T) {
+	out := `{"type":"agent_start"}
+{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"model is not supported"}}
+{"type":"agent_end"}
+`
+	err := dxh.ParsePiGuardResult(out)
+	if err == nil {
+		t.Fatal("ParsePiGuardResult: want error for a model error, got nil")
+	}
+	if !strings.Contains(err.Error(), "pi model error: model is not supported") {
+		t.Errorf("ParsePiGuardResult: error %q does not name the model error", err)
+	}
+}
+
+func TestParsePiGuardResultLongLine(t *testing.T) {
+	long := `{"type":"message_start","message":{"role":"system","content":"` + strings.Repeat("x", 200*1024) + `"}}`
+	out := long + "\n" + `{"type":"tool_execution_end","toolName":"bash","isError":true,"result":{"content":[{"type":"text","text":"sag-guard: blocked"}]}}` + "\n"
+	if err := dxh.ParsePiGuardResult(out); err != nil {
+		t.Errorf("ParsePiGuardResult after a 200 KiB line: %v", err)
+	}
+}

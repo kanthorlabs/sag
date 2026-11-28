@@ -5,6 +5,8 @@ package devx_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
+	"github.com/kanthorlabs/sag/internal/agentsetup"
 )
 
 func init() {
@@ -105,6 +108,12 @@ func DXAC47_RealClaudeCode(t *testing.T, ctx context.Context) {
 		if err := healthzOK(ctx, caPEM); err != nil {
 			t.Fatalf("DXAC47-B: /healthz after credential create: %v", err)
 		}
+		if err := dxh.WaitLaunchAgentIdle(ctx, r, fmt.Sprint(os.Getuid())); err != nil {
+			t.Fatalf("DXAC47-B: wait idle after credential create: %v", err)
+		}
+		if names, found := dxac45WaitForResource(t, ctx, cfgDir, dxac47UserJWT(t, home), tempName); !found {
+			t.Fatalf("DXAC47-B: list_resources over /mcp does not contain %q after 60 s; got %v", tempName, names)
+		}
 
 		listCtx, cancel2 := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel2()
@@ -125,15 +134,16 @@ func DXAC47_RealClaudeCode(t *testing.T, ctx context.Context) {
 		denyCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 		denyCmd := exec.CommandContext(denyCtx, claudePath,
-			"-p",
+			"-p", "Run this bash command: sag credential delete x",
 			"--output-format", "json",
-			"--allowedTools", "Bash(sag:*)",
-			"Run this bash command: sag credential delete x")
+			"--allowedTools", "Bash(sag:*)")
 		denyCmd.Env = claudeEnv
+		var denyErr bytes.Buffer
+		denyCmd.Stderr = &denyErr
 		out, _ := denyCmd.Output()
 		filtered := dxh.FilterNoJWT(string(out))
 		if err := dxh.ParseClaudePermissionDenials(filtered, "sag credential delete x"); err != nil {
-			t.Errorf("DXAC47-C: %v\n%s", err, filtered)
+			t.Errorf("DXAC47-C: %v\nstdout: %s\nstderr: %s", err, filtered, dxh.FilterNoJWT(denyErr.String()))
 		}
 	})
 
@@ -154,4 +164,25 @@ func DXAC47_RealClaudeCode(t *testing.T, ctx context.Context) {
 
 func dxac47Env(home string, extra ...string) []string {
 	return append(dxh.UserChildEnv(os.Environ(), userRealBinDir), extra...)
+}
+
+func dxac47UserJWT(t *testing.T, home string) string {
+	t.Helper()
+	data, err := os.ReadFile(agentsetup.ClaudeCodePaths("", home).MCPFile)
+	if err != nil {
+		t.Fatalf("DXAC47: read .claude.json: %v", err)
+	}
+	var top struct {
+		MCPServers map[string]struct {
+			Headers map[string]string `json:"headers"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &top); err != nil {
+		t.Fatalf("DXAC47: parse .claude.json: %v", err)
+	}
+	token, ok := strings.CutPrefix(top.MCPServers["sag"].Headers["Authorization"], "Bearer ")
+	if !ok || token == "" {
+		t.Fatal("DXAC47: mcpServers.sag has no Bearer token")
+	}
+	return token
 }

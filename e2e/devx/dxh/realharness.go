@@ -120,7 +120,9 @@ func ParsePiMCPListSAG(output string) error {
 }
 
 func ParsePiGuardResult(output string) error {
+	modelError := ""
 	scanner := bufio.NewScanner(strings.NewReader(output))
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -130,7 +132,11 @@ func ParsePiGuardResult(output string) error {
 			Type     string `json:"type"`
 			ToolName string `json:"toolName"`
 			IsError  bool   `json:"isError"`
-			Result   struct {
+			Message  struct {
+				StopReason   string `json:"stopReason"`
+				ErrorMessage string `json:"errorMessage"`
+			} `json:"message"`
+			Result struct {
 				Content []struct {
 					Type string `json:"type"`
 					Text string `json:"text"`
@@ -140,12 +146,18 @@ func ParsePiGuardResult(output string) error {
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			continue
 		}
+		if event.Type == "message_end" && event.Message.StopReason == "error" {
+			modelError = event.Message.ErrorMessage
+		}
 		if event.Type != "tool_execution_end" || event.ToolName != "bash" || !event.IsError {
 			continue
 		}
 		if len(event.Result.Content) > 0 && strings.HasPrefix(event.Result.Content[0].Text, "sag-guard:") {
 			return nil
 		}
+	}
+	if modelError != "" {
+		return fmt.Errorf("no tool_execution_end event with sag-guard: reason found in pi --mode json output; pi model error: %s", modelError)
 	}
 	return fmt.Errorf("no tool_execution_end event with sag-guard: reason found in pi --mode json output")
 }
