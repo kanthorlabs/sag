@@ -30,7 +30,10 @@ func EnsureOperator(ctx context.Context, cmd Command, currentUser string, hasTer
 		return ErrOperatorSkip
 	}
 	approved, err := ask()
-	if err != nil || !approved {
+	if err != nil {
+		return err
+	}
+	if !approved {
 		out.Line(stepline.StatusSkip, "tailscale", SkipOperatorNotSet+"; loopback only")
 		return ErrOperatorSkip
 	}

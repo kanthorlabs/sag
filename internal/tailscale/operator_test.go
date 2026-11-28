@@ -159,3 +159,30 @@ func TestOperatorAlreadySet(t *testing.T) {
 		}
 	}
 }
+
+func TestOperatorAskErrorReturned(t *testing.T) {
+	var buf bytes.Buffer
+	out := stepline.New(&buf)
+
+	cmd := &testCmd{
+		path: testTailscalePath,
+		responses: map[string]func() ([]byte, error){
+			"debug prefs": func() ([]byte, error) {
+				return []byte(`{"OperatorUser":"other"}`), nil
+			},
+		},
+	}
+	askErr := errors.New("read terminal failed")
+	err := EnsureOperator(context.Background(), cmd, "testuser", true, func() (bool, error) {
+		return false, askErr
+	}, out)
+	if !errors.Is(err, askErr) {
+		t.Fatalf("EnsureOperator returned %v; want the ask error", err)
+	}
+	if bytes.Contains(buf.Bytes(), []byte("skip tailscale")) {
+		t.Fatalf("EnsureOperator wrote a skip line on an ask error; got %q", buf.String())
+	}
+	if len(cmd.recorded) != 1 {
+		t.Fatalf("EnsureOperator ran %v; want only debug prefs", cmd.recorded)
+	}
+}
