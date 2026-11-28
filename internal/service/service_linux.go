@@ -137,6 +137,7 @@ func start(ctx context.Context, cfg Config, d linuxDeps, out stepline.Writer) er
 	if _, err := d.systemctlRun(ctx, "--user", "daemon-reload"); err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
+	_, _ = d.systemctlRun(ctx, "--user", "reset-failed", "sag")
 	if _, err := d.systemctlRun(ctx, "--user", "restart", "sag"); err != nil {
 		return fmt.Errorf("systemctl restart sag: %w", err)
 	}

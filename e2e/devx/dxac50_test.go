@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -62,6 +63,15 @@ func DXAC50_TailscaleFake(t *testing.T, ctx context.Context) {
 		}
 		if err := os.WriteFile(filepath.Join(binDir, "tailscale"), data, 0o755); err != nil {
 			t.Fatalf("DXAC50: install fake binary: %v", err)
+		}
+		if runtime.GOOS == "linux" {
+			u, err := user.Current()
+			if err != nil {
+				t.Fatalf("DXAC50: current user: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(binDir, "ts_prefs"), []byte(`{"OperatorUser":"`+u.Username+`"}`), 0o600); err != nil {
+				t.Fatalf("DXAC50: write ts_prefs: %v", err)
+			}
 		}
 	}
 

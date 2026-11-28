@@ -109,10 +109,14 @@ func TestLinuxStartOrder(t *testing.T) {
 
 	order := sc.order()
 	reloadIdx := -1
+	resetIdx := -1
 	restartIdx := -1
 	for i, c := range order {
 		if strings.Contains(c, "daemon-reload") {
 			reloadIdx = i
+		}
+		if strings.Contains(c, "reset-failed sag") {
+			resetIdx = i
 		}
 		if strings.Contains(c, "restart sag") {
 			restartIdx = i
@@ -126,6 +130,9 @@ func TestLinuxStartOrder(t *testing.T) {
 	}
 	if reloadIdx >= restartIdx {
 		t.Fatalf("daemon-reload (call[%d]) must come before restart sag (call[%d])", reloadIdx, restartIdx)
+	}
+	if resetIdx < reloadIdx || resetIdx >= restartIdx {
+		t.Fatalf("reset-failed sag (call[%d]) must come after daemon-reload (call[%d]) and before restart sag (call[%d])", resetIdx, reloadIdx, restartIdx)
 	}
 }
 

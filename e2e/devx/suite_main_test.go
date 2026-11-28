@@ -297,7 +297,11 @@ func testHarnessSkeleton(t *testing.T, ctx context.Context, groupDir, binDir str
 		t.Fatalf("pseudo-terminal round trip: %v", err)
 	}
 
-	if err := dxh.CheckFreeSpace(ctx, r); err != nil {
+	checkFreeSpace := dxh.CheckFreeSpace
+	if runtime.GOOS == "linux" {
+		checkFreeSpace = dxh.CheckLinuxFreeSpace
+	}
+	if err := checkFreeSpace(ctx, r); err != nil {
 		t.Fatalf("free space: %v", err)
 	}
 
