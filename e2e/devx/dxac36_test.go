@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -81,6 +82,23 @@ func testDXAC36_HostGuards(t *testing.T, ctx context.Context, groupDir, binDir s
 			if !strings.Contains(string(exitErr.Stderr), "another process holds the lock") {
 				t.Fatalf("%v with lock held: stderr %q does not name the lock", args, exitErr.Stderr)
 			}
+		}
+
+		if runtime.GOOS == "linux" {
+			t.Run("uid0_exits_one", func(t *testing.T) {
+				cmd := exec.CommandContext(ctx, "sudo", "-n", sagDevxtest, "bootstrap", "--autostart", "no")
+				out, err := cmd.CombinedOutput()
+				var exitErr2 *exec.ExitError
+				if !errors.As(err, &exitErr2) {
+					t.Fatalf("sudo -n sag bootstrap: want exit error, got %v; output: %s", err, out)
+				}
+				if exitErr2.ExitCode() != 1 {
+					t.Fatalf("sudo -n sag bootstrap: exit %d; want 1; output: %s", exitErr2.ExitCode(), out)
+				}
+				if !strings.Contains(string(out), "refused to run as UID 0") {
+					t.Fatalf("sudo -n sag bootstrap: output %q does not say 'refused to run as UID 0'", out)
+				}
+			})
 		}
 	})
 }

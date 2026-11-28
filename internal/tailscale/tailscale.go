@@ -3,6 +3,7 @@ package tailscale
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os/exec"
 	"strings"
@@ -14,10 +15,13 @@ const (
 	SkipCommandAbsent  = "command absent"
 	SkipDown           = "down"
 	SkipAddressInvalid = "address invalid"
+	SkipOperatorNotSet = "operator not set"
 
 	sagTCPForward = "127.0.0.1:8443"
 	sagPort       = "8443"
 )
+
+var ErrOperatorSkip = errors.New("tailscale: operator not set; skip")
 
 var cgnatNet *net.IPNet
 

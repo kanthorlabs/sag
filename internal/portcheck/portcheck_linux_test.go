@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestCheckLinuxIsNoop(t *testing.T) {
+func TestCheckLinuxFreePort(t *testing.T) {
 	h, err := Check(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -85,10 +86,14 @@ func dxac41BashCase(t *testing.T, ctx context.Context, bin, binDir, fakeBinDir, 
 		t.Fatalf("DXAC41 bash: agent setup pi: exit %d\n%s", code, out)
 	}
 
-	bashProfile := filepath.Join(testHome, ".bash_profile")
+	bashProfileName := ".bash_profile"
+	if runtime.GOOS == "linux" {
+		bashProfileName = ".bashrc"
+	}
+	bashProfile := filepath.Join(testHome, bashProfileName)
 	data, err := os.ReadFile(bashProfile)
 	if err != nil {
-		t.Fatalf("DXAC41 bash: read .bash_profile: %v", err)
+		t.Fatalf("DXAC41 bash: read %s: %v", bashProfileName, err)
 	}
 	testCfgDir := filepath.Join(testHome, ".config", "sag")
 	exportLine := `export NODE_EXTRA_CA_CERTS="` + filepath.Join(testCfgDir, "ca.pem") + `"`
