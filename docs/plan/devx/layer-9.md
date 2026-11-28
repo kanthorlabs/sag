@@ -135,7 +135,7 @@ The constraints of README section 2.1 apply to each task of this layer.
 - Steps:
   1. Run README section 6.1 steps 1 and 2.
   2. Run `make e2e-devx SUITE=Mac LAYER=9`.
-  3. Tell Ulrich the command and its preconditions. Ulrich exits each Claude Code session and opens a new terminal. He runs `unset CLAUDE_CONFIG_DIR PI_CODING_AGENT_DIR` and checks that `env -u CLAUDE_CONFIG_DIR claude -p "ok"` works. Then he runs `make e2e-devx SUITE=User LAYER=9` in `.dev/devx`.
+  3. Tell Ulrich the command and its preconditions. Ulrich exits each Claude Code session, or sets `SAG_TEST_ACCEPT_CLAUDE_RUNNING=1` to accept risk R24, and opens a new terminal. He runs `unset CLAUDE_CONFIG_DIR PI_CODING_AGENT_DIR` and checks that `env -u CLAUDE_CONFIG_DIR claude -p "ok"` works. Then he runs `make e2e-devx SUITE=User LAYER=9` in `.dev/devx`.
   4. After Ulrich resumes the coordinator, read `e2e/report/devx-User/events.json` and the report. Check that they hold no IP address, no JWT, and no credential value.
   5. Run the review, the fixes, and the second gate run of README section 6.1. Ulrich runs the `User` suite again only when the exception of README section 5.4 does not hold.
   6. Record in `docs/reviews/devx-layer-9.md`: "18.1 not run; no macOS machine without Podman" (ruling Q32). Append the `env` block.

@@ -185,7 +185,7 @@ Who runs what:
 | `Main`, `Pins`, `Mac` | An agent | Any |
 | `User` | Ulrich | Outside each Claude Code session |
 
-- The `User` suite refuses to start while a `claude` process runs. Ulrich exits each Claude Code session first. The coordinator resumes after the run.
+- The `User` suite refuses to start while a `claude` process runs. Ulrich exits each Claude Code session first, or accepts risk R24 with `SAG_TEST_ACCEPT_CLAUDE_RUNNING=1`. The coordinator resumes after the run.
 - The `User` suite uses the default Claude Code profile: `~/.claude` and `~/.claude.json` (ruling Q35).
 - When `CLAUDE_CONFIG_DIR` is set, the `User` suite exits 1 with `unset CLAUDE_CONFIG_DIR; this suite uses the default profile` and changes nothing.
 - When `PI_CODING_AGENT_DIR` is set, the `User` suite exits 1 with `unset PI_CODING_AGENT_DIR; this suite uses the default profile` and changes nothing.
