@@ -37,8 +37,7 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 		CfgDir: dxh.CfgDir(home),
 	}
 
-	port := freePort(t)
-	registry := fmt.Sprintf("127.0.0.1:%d", port)
+	var registry string
 	registryContainerName := "sag-devx-e2e-registry-dxac30"
 
 	confBefore := dxac30RegistriesConf(t, ctx, r)
@@ -61,16 +60,7 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 	t.Cleanup(func() {
 		r.Output(context.Background(), "podman", "rm", "-f", "--ignore", registryContainerName)
 	})
-	startOut, startErr := r.Output(ctx, "podman", "run", "-d",
-		"--rm",
-		"--label", "sag.devx-e2e=1",
-		"--name", registryContainerName,
-		"-p", fmt.Sprintf("127.0.0.1:%d:5000", port),
-		registryImage,
-	)
-	if startErr != nil {
-		t.Fatalf("start registry: %v\n%s", startErr, startOut)
-	}
+	registry = dxac30StartRegistry(t, ctx, r, registryContainerName)
 	waitForRegistry(t, ctx, registry)
 
 	destRef := registry + "/kanthorlabs/sag:main"
@@ -273,4 +263,26 @@ func dxac30RegistriesConf(t *testing.T, ctx context.Context, r dxh.Runner) strin
 		t.Fatalf("DXAC30: read registry configuration: %v", err)
 	}
 	return string(out)
+}
+
+func dxac30StartRegistry(t *testing.T, ctx context.Context, r dxh.Runner, name string) string {
+	t.Helper()
+	var failures []string
+	for attempt := 0; attempt < 3; attempt++ {
+		registry := fmt.Sprintf("127.0.0.1:%d", freePort(t))
+		out, err := exec.CommandContext(ctx, "podman", "run", "-d",
+			"--rm",
+			"--label", "sag.devx-e2e=1",
+			"--name", name,
+			"-p", registry+":5000",
+			registryImage,
+		).CombinedOutput()
+		if err == nil {
+			return registry
+		}
+		failures = append(failures, fmt.Sprintf("%s: %v: %s", registry, err, strings.TrimSpace(string(out))))
+		r.Output(ctx, "podman", "rm", "-f", "--ignore", name)
+	}
+	t.Fatalf("start registry:\n%s", strings.Join(failures, "\n"))
+	return ""
 }
