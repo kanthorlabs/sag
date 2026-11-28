@@ -31,6 +31,14 @@ func DXAC05_PodmanAptInstall(t *testing.T, ctx context.Context) {
 	if pkgVersionBefore == "" {
 		t.Fatal("DXAC05: empty dpkg-query output before remove")
 	}
+	policyOut, err := r.Output(ctx, "apt-cache", "policy", "podman")
+	if err != nil {
+		t.Fatalf("DXAC05: apt-cache policy podman: %v", err)
+	}
+	candidate := dxac05Candidate(string(policyOut))
+	if candidate == "" || candidate == "(none)" {
+		t.Fatalf("DXAC05: no apt candidate for podman:\n%s", policyOut)
+	}
 
 	imageIDOut, err := r.Output(ctx, aptPodman, "image", "inspect", "--format", "{{.Id}}", sagTestImage)
 	if err != nil {
@@ -91,8 +99,8 @@ func DXAC05_PodmanAptInstall(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC05: dpkg-query after bootstrap: %v", err)
 	}
 	pkgVersionAfter := strings.TrimSpace(string(dpkgVersionAfter))
-	if pkgVersionAfter != pkgVersionBefore {
-		t.Fatalf("DXAC05: dpkg podman version changed: before=%q after=%q", pkgVersionBefore, pkgVersionAfter)
+	if pkgVersionAfter != candidate {
+		t.Fatalf("DXAC05: installed podman %q after bootstrap; want the apt candidate %q (before the remove: %q)", pkgVersionAfter, candidate, pkgVersionBefore)
 	}
 
 	imageIDOut2, err := r.Output(ctx, aptPodman, "image", "inspect", "--format", "{{.Id}}", sagTestImage)
@@ -103,4 +111,13 @@ func DXAC05_PodmanAptInstall(t *testing.T, ctx context.Context) {
 	if imageIDAfter != imageIDBefore {
 		t.Fatalf("DXAC05: image %s ID changed: before=%q after=%q", sagTestImage, imageIDBefore, imageIDAfter)
 	}
+}
+
+func dxac05Candidate(policy string) string {
+	for _, line := range strings.Split(policy, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "Candidate:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }

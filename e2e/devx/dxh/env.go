@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 )
@@ -32,7 +33,7 @@ func ChildEnv(env []string, groupDir string) ([]string, error) {
 	var out []string
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
-		if allowedEnvKeys[key] || strings.HasPrefix(key, "SAG_TEST_") || (awsTest && awsTestEnvKeys[key]) {
+		if allowedEnvKeys[key] || (runtime.GOOS == "linux" && key == "XDG_RUNTIME_DIR") || strings.HasPrefix(key, "SAG_TEST_") || (awsTest && awsTestEnvKeys[key]) {
 			out = append(out, e)
 		}
 	}

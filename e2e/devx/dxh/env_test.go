@@ -2,6 +2,7 @@ package dxh_test
 
 import (
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -124,5 +125,19 @@ func TestHarnessDirsAreTestDirs(t *testing.T) {
 	}
 	if _, err := os.Stat(pi1); err != nil {
 		t.Errorf("PI_CODING_AGENT_DIR %q not created: %v", pi1, err)
+	}
+}
+
+func TestChildEnvXDGRuntimeDirOnLinuxOnly(t *testing.T) {
+	out, err := dxh.ChildEnv([]string{"XDG_RUNTIME_DIR=/run/user/1000", "DBUS_SESSION_BUS_ADDRESS=unix:path=/x"}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := slices.Contains(out, "XDG_RUNTIME_DIR=/run/user/1000")
+	if want := runtime.GOOS == "linux"; has != want {
+		t.Errorf("XDG_RUNTIME_DIR passed = %v; want %v on %s", has, want, runtime.GOOS)
+	}
+	if slices.ContainsFunc(out, func(e string) bool { return strings.HasPrefix(e, "DBUS_SESSION_BUS_ADDRESS=") }) {
+		t.Error("DBUS_SESSION_BUS_ADDRESS passed; want removed")
 	}
 }
