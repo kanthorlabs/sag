@@ -29,6 +29,8 @@ var bootagentTests = map[string]func(*testing.T, context.Context){}
 
 var imageTests = map[string]func(*testing.T, context.Context){}
 
+var awsTests = map[string]func(*testing.T, context.Context){}
+
 func TestDevxMain(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -223,6 +225,24 @@ func TestDevxMain(t *testing.T) {
 		for _, name := range imageOrder {
 			name := name
 			fn := imageTests[name]
+			t.Run(name, func(t *testing.T) {
+				if fn == nil {
+					t.Fatal("not implemented")
+				}
+				fn(t, ctx)
+			})
+		}
+	})
+
+	awsOrder := []string{
+		"DXAC31_AWSBackend",
+		"DXAC32_AWSUnavailable",
+	}
+	dxh.RunGroup(t, ctx, r, tcfg, "aws", tagImage, func(t *testing.T) {
+		dxh.EnsureLocalStack(t)
+		for _, name := range awsOrder {
+			name := name
+			fn := awsTests[name]
 			t.Run(name, func(t *testing.T) {
 				if fn == nil {
 					t.Fatal("not implemented")

@@ -52,6 +52,8 @@ func New(secrets []secret.Credential) Scrubber {
 	return Scrubber{replacer: strings.NewReplacer(pairs...)}
 }
 
+func (s *Scrubber) Add(_ secret.Credential) {}
+
 func (s Scrubber) String(text string) string {
 	if s.replacer == nil {
 		return text
