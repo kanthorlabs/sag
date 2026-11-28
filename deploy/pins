@@ -1,2 +1,2 @@
 podman 5.5.1 darwin/arm64 release https://github.com/containers/podman/releases/download/v5.5.1/podman-installer-macos-arm64.pkg 20ed558283ca4bfaa8cabb9e7c4f0062a0df6d8658587aee664ad715973139ab
-podman 4.9.3 linux/* apt podman -
+podman 5.4.2 linux/* apt podman -

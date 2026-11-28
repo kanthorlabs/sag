@@ -7,7 +7,7 @@
 | ACs | DX-AC5. The phase B clauses of README section 8.1. The phase B run of each criterion with the run `A, B`. |
 | PRD-devx sections | 1, 1.4, 3, 5.3 (Linux install), 5.4 (Linux answers), 5.5 (Linux), 5.8 (operator step), 6 (Linux), 8 (secret list), 15 (Linux steps), 17.1 (phase B), 19 step 10 |
 | Gate | `D10.4`: README section 6.2 |
-| Blocked by | Access to the Debian machine. The ruling of the Debian version and the Linux platform scope. The PRD-devx revision that records the ruling. |
+| Blocked by | `sudo -n` for the test user and a Go toolchain on the Debian machine. The ruling and PRD-devx revision 9 exist. |
 | Agents at once | 3. Start order: `D10.2`, `D10.1`, `D10.3` |
 | Wall-clock | `D10.0` 2 h + parallel phase 5 h + `D10.4` 8 h = 15 h |
 
@@ -56,7 +56,7 @@ Agents edit code in their worktrees on the macOS development machine. They run e
   - The install prompt of PRD-devx 5.4 names the apt candidate and the pin.
   - Test pins: the `release` item for `linux/*` and the apt package `hello`. Add the `apt` clause to DX-AC8.
   - DX-AC5: `apt-get remove podman` keeps the rootless store. Prove that the image stays after the install.
-- Tests first: `platform_test.go`: `TestRuledLinuxAccepted`, `TestOtherDistributionExit1`; `apt_test.go`: `TestAptVersionParse` (`4.9.3+ds1-1ubuntu0.1` gives `4.9.3`), `TestEpochRemoved`, `TestNoCandidateFailsInPlan`, `TestOlderCandidateFailsInPlan`, `TestNewuidmapMissingExit1`, `TestSudoNonInteractive`.
+- Tests first: `platform_test.go`: `TestRuledLinuxAccepted`, `TestOtherDistributionExit1`; `apt_test.go`: `TestAptVersionParse` (`1:5.4.2+ds1-2+b2` gives `5.4.2`), `TestEpochRemoved`, `TestNoCandidateFailsInPlan`, `TestOlderCandidateFailsInPlan`, `TestNewuidmapMissingExit1`, `TestSudoNonInteractive`.
 - e2e: `DXAC05_PodmanAptInstall` in the suite `Install`. The `apt` clause of `DXAC08_VersionRule`.
 - ACs: DX-AC5. Phase B clause of DX-AC8.
 - Verify: `GOOS=linux CGO_ENABLED=0 go vet ./internal/deps/... ./internal/bootstrap/...`, then on the Debian machine `go test -count=1 ./internal/deps/... ./internal/bootstrap/... && make e2e-devx SUITE=Install LAYER=10 PHASE=B && make e2e-devx SUITE=Pins LAYER=10 PHASE=B`. Expected: exit 0, then `ok`, then exit 0.

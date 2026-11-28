@@ -201,8 +201,8 @@ Who runs what:
 ### 2.2 Phase B: Debian machine
 
 - Layer 10 is blocked until Ulrich gives access to the Debian machine.
-- At the start of phase B, Ulrich rules the Debian version and the Linux platform scope (PRD-devx 1.4).
-- A PRD-devx revision records the ruling before `D10.0` starts.
+- Ruling of Ulrich (2026-11-28): Debian 13 (trixie), amd64 and arm64. PRD-devx revision 9 records it. The Linux pin is `podman 5.4.2`, the Debian 13 package.
+- The Debian machine is `homelab` (`ssh homelab`). It is the machine of a teammate. The work is in `/home/cantholabs/Projects/kanthorlabs/sag` and its `.dev`.
 - The constraints of section 2.1 apply to the Debian machine until Ulrich states other rules.
 - The test user needs linger and `sudo -n` (PRD-devx 17.1). DX-AC5 removes and installs Podman on the machine.
 

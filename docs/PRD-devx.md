@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Owner | Ulrich |
-| Status | Revision 8 |
-| Date | 2026-11-26 |
+| Status | Revision 9 |
+| Date | 2026-11-28 |
 | Base | `docs/PRD.md` revision 16, commit `68843af` |
 
 ## 1. Scope
@@ -14,10 +14,11 @@ devx v1 targets developer machines only:
 | Platform | Package source for Podman | Test environment |
 |---|---|---|
 | macOS arm64 | Official Podman installer `podman-installer-macos-arm64.pkg` of the pinned GitHub release | The macOS development machine of Ulrich, phase A (section 1.4) |
-| Ubuntu with `apt-get` (amd64, arm64) | Ubuntu archive through `apt-get` | The Linux machine of phase B (section 1.4) |
+| Debian 13 with `apt-get` (amd64, arm64) | Debian archive through `apt-get` | The Debian machine of phase B (section 1.4) |
 
 - Each other OS, architecture, or distribution gets exit 1 from `sag bootstrap` with the message `unsupported platform <os>/<arch>`.
-- An Ubuntu release whose `podman` package is older than the pin gets exit 1 from `sag bootstrap` (section 5.3).
+- Bootstrap accepts Linux only when `/etc/os-release` has `ID=debian` and `VERSION_ID="13"`.
+- A Debian 13 host whose `podman` candidate is older than the pin gets exit 1 from `sag bootstrap` (section 5.3).
 - A server install uses PRD 13.5 (`deploy/sag.container`). devx does not change the server path, except the log flags in section 13.
 - SAG publishes `127.0.0.1:8443` only. On a host with Tailscale, `tailscale serve` forwards TCP port 8443 of the Tailscale IPv4 address to it (section 5.8).
 - A certificate from `tailscale cert` is out of scope.
@@ -85,7 +86,7 @@ devx builds in two phases. Section 19 gives the steps of each phase.
 | B | A Debian machine of Ulrich | The Linux parts: the `apt` install, the user Quadlet file and the systemd start at login, the port check with `ss`, and the Tailscale operator step. Each criterion with the run `A, B` or `B`, in its phase B form. |
 
 - Phase B starts after phase A, when Ulrich gives access to the Debian machine.
-- At the start of phase B, Ulrich rules the Debian version and the Linux platform scope: Ubuntu or Debian.
+- Ruling of Ulrich (2026-11-28): the Linux platform is Debian 13 (trixie), amd64 and arm64. Ubuntu is out of scope.
 - No GitHub Actions job is a gate of phase A (section 17).
 
 ## 2. Security model
@@ -103,7 +104,7 @@ SAG runs under the current OS user. devx creates no service account, no `sudoers
 | `<cfg>/answers.json` | Stored answers, the absolute path of `podman`, and the Tailscale address of the certificate, mode 0600. |
 | `<cfg>/lock` | Lock file, mode 0600. |
 | Start at login, macOS | LaunchAgent `~/Library/LaunchAgents/net.kanthorlabs.sag.plist` |
-| Start at login, Ubuntu | Quadlet file `~/.config/containers/systemd/sag.container` of the user manager |
+| Start at login, Debian | Quadlet file `~/.config/containers/systemd/sag.container` of the user manager |
 | Tailscale serve rule | Serve configuration of `tailscaled`, TCP port 8443 |
 | Agent harness files | Section 12.2 |
 
@@ -157,7 +158,7 @@ Items of devx v1:
 | `name` | `version` | `platform` | `source` | `locator` | `sha256` |
 |---|---|---|---|---|---|
 | `podman` | `5.5.1` | `darwin/arm64` | `release` | `https://github.com/containers/podman/releases/download/v5.5.1/podman-installer-macos-arm64.pkg` | SHA-256 of that file, from the v5.5.1 release page |
-| `podman` | `4.9.3` | `linux/*` | `apt` | `podman` | `-` |
+| `podman` | `5.4.2` | `linux/*` | `apt` | `podman` | `-` |
 
 - The binary embeds `deploy/pins` with `go:embed`.
 - A `release` artifact downloads to a new directory with mode 0700. Bootstrap computes its SHA-256 and compares it with the pin.
@@ -207,7 +208,7 @@ Prerequisites:
 - `gh` 2.49 or later, logged in with `gh auth login`.
 - `~/.local/bin` exists and is in `PATH`. Create it with `mkdir -p ~/.local/bin`.
 
-Run these steps on macOS arm64. On Ubuntu, use `sag_linux_<arch>` and `sha256sum` instead of `shasum -a 256`.
+Run these steps on macOS arm64. On Debian, use `sag_linux_<arch>` and `sha256sum` instead of `shasum -a 256`.
 
 ```
 gh release download <tag> --repo kanthorlabs/sag --pattern sag_darwin_arm64 --pattern SHA256SUMS
@@ -253,7 +254,7 @@ Bootstrap runs these steps in this order. Each step first reads the current stat
 - On a `NODE_EXTRA_CA_CERTS` conflict, agent setup of that harness changes no file and prints the bundle command. Bootstrap completes the other steps and exits 1.
 - On a host without `<cfg>`, an exit in step 3 leaves no `<cfg>`.
 - Step 14 runs in the bootstrap process under the lock of step 4.
-- A second run on a ready host asks nothing, does not restart SAG, and exits 0. It writes only `ok` lines and at most one Tailscale `skip` line. Exception: bootstrap asks the Ubuntu Tailscale operator prompt at each run until the operator step completes.
+- A second run on a ready host asks nothing, does not restart SAG, and exits 0. It writes only `ok` lines and at most one Tailscale `skip` line. Exception: bootstrap asks the Debian Tailscale operator prompt at each run until the operator step completes.
 - Bootstrap never replaces `sag-master-key`, `sag.yaml`, or an installed dependency.
 
 ### 5.3 Dependency rule
@@ -262,7 +263,7 @@ Bootstrap runs these steps in this order. Each step first reads the current stat
 |---|---|---|
 | Installed, version equal to the pin | None | `ok podman 5.5.1` |
 | Installed, version newer than the pin | None | `warn podman installed 5.6.0, pin 5.5.1` |
-| Installed, version older than the pin | None. Plan conflict: exit 1 before any change. | `fail podman installed 4.3.1, pin 4.9.3` |
+| Installed, version older than the pin | None. Plan conflict: exit 1 before any change. | `fail podman installed 4.3.1, pin 5.4.2` |
 | Absent, approved | Install, then read the version again | `install podman 5.5.1` |
 | Absent, not approved | Exit 3 | `fail podman absent; run on a terminal or add --auto-approve podman@5.5.1` |
 
@@ -277,10 +278,10 @@ macOS install:
 - The command is `sudo installer -pkg <file> -target /`. `sudo` asks for the admin password one time.
 - After the install, the search finds `/opt/podman/bin/podman`.
 
-Ubuntu install:
+Debian install:
 
 1. Read the candidate version from `apt-cache policy podman`.
-2. Remove an epoch prefix `<n>:`. Remove the text from the first `+`, `-`, or `~` to the end. For example, `4.9.3+ds1-1ubuntu0.1` gives `4.9.3`.
+2. Remove an epoch prefix `<n>:`. Remove the text from the first `+`, `-`, or `~` to the end. For example, `1:5.4.2+ds1-2+b2` gives `5.4.2`.
 3. When apt has no candidate, or the candidate is older than the pin, exit 1 before any change. This check is part of the plan.
 4. Run `sudo apt-get install -y podman`.
 5. Check that `newuidmap` is in `PATH`. Otherwise exit 1.
@@ -288,7 +289,7 @@ Ubuntu install:
 Approval:
 
 - `--auto-approve <name>@<version>` is repeatable. It approves the install of `<name>` only when `<version>` is equal to the pin version.
-- On Ubuntu, an approval means "the apt version, at least the pin".
+- On Debian, an approval means "the apt version, at least the pin".
 - A pre-approval with another version approves nothing. Bootstrap writes `warn podman pre-approval 5.4.0 does not match pin 5.5.1; ignored`.
 - Without a valid pre-approval and with a terminal, bootstrap asks the prompt of section 5.4. Only `y` or `yes` approves.
 
@@ -297,9 +298,9 @@ Approval:
 | Answer | Flag | Prompt | Needed when |
 |---|---|---|---|
 | Install of an absent item, macOS | `--auto-approve podman@5.5.1` | `Install podman 5.5.1 from <locator>? [y/N]` | The item is absent. |
-| Install of an absent item, Ubuntu | `--auto-approve podman@4.9.3` | `Install podman from apt (candidate <apt version>, pin 4.9.3)? [y/N]` | The item is absent. |
+| Install of an absent item, Debian | `--auto-approve podman@5.4.2` | `Install podman from apt (candidate <apt version>, pin 5.4.2)? [y/N]` | The item is absent. |
 | Start at login | `--autostart yes\|no` | `Start SAG at login? [y/N]` | `answers.json` has no `autostart` value. |
-| Tailscale operator, Ubuntu | None | `Run "sudo tailscale set --operator=<user>" so that SAG serves on Tailscale? [y/N]` | Section 5.8. |
+| Tailscale operator, Debian | None | `Run "sudo tailscale set --operator=<user>" so that SAG serves on Tailscale? [y/N]` | Section 5.8. |
 | Agent setup | `--agent-setup <harness>=yes\|no` | `Set up SAG for <harness> in <absolute config directory>? [y/N]` | Bootstrap detects the harness, and `answers.json` has no `agent_setup` value for the harness and its absolute config directory. |
 | Answers of agent setup | `--deny-rules`, `--shell-profile`, `--guard` | Section 12.3 | The harness has the agent setup answer `yes`. |
 
@@ -316,13 +317,13 @@ Approval:
 | OS | `yes` | `no` |
 |---|---|---|
 | macOS | Write the LaunchAgent with `RunAtLoad` true and `ProgramArguments` `<absolute path of sag> service start`. Run `launchctl bootout gui/<uid>/net.kanthorlabs.sag`, then `launchctl bootstrap gui/<uid> <plist>`. | Run `launchctl bootout gui/<uid>/net.kanthorlabs.sag`. Remove the LaunchAgent. |
-| Ubuntu | The Quadlet file has `[Install] WantedBy=default.target`. | The Quadlet file has no `[Install]` section. |
+| Debian | The Quadlet file has `[Install] WantedBy=default.target`. | The Quadlet file has no `[Install]` section. |
 
 - `bootout` of an agent that is not loaded is not a failure.
 - When the domain `gui/<uid>` does not exist, for example in an SSH session without a GUI login, bootstrap writes the LaunchAgent file. It writes `warn autostart loads at the next GUI login` and continues.
 - The LaunchAgent writes its output to `~/Library/Logs/sag/service.log`.
 - Bootstrap rewrites the LaunchAgent when the path of `sag` changes.
-- On Ubuntu, bootstrap does not enable linger. The user manager starts SAG at the first login and stops it at the last logout.
+- On Debian, bootstrap does not enable linger. The user manager starts SAG at the first login and stops it at the last logout.
 
 ### 5.6 Master key
 
@@ -367,7 +368,7 @@ Tailscale is optional, and bootstrap detects it. Bootstrap has no Tailscale flag
 
 1. The `tailscale` command is in `PATH`.
 2. `tailscale ip -4` exits 0, and its first output line parses as an IPv4 address in `100.64.0.0/10`. This address is the Tailscale address.
-3. On Ubuntu, the field `OperatorUser` of `tailscale debug prefs` is the current user, or the operator step below gets approval.
+3. On Debian, the field `OperatorUser` of `tailscale debug prefs` is the current user, or the operator step below gets approval.
 
 When a condition fails, bootstrap writes one line `skip tailscale <reason>; loopback only` and continues. `<reason>` is `command absent`, `down`, `address invalid`, or `operator not set`.
 
@@ -388,9 +389,9 @@ Serve rule:
 - `tailscaled` keeps the rule across restarts. `sag service start` does not run `tailscale`.
 - Bootstrap never runs `tailscale funnel`.
 
-Ubuntu operator step:
+Debian operator step:
 
-- On Ubuntu, `tailscale serve` needs root or the current user as the operator of `tailscaled`.
+- On Debian, `tailscale serve` needs root or the current user as the operator of `tailscaled`.
 - When the `OperatorUser` check fails and bootstrap has a terminal, bootstrap asks the prompt of section 5.4. Only `y` or `yes` approves.
 - With approval, step 13 runs `sudo tailscale set --operator=<user>` before the serve rule.
 - Without a terminal or without approval, bootstrap writes `skip tailscale operator not set; loopback only`.
@@ -414,7 +415,7 @@ sag service stop
 | OS | `start` | `stop` |
 |---|---|---|
 | macOS | Start the Podman machine when it is stopped. Run the container with `podman run -d --replace --name sag` and the arguments of section 13. | `podman stop sag` |
-| Ubuntu | Write the Quadlet file from `sag.yaml` and `answers.json`. Run `systemctl --user daemon-reload`, then `systemctl --user restart sag`. | `systemctl --user stop sag` |
+| Debian | Write the Quadlet file from `sag.yaml` and `answers.json`. Run `systemctl --user daemon-reload`, then `systemctl --user restart sag`. | `systemctl --user stop sag` |
 
 - `start` replaces a container that runs. In-flight requests fail during the restart.
 - `start` waits up to 30 s for `GET /healthz`. A timeout gives exit 1 and the last 50 lines of the daemon log.
@@ -426,7 +427,7 @@ Port check:
 
 - Bootstrap in step 3 and `start` before it starts a container check the holder of `127.0.0.1:8443`.
 - When `podman ps` shows a container that publishes port 8443, this container is the holder. This check comes first.
-- Else the holder is the process that listens on TCP port 8443. On macOS, `lsof -nP -iTCP:8443 -sTCP:LISTEN` names it. On Ubuntu, `ss -ltnp` names it.
+- Else the holder is the process that listens on TCP port 8443. On macOS, `lsof -nP -iTCP:8443 -sTCP:LISTEN` names it. On Debian, `ss -ltnp` names it.
 - On macOS, `lsof` shows `gvproxy` for each Podman publish.
 - When no process holds the port, the command continues.
 - When the holder is the container `sag`, bootstrap writes `ok port-8443`, and `start` continues.
@@ -578,7 +579,7 @@ sag credential delete <name>
    - Container runs: `podman exec sag sag extension revoke <name>`.
    - Container stopped: a one-shot container from the same image, with the same state volume and `sag-master-key`, runs `sag extension revoke <name>`.
 6. Remove `resources.<name>` from `sag.yaml` with a temporary file and a rename.
-7. When the container ran at step 5, run `sag service start`. Otherwise keep SAG stopped and, on Ubuntu, write the Quadlet file.
+7. When the container ran at step 5, run `sag service start`. Otherwise keep SAG stopped and, on Debian, write the Quadlet file.
 8. `Delete` each owned secret.
 9. For each referenced secret that the resource does not own, print `skip <secret name> not created by sag; not removed`.
 
@@ -750,7 +751,7 @@ Steps:
 | Shell | Profile |
 |---|---|
 | `zsh` | `${ZDOTDIR:-$HOME}/.zshrc` |
-| `bash`, Ubuntu | `~/.bashrc` |
+| `bash`, Debian | `~/.bashrc` |
 | `bash`, macOS | `~/.bash_profile` |
 
 ### 12.3 Answers and plan conflicts
@@ -947,9 +948,9 @@ devx removes these items:
 devx has no uninstall command. Do these steps in this order to remove the devx state.
 
 1. Run `sag credential delete <name>` for each resource in `sag credential list`.
-2. Run `sag service stop`. When `tailscale serve status --json` shows the SAG rule of section 5.8, run `tailscale serve --tcp 8443 off`. On Ubuntu, when bootstrap set the operator, run `sudo tailscale set --operator=`.
+2. Run `sag service stop`. When `tailscale serve status --json` shows the SAG rule of section 5.8, run `tailscale serve --tcp 8443 off`. On Debian, when bootstrap set the operator, run `sudo tailscale set --operator=`.
 3. On macOS, run `launchctl bootout gui/$(id -u)/net.kanthorlabs.sag`. Then remove `~/Library/LaunchAgents/net.kanthorlabs.sag.plist` and `~/Library/Logs/sag/`.
-4. On Ubuntu, remove `~/.config/containers/systemd/sag.container`. Then run `systemctl --user daemon-reload`.
+4. On Debian, remove `~/.config/containers/systemd/sag.container`. Then run `systemctl --user daemon-reload`.
 5. Run `podman rm sag` and `podman volume rm sag-state`. This step deletes the audit log and the approvals.
 6. Run `podman secret rm sag-master-key sag-tls-cert sag-tls-key`. If `sag-aws-credentials` exists, remove it.
 7. Run `podman rmi` for each `docker.io/kanthorlabs/sag` image.
@@ -968,7 +969,7 @@ Podman and the Podman machine stay installed.
 | 4 Personas | The operator uses the devx host commands to create secrets, write `sag.yaml`, issue JWTs, approve extensions, set up agent harnesses, and read the audit log. |
 | 5 | Add `github.com/aws/aws-sdk-go-v2/config`, `github.com/aws/aws-sdk-go-v2/service/secretsmanager`, and `golang.org/x/term` (hidden terminal read of section 7.3). |
 | 6 | Add the log flags of section 13 to the container constraints. devx publishes `127.0.0.1:8443` only. On a host with Tailscale, `tailscale serve --tcp` forwards TCP port 8443 of the Tailscale address to `127.0.0.1:8443` (section 5.8). This forward is the devx form of the Tailscale publish. "The operator runs CLI commands inside the container with `podman exec`" also allows the host forms of section 1.2. "The daemon reads `sag.yaml` and all secrets at start" applies to `secret:` references; section 11.4 applies to `aws-sm:` references. |
-| 6.1 | The development certificate on macOS and Ubuntu comes from `sag bootstrap` (section 5.7). Its CA has no name constraints extension, and no file holds the CA key. The server certificate names `localhost`, `127.0.0.1`, `::1`, and the Tailscale address of section 5.8. `NODE_EXTRA_CA_CERTS` points to `<cfg>/ca.pem` through section 12.5. The `tailscale cert` row applies to a server install only. |
+| 6.1 | The development certificate on macOS and Debian comes from `sag bootstrap` (section 5.7). Its CA has no name constraints extension, and no file holds the CA key. The server certificate names `localhost`, `127.0.0.1`, `::1`, and the Tailscale address of section 5.8. `NODE_EXTRA_CA_CERTS` points to `<cfg>/ca.pem` through section 12.5. The `tailscale cert` row applies to a server install only. |
 | 7.1 | On a developer machine, the agent runs on the container host in the account of the operator. Section 2 of this addendum applies. |
 | 7.3 | Add T8. |
 | 7.4 TB2, TB4 | Add the devx host commands as the operator path. Add the AWS backend as a secret source. |
@@ -1006,7 +1007,7 @@ Each criterion has one e2e test, except DX-AC44, which is a Node test, and DX-AC
 | DX-AC2 | For the container from DX-AC1, `podman exec sag sag config check` exits 0. The secret count of `podman container inspect sag` equals the mount count of section 13. `podman inspect` shows log driver `k8s-file` with `max-size` 10mb. The Quadlet output for `deploy/dev/sag.yaml` equals `deploy/sag.container`. `<cfg>/ca.pem` has no name constraints extension. The server certificate of the endpoint names exactly `localhost`, `127.0.0.1`, and `::1`. | None | A, B |
 | DX-AC3 | A second `bootstrap` without a terminal and without flags exits 0 and writes only `ok` lines and the line `skip tailscale command absent; loopback only`. The `CreatedAt` of `sag-master-key` and the start time of the container do not change. A JWT from before the run still authenticates. | None | A, B |
 | DX-AC4 | On a host without `<cfg>`, `bootstrap` without a terminal and without flags exits 3 within 30 s. The message names `--autostart`. No secret and no `<cfg>` exist after the run. | None | A, B |
-| DX-AC5 | With Podman removed, `bootstrap --auto-approve podman@4.9.3 --autostart no` installs Podman and exits 0. `newuidmap` is in `PATH`. | Separate run, `sudo -n` | B |
+| DX-AC5 | With Podman removed, `bootstrap --auto-approve podman@5.4.2 --autostart no` installs Podman and exits 0. `newuidmap` is in `PATH`. | Separate run, `sudo -n` | B |
 | DX-AC6 | Without a terminal and without a pre-approval, an absent test item gives exit 3 and no install. With `--auto-approve <item>@<other version>`, `bootstrap` writes the `ignored` `warn` line and exits 3. | Test pins | A, B |
 | DX-AC7 | A `release` test item with a wrong SHA-256 gives exit 1. The artifact is absent from the download directory, and the test install command does not run. With the correct SHA-256, the test install command runs one time on the path of the verified file. | Test pins | A, B |
 | DX-AC8 | An installed item newer than the test pin gives one `warn` line and exit 0. An installed item older than the test pin gives exit 1, and no `<cfg>` exists after the run. The installed version does not change. Phase B: an `apt` test item whose candidate is older than the test pin gives exit 1 and no install. | Test pins | A, B |
@@ -1108,7 +1109,7 @@ Phase B, Linux machine:
 - **R15.** `credential create` needs no confirmation. T8 can register resources and restart SAG. T8 can also edit `<cfg>/sag.yaml` to add a `sub`, issue a JWT through a pseudo-terminal, and replace `<cfg>/ca.pem`.
 - **R16.** T8 can replace the Podman installer between the hash check and the install.
 - **R17.** A dev build pulls the mutable `main` tag. Only a release binary pins the image.
-- **R18.** On Ubuntu, SAG stops at the last logout of the operator.
+- **R18.** On Debian, SAG stops at the last logout of the operator.
 - **R19.** The endpoint certificate expires 397 days after a bootstrap run. Only `credential list` and `bootstrap` warn.
 - **R20.** The macOS installer run, `podman machine init`, and `podman machine start` have no e2e test. The manual check list of section 18.1 covers them.
 - **R21.** `podman machine init` has no image pin. The VM image follows the Podman release line, not a digest.
@@ -1116,7 +1117,7 @@ Phase B, Linux machine:
 - **R23.** T8 reads the JWT of each harness from its MCP configuration file. T8 can also run `sag agent setup` or `podman exec sag sag agent issue <sub>` and get a JWT for each `sub`.
 - **R24.** A Claude Code process that runs during agent setup can write `.claude.json` from its own state and remove `mcpServers.sag`. The verification detects a lost entry only at setup time.
 - **R25.** A pi process that does not start from an interactive shell does not read the shell profile. Without `NODE_EXTRA_CA_CERTS` from its parent, its TLS connection to SAG fails, and the verification of section 12.8 still passes.
-- **R26.** With the Tailscale serve rule, each tailnet device that the Tailscale ACLs allow reaches port 8443. The JWT check applies to each request except `/healthz`. SAG v1 has no rate limit for a request without a JWT. T8 can change the Tailscale configuration in the account of the operator, for example with `tailscale funnel`, when the tailnet policy allows Funnel. On Ubuntu, the operator step gives this capability.
+- **R26.** With the Tailscale serve rule, each tailnet device that the Tailscale ACLs allow reaches port 8443. The JWT check applies to each request except `/healthz`. SAG v1 has no rate limit for a request without a JWT. T8 can change the Tailscale configuration in the account of the operator, for example with `tailscale funnel`, when the tailnet policy allows Funnel. On Debian, the operator step gives this capability.
 - **R27.** SAG sees each tailnet client as `127.0.0.1`. The audit log identifies a tailnet client only by the `sub` of its JWT.
 - **R28.** Only the macOS development machine proves the real harness formats, the macOS Podman install, and the real `tailscale serve`. This proof comes in build step 8. The harness stubs and the fake `tailscale` test their logic. No test runs the real `tailscale serve` or the operator step on Linux.
 
@@ -1153,4 +1154,4 @@ Phase B, on the Linux machine:
 
 | Step | Content | Criteria |
 |---|---|---|
-| 10 | Ulrich rules the Debian version and the Linux platform scope. Linux parts: `apt` install, user Quadlet file and systemd start at login, port check with `ss`, Tailscale operator step. Confirm the secret list of `podman container inspect`. Confirm that `apt-get install -y podman` installs `uidmap`. | DX-AC5, and each criterion with the run `A, B` in its phase B form |
+| 10 | Apply the ruling of section 1.4: Debian 13, amd64 and arm64. Linux parts: `apt` install, user Quadlet file and systemd start at login, port check with `ss`, Tailscale operator step. Confirm the secret list of `podman container inspect`. Confirm that `apt-get install -y podman` installs `uidmap`. | DX-AC5, and each criterion with the run `A, B` in its phase B form |
