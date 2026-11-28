@@ -87,6 +87,8 @@ func TestTeardownHarnessSteps(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("SHELL", "/bin/zsh")
 	t.Setenv("ZDOTDIR", "")
+	cfgDir := dxh.CfgDir(home)
+	caPath := cfgDir + "/ca.pem"
 
 	claudeDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(filepath.Join(claudeDir, "skills", "sag"), 0o700); err != nil {
@@ -94,7 +96,7 @@ func TestTeardownHarnessSteps(t *testing.T) {
 	}
 	settingsPath := filepath.Join(claudeDir, "settings.json")
 	settings := map[string]interface{}{
-		"env": map[string]string{"NODE_EXTRA_CA_CERTS": "/path/ca.pem"},
+		"env": map[string]string{"NODE_EXTRA_CA_CERTS": caPath},
 		"permissions": map[string]interface{}{
 			"deny": []string{"Bash(sag credential delete:*)", "Bash(podman secret rm:*)", "Bash(script:*)"},
 		},
@@ -102,20 +104,21 @@ func TestTeardownHarnessSteps(t *testing.T) {
 	}
 	writeJSON(t, settingsPath, settings)
 
-	piDir := filepath.Join(home, ".pi")
-	if err := os.MkdirAll(filepath.Join(piDir, "skills", "sag"), 0o700); err != nil {
+	piAgentDir := filepath.Join(home, ".pi", "agent")
+	if err := os.MkdirAll(filepath.Join(piAgentDir, "skills", "sag"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(piDir, "extensions"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(piAgentDir, "extensions"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	guardPath := filepath.Join(piDir, "extensions", "sag-guard.ts")
+	guardPath := filepath.Join(piAgentDir, "extensions", "sag-guard.ts")
 	if err := os.WriteFile(guardPath, []byte("// managed by sag agent setup\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	zshrc := filepath.Join(home, ".zshrc")
-	if err := os.WriteFile(zshrc, []byte("# user stuff\n# sag agent setup\nexport NODE_EXTRA_CA_CERTS=\"/path/ca.pem\"\n# more user stuff\n"), 0o600); err != nil {
+	profile := "# user stuff\n# sag agent setup\nexport NODE_EXTRA_CA_CERTS=\"" + caPath + "\"\n# more user stuff\n"
+	if err := os.WriteFile(zshrc, []byte(profile), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -149,7 +152,7 @@ func TestTeardownHarnessSteps(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(claudeDir, "skills", "sag")); !os.IsNotExist(err) {
 		t.Error("TeardownHarnessFiles: claude skills/sag not removed")
 	}
-	if _, err := os.Stat(filepath.Join(piDir, "skills", "sag")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(piAgentDir, "skills", "sag")); !os.IsNotExist(err) {
 		t.Error("TeardownHarnessFiles: pi skills/sag not removed")
 	}
 	if _, err := os.Stat(guardPath); !os.IsNotExist(err) {
@@ -169,6 +172,9 @@ func TestTeardownHarnessSteps(t *testing.T) {
 			t.Error("TeardownHarnessFiles: NODE_EXTRA_CA_CERTS not removed from settings.json")
 		}
 	}
+	if other, _ := got["other"].(string); other != "value" {
+		t.Error("TeardownHarnessFiles: non-SAG settings key was removed or changed")
+	}
 
 	zshrcData, err := os.ReadFile(zshrc)
 	if err != nil {
@@ -182,6 +188,389 @@ func TestTeardownHarnessSteps(t *testing.T) {
 	}
 	if !strings.Contains(string(zshrcData), "# user stuff") {
 		t.Error("TeardownHarnessFiles: non-SAG content removed from .zshrc")
+	}
+}
+
+func TestSymlinkedSettingsStaysLink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+	cfgDir := dxh.CfgDir(home)
+	caPath := cfgDir + "/ca.pem"
+
+	claudeDir := filepath.Join(home, ".claude")
+	realTarget := filepath.Join(t.TempDir(), "settings-real.json")
+	settings := map[string]interface{}{
+		"env": map[string]string{"NODE_EXTRA_CA_CERTS": caPath},
+		"permissions": map[string]interface{}{
+			"deny": []string{"Bash(sag credential delete:*)"},
+		},
+	}
+	writeJSON(t, realTarget, settings)
+
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(claudeDir, "settings.json")
+	if err := os.Symlink(realTarget, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	f := newFake()
+	f.set("claude mcp remove sag -s user", []byte("ok\n"), nil)
+	f.set("pi mcp remove sag", []byte("ok\n"), nil)
+
+	if err := dxh.TeardownHarnessFiles(context.Background(), f, home); err != nil {
+		t.Fatalf("TeardownHarnessFiles: %v", err)
+	}
+
+	linfo, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatalf("Lstat settings.json: %v", err)
+	}
+	if linfo.Mode()&os.ModeSymlink == 0 {
+		t.Error("TeardownHarnessFiles: settings.json symlink was replaced with a regular file")
+	}
+
+	data, err := os.ReadFile(linkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if env, ok := got["env"].(map[string]interface{}); ok {
+		if _, has := env["NODE_EXTRA_CA_CERTS"]; has {
+			t.Error("TeardownHarnessFiles via symlink: NODE_EXTRA_CA_CERTS not removed")
+		}
+	}
+}
+
+func TestSymlinkedSettingsKeepsTargetMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+	cfgDir := dxh.CfgDir(home)
+	caPath := cfgDir + "/ca.pem"
+
+	claudeDir := filepath.Join(home, ".claude")
+	realTarget := filepath.Join(t.TempDir(), "settings-real.json")
+	settings := map[string]interface{}{
+		"env": map[string]string{"NODE_EXTRA_CA_CERTS": caPath},
+	}
+	writeJSON(t, realTarget, settings)
+	if err := os.Chmod(realTarget, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(claudeDir, "settings.json")
+	if err := os.Symlink(realTarget, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	f := newFake()
+	f.set("claude mcp remove sag -s user", []byte("ok\n"), nil)
+	f.set("pi mcp remove sag", []byte("ok\n"), nil)
+
+	if err := dxh.TeardownHarnessFiles(context.Background(), f, home); err != nil {
+		t.Fatalf("TeardownHarnessFiles: %v", err)
+	}
+
+	tinfo, err := os.Stat(realTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tinfo.Mode().Perm() != 0o640 {
+		t.Errorf("TeardownHarnessFiles: target mode = %04o; want 0640", tinfo.Mode().Perm())
+	}
+}
+
+func TestNoHTMLEscapingInSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+	cfgDir := dxh.CfgDir(home)
+	caPath := cfgDir + "/ca.pem"
+
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	raw := `{"env":{"NODE_EXTRA_CA_CERTS":"` + caPath + `"},"permissions":{"deny":["Bash(sag credential delete:*)"]},"other":"value with <tags> & symbols"}`
+	if err := os.WriteFile(settingsPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f := newFake()
+	f.set("claude mcp remove sag -s user", []byte("ok\n"), nil)
+	f.set("pi mcp remove sag", []byte("ok\n"), nil)
+
+	if err := dxh.TeardownHarnessFiles(context.Background(), f, home); err != nil {
+		t.Fatalf("TeardownHarnessFiles: %v", err)
+	}
+
+	out, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(out)
+	if !strings.Contains(content, "<tags>") {
+		t.Errorf("TeardownHarnessFiles: '<tags>' escaped (SetEscapeHTML needed); got: %s", content)
+	}
+	if !strings.Contains(content, "& sym") {
+		t.Errorf("TeardownHarnessFiles: '&' escaped (SetEscapeHTML needed); got: %s", content)
+	}
+	if strings.Contains(content, "NODE_EXTRA_CA_CERTS") {
+		t.Error("TeardownHarnessFiles: SAG env entry not removed from settings.json")
+	}
+}
+
+func TestNearMissDenyRulesKept(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+	cfgDir := dxh.CfgDir(home)
+	caPath := cfgDir + "/ca.pem"
+
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	nearMissRules := []string{
+		"Bash(scripts/build.sh:*)",
+		"Bash(sag credential delete foo)",
+		"Bash(podman secret rm foo)",
+		"Bash(script)",
+	}
+	sagRules := []string{
+		"Bash(sag credential delete:*)",
+		"Bash(podman secret rm:*)",
+		"Bash(script:*)",
+	}
+	settings := map[string]interface{}{
+		"env": map[string]string{"NODE_EXTRA_CA_CERTS": caPath},
+		"permissions": map[string]interface{}{
+			"deny": append(nearMissRules, sagRules...),
+		},
+	}
+	writeJSON(t, settingsPath, settings)
+
+	f := newFake()
+	f.set("claude mcp remove sag -s user", []byte("ok\n"), nil)
+	f.set("pi mcp remove sag", []byte("ok\n"), nil)
+
+	if err := dxh.TeardownHarnessFiles(context.Background(), f, home); err != nil {
+		t.Fatalf("TeardownHarnessFiles: %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	perms, _ := got["permissions"].(map[string]interface{})
+	deny, _ := perms["deny"].([]interface{})
+	remaining := make(map[string]bool)
+	for _, r := range deny {
+		remaining[r.(string)] = true
+	}
+	for _, rule := range nearMissRules {
+		if !remaining[rule] {
+			t.Errorf("TeardownHarnessFiles: near-miss deny rule %q was incorrectly removed", rule)
+		}
+	}
+	for _, rule := range sagRules {
+		if remaining[rule] {
+			t.Errorf("TeardownHarnessFiles: SAG deny rule %q was not removed", rule)
+		}
+	}
+}
+
+func TestForeignExportLineStays(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+	cfgDir := dxh.CfgDir(home)
+	caPath := cfgDir + "/ca.pem"
+
+	zshrc := filepath.Join(home, ".zshrc")
+	foreignLine := `export NODE_EXTRA_CA_CERTS="/other/path/ca.pem"`
+	profile := "# user stuff\n# sag agent setup\nexport NODE_EXTRA_CA_CERTS=\"" + caPath + "\"\n" + foreignLine + "\n# more user stuff\n"
+	if err := os.WriteFile(zshrc, []byte(profile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f := newFake()
+	f.set("claude mcp remove sag -s user", []byte("ok\n"), nil)
+	f.set("pi mcp remove sag", []byte("ok\n"), nil)
+
+	if err := dxh.TeardownHarnessFiles(context.Background(), f, home); err != nil {
+		t.Fatalf("TeardownHarnessFiles: %v", err)
+	}
+
+	data, err := os.ReadFile(zshrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, foreignLine) {
+		t.Errorf("TeardownHarnessFiles: foreign export line removed from .zshrc: %s", content)
+	}
+	if strings.Contains(content, "# sag agent setup") {
+		t.Error("TeardownHarnessFiles: SAG profile comment not removed from .zshrc")
+	}
+	if strings.Contains(content, caPath) {
+		t.Errorf("TeardownHarnessFiles: SAG export line with cfgDir not removed from .zshrc")
+	}
+}
+
+func TestForeignEnvValueStays(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	settings := map[string]interface{}{
+		"env": map[string]string{"NODE_EXTRA_CA_CERTS": "/ulrich/custom/ca.pem"},
+	}
+	writeJSON(t, settingsPath, settings)
+
+	f := newFake()
+	f.set("claude mcp remove sag -s user", []byte("ok\n"), nil)
+	f.set("pi mcp remove sag", []byte("ok\n"), nil)
+
+	if err := dxh.TeardownHarnessFiles(context.Background(), f, home); err != nil {
+		t.Fatalf("TeardownHarnessFiles: %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	env, _ := got["env"].(map[string]interface{})
+	val, _ := env["NODE_EXTRA_CA_CERTS"].(string)
+	if val != "/ulrich/custom/ca.pem" {
+		t.Errorf("TeardownHarnessFiles: foreign NODE_EXTRA_CA_CERTS removed or changed; got env=%v", env)
+	}
+}
+
+func TestCheckNoSAGEntriesDetectsMCPSag(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+
+	claudeJSON := filepath.Join(home, ".claude.json")
+	writeJSON(t, claudeJSON, map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"sag": map[string]interface{}{"type": "http", "url": "https://localhost:8443/mcp"},
+		},
+	})
+
+	if err := dxh.CheckNoSAGEntries(home); err == nil {
+		t.Fatal("CheckNoSAGEntries: expected error when mcpServers.sag present in claude.json, got nil")
+	}
+}
+
+func TestCheckNoSAGEntriesDetectsPiMCP(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+
+	piMCP := filepath.Join(home, ".pi", "agent", "mcp.json")
+	writeJSON(t, piMCP, map[string]interface{}{
+		"mcpServers": map[string]interface{}{
+			"sag": map[string]interface{}{"type": "http", "url": "https://localhost:8443/mcp"},
+		},
+	})
+
+	if err := dxh.CheckNoSAGEntries(home); err == nil {
+		t.Fatal("CheckNoSAGEntries: expected error when mcpServers.sag present in pi mcp.json, got nil")
+	}
+}
+
+func TestCheckNoSAGEntriesDetectsSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+	cfgDir := dxh.CfgDir(home)
+
+	settings := filepath.Join(home, ".claude", "settings.json")
+	writeJSON(t, settings, map[string]interface{}{
+		"env": map[string]string{"NODE_EXTRA_CA_CERTS": cfgDir + "/ca.pem"},
+	})
+
+	if err := dxh.CheckNoSAGEntries(home); err == nil {
+		t.Fatal("CheckNoSAGEntries: expected error when SAG settings present, got nil")
+	}
+}
+
+func TestCheckNoSAGEntriesDetectsProfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+	cfgDir := dxh.CfgDir(home)
+
+	zshrc := filepath.Join(home, ".zshrc")
+	line := "# sag agent setup\nexport NODE_EXTRA_CA_CERTS=\"" + cfgDir + "/ca.pem\"\n"
+	if err := os.WriteFile(zshrc, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := dxh.CheckNoSAGEntries(home); err == nil {
+		t.Fatal("CheckNoSAGEntries: expected error when SAG profile lines present, got nil")
+	}
+}
+
+func TestCheckNoSAGEntriesDetectsSkillDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "skills", "sag"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := dxh.CheckNoSAGEntries(home); err == nil {
+		t.Fatal("CheckNoSAGEntries: expected error when claude skills/sag exists, got nil")
+	}
+}
+
+func TestCheckNoSAGEntriesPassesWhenClean(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+
+	if err := dxh.CheckNoSAGEntries(home); err != nil {
+		t.Fatalf("CheckNoSAGEntries: unexpected error when no SAG entries: %v", err)
 	}
 }
 

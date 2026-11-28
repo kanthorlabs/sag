@@ -15,6 +15,8 @@ import (
 
 var userHarnessTests = map[string]func(*testing.T, context.Context){}
 
+var userRealBinDir string
+
 func TestDevxUser(t *testing.T) {
 	if err := dxh.CheckNoClaude(context.Background()); err != nil {
 		t.Fatal(err)
@@ -22,6 +24,18 @@ func TestDevxUser(t *testing.T) {
 	if err := dxh.CheckProfileEnv(); err != nil {
 		t.Fatal(err)
 	}
+
+	realBinDir := t.TempDir()
+	for _, prog := range []string{"claude", "pi", "node"} {
+		realPath, err := findRealProgram(prog)
+		if err != nil {
+			t.Fatalf("find real %s: %v", prog, err)
+		}
+		if err := dxh.AddRealProgramLink(realBinDir, prog, realPath); err != nil {
+			t.Fatalf("link real %s: %v", prog, err)
+		}
+	}
+	userRealBinDir = realBinDir
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -56,15 +70,8 @@ func TestDevxUser(t *testing.T) {
 		t.Fatalf("snapshot: %v", err)
 	}
 
-	realBinDir := t.TempDir()
-	for _, prog := range []string{"claude", "pi", "node"} {
-		realPath, err := findRealProgram(prog)
-		if err != nil {
-			t.Fatalf("find real %s: %v", prog, err)
-		}
-		if err := dxh.AddRealProgramLink(realBinDir, prog, realPath); err != nil {
-			t.Fatalf("link real %s: %v", prog, err)
-		}
+	if err := dxh.CheckNoSAGEntries(home); err != nil {
+		t.Fatalf("pre-run SAG check: %v", err)
 	}
 
 	tagImage := func() error { return dxh.GroupSetupImage(ctx, r) }

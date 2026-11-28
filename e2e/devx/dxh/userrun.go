@@ -1,6 +1,7 @@
 package dxh
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kanthorlabs/sag/internal/agentsetup"
 )
 
 type UserSnapshot struct {
@@ -20,6 +23,7 @@ type UserSnapshot struct {
 	home   string
 	shell  string
 	zdot   string
+	cfgDir string
 }
 
 func CheckNoClaude(ctx context.Context) error {
@@ -69,6 +73,7 @@ func Snapshot(dir string) (UserSnapshot, error) {
 	home := os.Getenv("HOME")
 	shell := os.Getenv("SHELL")
 	zdot := os.Getenv("ZDOTDIR")
+	cfgDir := CfgDir(home)
 
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return UserSnapshot{}, fmt.Errorf("snapshot mkdir: %w", err)
@@ -80,14 +85,17 @@ func Snapshot(dir string) (UserSnapshot, error) {
 		home:   home,
 		shell:  shell,
 		zdot:   zdot,
+		cfgDir: cfgDir,
 	}
 
+	cc := agentsetup.ClaudeCodePaths("", home)
+	pi := agentsetup.PiPaths("", home)
 	sources := map[string]string{
-		"claude.json":          filepath.Join(home, ".claude.json"),
-		"claude-settings.json": filepath.Join(home, ".claude", "settings.json"),
-		"pi-mcp.json":          filepath.Join(home, ".pi", "agent", "mcp.json"),
+		"claude.json":          cc.MCPFile,
+		"claude-settings.json": cc.SettingsFile,
+		"pi-mcp.json":          pi.MCPFile,
 	}
-	profile, hasProfile := userShellProfile(runtime.GOOS, shell, zdot, home)
+	profile, hasProfile := agentsetup.ShellProfile(runtime.GOOS, shell, zdot, home)
 	if hasProfile {
 		sources["shell"] = profile
 	}
@@ -112,6 +120,53 @@ func Snapshot(dir string) (UserSnapshot, error) {
 	return snap, nil
 }
 
+func CheckNoSAGEntries(home string) error {
+	cfgDir := CfgDir(home)
+	shell := os.Getenv("SHELL")
+	zdot := os.Getenv("ZDOTDIR")
+	cc := agentsetup.ClaudeCodePaths("", home)
+	pi := agentsetup.PiPaths("", home)
+	var found []string
+
+	if data, err := os.ReadFile(cc.MCPFile); err == nil {
+		if v, _ := extractMCPServersSAG(data); v != nil {
+			found = append(found, cc.MCPFile+": mcpServers.sag")
+		}
+	}
+	if data, err := os.ReadFile(cc.SettingsFile); err == nil {
+		if v, _ := extractClaudeSettingsSAGWith(cfgDir)(data); v != nil {
+			found = append(found, cc.SettingsFile+": SAG settings")
+		}
+	}
+	if data, err := os.ReadFile(pi.MCPFile); err == nil {
+		if v, _ := extractMCPServersSAG(data); v != nil {
+			found = append(found, pi.MCPFile+": mcpServers.sag")
+		}
+	}
+	if profile, hasProfile := agentsetup.ShellProfile(runtime.GOOS, shell, zdot, home); hasProfile {
+		if data, err := os.ReadFile(profile); err == nil {
+			if v, _ := extractShellSAGLinesWith(cfgDir)(data); v != nil {
+				found = append(found, profile+": SAG profile lines")
+			}
+		}
+	}
+	skillDir := filepath.Dir(cc.SkillFile)
+	if _, err := os.Stat(skillDir); err == nil {
+		found = append(found, skillDir+": claude skills/sag exists")
+	}
+	piSkillDir := filepath.Dir(pi.SkillFile)
+	if _, err := os.Stat(piSkillDir); err == nil {
+		found = append(found, piSkillDir+": pi skills/sag exists")
+	}
+	if _, err := os.Stat(pi.GuardFile); err == nil {
+		found = append(found, pi.GuardFile+": sag-guard.ts exists")
+	}
+	if len(found) > 0 {
+		return fmt.Errorf("SAG entries found before run; remove them first: %s", strings.Join(found, "; "))
+	}
+	return nil
+}
+
 func CompareSAGEntries(s UserSnapshot) error {
 	home := s.home
 	if home == "" {
@@ -125,6 +180,13 @@ func CompareSAGEntries(s UserSnapshot) error {
 	if zdot == "" {
 		zdot = os.Getenv("ZDOTDIR")
 	}
+	cfgDir := s.cfgDir
+	if cfgDir == "" {
+		cfgDir = CfgDir(home)
+	}
+
+	cc := agentsetup.ClaudeCodePaths("", home)
+	pi := agentsetup.PiPaths("", home)
 
 	type check struct {
 		key     string
@@ -133,34 +195,32 @@ func CompareSAGEntries(s UserSnapshot) error {
 		extract func([]byte) (interface{}, error)
 	}
 
-	profile, hasProfile := userShellProfile(runtime.GOOS, shell, zdot, home)
-
 	checks := []check{
 		{
 			key:     "claude.json",
 			snapSrc: filepath.Join(s.Dir, "claude.json"),
-			liveSrc: filepath.Join(home, ".claude.json"),
+			liveSrc: cc.MCPFile,
 			extract: extractMCPServersSAG,
 		},
 		{
 			key:     "claude-settings.json",
 			snapSrc: filepath.Join(s.Dir, "claude-settings.json"),
-			liveSrc: filepath.Join(home, ".claude", "settings.json"),
-			extract: extractClaudeSettingsSAG,
+			liveSrc: cc.SettingsFile,
+			extract: extractClaudeSettingsSAGWith(cfgDir),
 		},
 		{
 			key:     "pi-mcp.json",
 			snapSrc: filepath.Join(s.Dir, "pi-mcp.json"),
-			liveSrc: filepath.Join(home, ".pi", "agent", "mcp.json"),
+			liveSrc: pi.MCPFile,
 			extract: extractMCPServersSAG,
 		},
 	}
-	if hasProfile {
+	if profile, hasProfile := agentsetup.ShellProfile(runtime.GOOS, shell, zdot, home); hasProfile {
 		checks = append(checks, check{
 			key:     "shell",
 			snapSrc: filepath.Join(s.Dir, "shell"),
 			liveSrc: profile,
-			extract: extractShellSAGLines,
+			extract: extractShellSAGLinesWith(cfgDir),
 		})
 	}
 
@@ -235,96 +295,112 @@ type sagSettings struct {
 	DenyRules []string
 }
 
-func extractClaudeSettingsSAG(data []byte) (interface{}, error) {
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(data, &top); err != nil {
-		return nil, err
-	}
-
-	result := sagSettings{}
-
-	if envRaw, ok := top["env"]; ok {
-		var env map[string]string
-		if err := json.Unmarshal(envRaw, &env); err == nil {
-			result.NodeCA = env["NODE_EXTRA_CA_CERTS"]
+func extractClaudeSettingsSAGWith(cfgDir string) func([]byte) (interface{}, error) {
+	caPath := cfgDir + "/ca.pem"
+	return func(data []byte) (interface{}, error) {
+		var top map[string]json.RawMessage
+		if err := json.Unmarshal(data, &top); err != nil {
+			return nil, err
 		}
-	}
 
-	if permRaw, ok := top["permissions"]; ok {
-		var perms map[string]json.RawMessage
-		if err := json.Unmarshal(permRaw, &perms); err == nil {
-			if denyRaw, ok := perms["deny"]; ok {
-				var deny []string
-				if err := json.Unmarshal(denyRaw, &deny); err == nil {
-					for _, rule := range deny {
-						if isSAGDenyRule(rule) {
-							result.DenyRules = append(result.DenyRules, rule)
-						}
-					}
-					sort.Strings(result.DenyRules)
+		result := sagSettings{}
+
+		if envRaw, ok := top["env"]; ok {
+			var env map[string]string
+			if err := json.Unmarshal(envRaw, &env); err == nil {
+				if v := env["NODE_EXTRA_CA_CERTS"]; v == caPath {
+					result.NodeCA = v
 				}
 			}
 		}
-	}
 
-	if result.NodeCA == "" && len(result.DenyRules) == 0 {
-		return nil, nil
+		if permRaw, ok := top["permissions"]; ok {
+			var perms map[string]json.RawMessage
+			if err := json.Unmarshal(permRaw, &perms); err == nil {
+				if denyRaw, ok := perms["deny"]; ok {
+					var deny []string
+					if err := json.Unmarshal(denyRaw, &deny); err == nil {
+						for _, rule := range deny {
+							if isSAGDenyRule(rule) {
+								result.DenyRules = append(result.DenyRules, rule)
+							}
+						}
+						sort.Strings(result.DenyRules)
+					}
+				}
+			}
+		}
+
+		if result.NodeCA == "" && len(result.DenyRules) == 0 {
+			return nil, nil
+		}
+		return result, nil
 	}
-	return result, nil
 }
+
+const (
+	sagDenyCredentialDelete = "Bash(sag credential delete:*)"
+	sagDenyPodmanSecretRm   = "Bash(podman secret rm:*)"
+	sagDenyScript           = "Bash(script:*)"
+)
 
 func isSAGDenyRule(rule string) bool {
-	return strings.HasPrefix(rule, "Bash(sag credential delete") ||
-		strings.HasPrefix(rule, "Bash(podman secret rm") ||
-		strings.HasPrefix(rule, "Bash(script")
+	return rule == sagDenyCredentialDelete || rule == sagDenyPodmanSecretRm || rule == sagDenyScript
 }
 
-func extractShellSAGLines(data []byte) (interface{}, error) {
-	var lines []string
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "# sag agent setup" ||
-			strings.HasPrefix(strings.TrimSpace(line), "export NODE_EXTRA_CA_CERTS=") {
-			lines = append(lines, line)
+func extractShellSAGLinesWith(cfgDir string) func([]byte) (interface{}, error) {
+	exactLines := map[string]bool{
+		"# sag agent setup": true,
+		`export NODE_EXTRA_CA_CERTS="` + cfgDir + `/ca.pem"`: true,
+	}
+	return func(data []byte) (interface{}, error) {
+		var lines []string
+		for _, line := range strings.Split(string(data), "\n") {
+			if exactLines[strings.TrimSpace(line)] {
+				lines = append(lines, line)
+			}
 		}
+		if len(lines) == 0 {
+			return nil, nil
+		}
+		sort.Strings(lines)
+		return lines, nil
 	}
-	if len(lines) == 0 {
-		return nil, nil
-	}
-	sort.Strings(lines)
-	return lines, nil
 }
 
 func TeardownHarnessFiles(ctx context.Context, r Runner, home string) error {
+	cfgDir := CfgDir(home)
 	shell := os.Getenv("SHELL")
 	zdot := os.Getenv("ZDOTDIR")
+	cc := agentsetup.ClaudeCodePaths("", home)
+	pi := agentsetup.PiPaths("", home)
 	var errs []string
 
 	if _, err := r.Output(ctx, "claude", "mcp", "remove", "sag", "-s", "user"); err != nil {
 		errs = append(errs, fmt.Sprintf("claude mcp remove sag: %s", err))
 	}
-	if err := removeClaudeSettingsSAGEntries(filepath.Join(home, ".claude", "settings.json")); err != nil {
+	if err := removeClaudeSettingsSAGEntries(cc.SettingsFile, cfgDir); err != nil {
 		errs = append(errs, fmt.Sprintf("claude settings sag entries: %s", err))
 	}
-	if err := os.RemoveAll(filepath.Join(home, ".claude", "skills", "sag")); err != nil {
+	if err := os.RemoveAll(filepath.Dir(cc.SkillFile)); err != nil {
 		errs = append(errs, fmt.Sprintf("claude skills sag: %s", err))
 	}
-	if err := removeClaudeBackupsWithSAG(filepath.Join(home, ".claude", "backups")); err != nil {
+	if err := removeClaudeBackupsWithSAG(filepath.Join(cc.Dir, "backups")); err != nil {
 		errs = append(errs, fmt.Sprintf("claude backups: %s", err))
 	}
 
 	if _, err := r.Output(ctx, "pi", "mcp", "remove", "sag"); err != nil {
 		errs = append(errs, fmt.Sprintf("pi mcp remove sag: %s", err))
 	}
-	if err := os.RemoveAll(filepath.Join(home, ".pi", "skills", "sag")); err != nil {
+	if err := os.RemoveAll(filepath.Dir(pi.SkillFile)); err != nil {
 		errs = append(errs, fmt.Sprintf("pi skills sag: %s", err))
 	}
-	if err := os.Remove(filepath.Join(home, ".pi", "extensions", "sag-guard.ts")); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(pi.GuardFile); err != nil && !os.IsNotExist(err) {
 		errs = append(errs, fmt.Sprintf("pi extensions sag-guard.ts: %s", err))
 	}
 
-	profile, hasProfile := userShellProfile(runtime.GOOS, shell, zdot, home)
-	if hasProfile {
-		if err := removeShellSAGLines(profile); err != nil {
+	if profile, hasProfile := agentsetup.ShellProfile(runtime.GOOS, shell, zdot, home); hasProfile {
+		if err := removeShellSAGLines(profile, cfgDir); err != nil {
 			errs = append(errs, fmt.Sprintf("shell profile sag lines: %s", err))
 		}
 	}
@@ -335,7 +411,8 @@ func TeardownHarnessFiles(ctx context.Context, r Runner, home string) error {
 	return nil
 }
 
-func removeClaudeSettingsSAGEntries(path string) error {
+func removeClaudeSettingsSAGEntries(path, cfgDir string) error {
+	caPath := cfgDir + "/ca.pem"
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -352,14 +429,20 @@ func removeClaudeSettingsSAGEntries(path string) error {
 	if envRaw, ok := top["env"]; ok {
 		var env map[string]json.RawMessage
 		if err := json.Unmarshal(envRaw, &env); err == nil {
-			if _, has := env["NODE_EXTRA_CA_CERTS"]; has {
-				delete(env, "NODE_EXTRA_CA_CERTS")
-				changed = true
-				if len(env) == 0 {
-					delete(top, "env")
-				} else {
-					b, _ := json.Marshal(env)
-					top["env"] = b
+			if raw, has := env["NODE_EXTRA_CA_CERTS"]; has {
+				var val string
+				if json.Unmarshal(raw, &val) == nil && val == caPath {
+					delete(env, "NODE_EXTRA_CA_CERTS")
+					changed = true
+					if len(env) == 0 {
+						delete(top, "env")
+					} else {
+						b, err := marshalRaw(env)
+						if err != nil {
+							return err
+						}
+						top["env"] = b
+					}
 				}
 			}
 		}
@@ -382,13 +465,19 @@ func removeClaudeSettingsSAGEntries(path string) error {
 						if len(kept) == 0 {
 							delete(perms, "deny")
 						} else {
-							b, _ := json.Marshal(kept)
+							b, err := marshalRaw(kept)
+							if err != nil {
+								return err
+							}
 							perms["deny"] = b
 						}
 						if len(perms) == 0 {
 							delete(top, "permissions")
 						} else {
-							b, _ := json.Marshal(perms)
+							b, err := marshalRaw(perms)
+							if err != nil {
+								return err
+							}
 							top["permissions"] = b
 						}
 					}
@@ -400,7 +489,25 @@ func removeClaudeSettingsSAGEntries(path string) error {
 	if !changed {
 		return nil
 	}
-	return writeJSONFile(path, top)
+	encoded, err := marshalRaw(top)
+	if err != nil {
+		return err
+	}
+	return writeFileSymlinkSafe(path, encoded)
+}
+
+func marshalRaw(v interface{}) (json.RawMessage, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	b := buf.Bytes()
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		b = b[:len(b)-1]
+	}
+	return b, nil
 }
 
 func removeClaudeBackupsWithSAG(backupsDir string) error {
@@ -438,7 +545,8 @@ func removeClaudeBackupsWithSAG(backupsDir string) error {
 	return nil
 }
 
-func removeShellSAGLines(path string) error {
+func removeShellSAGLines(path, cfgDir string) error {
+	caLine := `export NODE_EXTRA_CA_CERTS="` + cfgDir + `/ca.pem"`
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -446,11 +554,12 @@ func removeShellSAGLines(path string) error {
 	if err != nil {
 		return err
 	}
-	lines := strings.Split(string(data), "\n")
+	content := string(data)
+	lines := strings.Split(content, "\n")
 	var kept []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "# sag agent setup" || strings.HasPrefix(trimmed, "export NODE_EXTRA_CA_CERTS=") {
+		if trimmed == "# sag agent setup" || trimmed == caLine {
 			continue
 		}
 		kept = append(kept, line)
@@ -462,12 +571,26 @@ func removeShellSAGLines(path string) error {
 	return writeTextFile(path, []byte(out))
 }
 
-func writeJSONFile(path string, v interface{}) error {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return err
+func writeFileSymlinkSafe(linkPath string, data []byte) error {
+	targetPath := linkPath
+	linfo, lstatErr := os.Lstat(linkPath)
+	if lstatErr == nil && linfo.Mode()&os.ModeSymlink != 0 {
+		dest, err := os.Readlink(linkPath)
+		if err != nil {
+			return err
+		}
+		if !filepath.IsAbs(dest) {
+			dest = filepath.Join(filepath.Dir(linkPath), dest)
+		}
+		targetPath = dest
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".sag-tmp-*")
+
+	var mode os.FileMode = 0o600
+	if tinfo, err := os.Stat(targetPath); err == nil {
+		mode = tinfo.Mode().Perm()
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(targetPath), ".sag-tmp-*")
 	if err != nil {
 		return err
 	}
@@ -481,11 +604,8 @@ func writeJSONFile(path string, v interface{}) error {
 		os.Remove(tmpName)
 		return err
 	}
-	info, err := os.Stat(path)
-	if err == nil {
-		_ = os.Chmod(tmpName, info.Mode())
-	}
-	return os.Rename(tmpName, path)
+	_ = os.Chmod(tmpName, mode)
+	return os.Rename(tmpName, targetPath)
 }
 
 func writeTextFile(path string, data []byte) error {
@@ -517,23 +637,16 @@ func MaskTailscaleIP(line, ip string) string {
 	return strings.ReplaceAll(line, ip, "<tailscale IP>")
 }
 
-func userShellProfile(goos, shell, zdotdir, home string) (string, bool) {
-	base := filepath.Base(shell)
-	switch base {
-	case "zsh":
-		dir := home
-		if zdotdir != "" {
-			dir = zdotdir
+func UserChildEnv(env []string, realBinDir string) []string {
+	var out []string
+	for _, e := range env {
+		key, _, _ := strings.Cut(e, "=")
+		if allowedEnvKeys[key] || strings.HasPrefix(key, "SAG_TEST_") {
+			out = append(out, e)
 		}
-		return filepath.Join(dir, ".zshrc"), true
-	case "bash":
-		if goos == "darwin" {
-			return filepath.Join(home, ".bash_profile"), true
-		}
-		return filepath.Join(home, ".bashrc"), true
-	default:
-		return "", false
 	}
+	out = append(out, "PATH="+realBinDir+":"+systemPATH)
+	return out
 }
 
 func UserSnapshotDir() (string, error) {
