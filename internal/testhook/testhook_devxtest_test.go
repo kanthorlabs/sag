@@ -61,4 +61,9 @@ func TestHooksReadEnv(t *testing.T) {
 	if !FailTLSCACreate() {
 		t.Fatal("FailTLSCACreate() = false; want true")
 	}
+
+	t.Setenv("SAG_TEST_AWS_ENDPOINT", "http://host.containers.internal:4566")
+	if got := AWSEndpoint(); got != "http://host.containers.internal:4566" {
+		t.Fatalf("AWSEndpoint() = %q; want http://host.containers.internal:4566", got)
+	}
 }

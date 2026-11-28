@@ -8,7 +8,17 @@ type rawConfig struct {
 	Auth      rawAuth                `yaml:"auth"`
 	Preflight rawPreflight           `yaml:"preflight"`
 	Defaults  rawDefaults            `yaml:"defaults"`
+	Storage   rawStorage             `yaml:"storage"`
 	Resources map[string]rawResource `yaml:"resources"`
+}
+
+type rawStorage struct {
+	AWS rawStorageAWS `yaml:"aws"`
+}
+
+type rawStorageAWS struct {
+	Region      string `yaml:"region"`
+	Credentials string `yaml:"credentials"`
 }
 
 type rawServer struct {

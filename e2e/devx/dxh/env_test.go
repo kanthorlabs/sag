@@ -43,6 +43,40 @@ func TestChildEnvAllowList(t *testing.T) {
 	}
 }
 
+func TestChildEnvAWSKeysOnlyWithLocalStack(t *testing.T) {
+	operator := []string{
+		"HOME=/home/user",
+		"AWS_ACCESS_KEY_ID=operator-key",
+		"AWS_SECRET_ACCESS_KEY=operator-secret",
+		"AWS_PROFILE=operator",
+		"AWS_SESSION_TOKEN=operator-token",
+	}
+	env, err := dxh.ChildEnv(operator, t.TempDir())
+	if err != nil {
+		t.Fatalf("ChildEnv: %v", err)
+	}
+	for _, e := range env {
+		if strings.HasPrefix(e, "AWS_") {
+			t.Errorf("AWS variable passed without SAG_TEST_AWS_ENDPOINT: %s", e)
+		}
+	}
+
+	env, err = dxh.ChildEnv(append(operator, "SAG_TEST_AWS_ENDPOINT=http://host.containers.internal:4566"), t.TempDir())
+	if err != nil {
+		t.Fatalf("ChildEnv: %v", err)
+	}
+	for _, want := range []string{"AWS_ACCESS_KEY_ID=operator-key", "AWS_SECRET_ACCESS_KEY=operator-secret"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("%s missing with SAG_TEST_AWS_ENDPOINT set", want)
+		}
+	}
+	for _, e := range env {
+		if strings.HasPrefix(e, "AWS_PROFILE=") || strings.HasPrefix(e, "AWS_SESSION_TOKEN=") {
+			t.Errorf("AWS variable outside the allow list passed: %s", e)
+		}
+	}
+}
+
 func TestChildEnvEmptyGroupDirErrors(t *testing.T) {
 	_, err := dxh.ChildEnv(nil, "")
 	if err == nil {

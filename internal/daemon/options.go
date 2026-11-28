@@ -14,4 +14,6 @@ type Options struct {
 	Version     string
 	Log         io.Writer
 	WrapDialect func(sql.Dialect) sql.Dialect
+
+	testAWSLoader AWSLoader
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -14,14 +15,24 @@ var allowedEnvKeys = map[string]bool{
 	"LANG":   true,
 }
 
+var awsTestEnvKeys = map[string]bool{
+	"AWS_ENDPOINT_URL_SECRETS_MANAGER": true,
+	"AWS_ACCESS_KEY_ID":                true,
+	"AWS_SECRET_ACCESS_KEY":            true,
+	"AWS_REGION":                       true,
+	"AWS_CONFIG_FILE":                  true,
+	"AWS_SHARED_CREDENTIALS_FILE":      true,
+}
+
 func ChildEnv(env []string, groupDir string) ([]string, error) {
 	if groupDir == "" {
 		return nil, fmt.Errorf("groupDir is empty")
 	}
+	awsTest := slices.ContainsFunc(env, func(e string) bool { return strings.HasPrefix(e, "SAG_TEST_AWS_ENDPOINT=") })
 	var out []string
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
-		if allowedEnvKeys[key] || strings.HasPrefix(key, "SAG_TEST_") {
+		if allowedEnvKeys[key] || strings.HasPrefix(key, "SAG_TEST_") || (awsTest && awsTestEnvKeys[key]) {
 			out = append(out, e)
 		}
 	}

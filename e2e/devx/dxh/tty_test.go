@@ -13,26 +13,28 @@ func TestExpectErrorRedacts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tty, err := dxh.StartTTY(ctx, t.TempDir(), "", "echo", "super-secret-token")
-	if err != nil {
-		t.Fatalf("StartTTY: %v", err)
+	start := func() *dxh.TTY {
+		tty, err := dxh.StartTTY(ctx, t.TempDir(), "", "sh", "-c", "echo super-secret-token; read x")
+		if err != nil {
+			t.Fatalf("StartTTY: %v", err)
+		}
+		tty.Redact("super-secret-token")
+		if err := tty.Expect(ctx, "super-secret-token"); err != nil {
+			t.Fatalf("Expect: %v", err)
+		}
+		if err := tty.Send("\n"); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		if code, err := tty.Wait(ctx); err != nil || code != 0 {
+			t.Fatalf("Wait = %d, %v; want 0", code, err)
+		}
+		return tty
 	}
-	tty.Redact("super-secret-token")
 
-	if err := tty.Expect(ctx, "super-secret-token"); err != nil {
-		t.Fatalf("Expect: %v", err)
-	}
-	_, _ = tty.Wait(ctx)
+	start()
+	tty2 := start()
 
-	tty2, err := dxh.StartTTY(ctx, t.TempDir(), "", "echo", "super-secret-token")
-	if err != nil {
-		t.Fatalf("StartTTY: %v", err)
-	}
-	tty2.Redact("super-secret-token")
-
-	_, _ = tty2.Wait(ctx)
-
-	err = tty2.Expect(ctx, "this-text-never-appears")
+	err := tty2.Expect(ctx, "this-text-never-appears")
 	if err == nil {
 		t.Fatal("expected error from Expect, got nil")
 	}

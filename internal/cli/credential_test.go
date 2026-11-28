@@ -14,6 +14,7 @@ import (
 
 	"github.com/kanthorlabs/sag/internal/credential"
 	"github.com/kanthorlabs/sag/internal/podman"
+	"github.com/kanthorlabs/sag/internal/secret"
 	"github.com/kanthorlabs/sag/internal/service"
 )
 
@@ -220,6 +221,29 @@ func TestCredentialCreateDefaultTLSIsVerifyFull(t *testing.T) {
 	}
 	if string(opts.TLS) != "verify-full" {
 		t.Errorf("default TLS = %q; want verify-full", opts.TLS)
+	}
+}
+
+func TestCredentialCreateBackendFlag(t *testing.T) {
+	cases := []struct {
+		args []string
+		ok   bool
+		want string
+	}{
+		{nil, true, secret.BackendPodman},
+		{[]string{"--backend", "podman"}, true, secret.BackendPodman},
+		{[]string{"--backend", "aws-sm"}, true, secret.BackendAWSSM},
+		{[]string{"--backend", "secret"}, false, ""},
+	}
+	for _, tc := range cases {
+		opts, ok := parseCredentialCreateFlags(append([]string{"mydb", "--kind", "postgres"}, tc.args...), hostStd())
+		if ok != tc.ok {
+			t.Errorf("%v: ok = %v; want %v", tc.args, ok, tc.ok)
+			continue
+		}
+		if ok && opts.Backend != tc.want {
+			t.Errorf("%v: Backend = %q; want %q", tc.args, opts.Backend, tc.want)
+		}
 	}
 }
 

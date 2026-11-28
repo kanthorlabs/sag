@@ -46,4 +46,9 @@ func TestProductHooksReturnZeroValues(t *testing.T) {
 	if FailTLSCACreate() {
 		t.Fatal("FailTLSCACreate() = true; want false")
 	}
+
+	t.Setenv("SAG_TEST_AWS_ENDPOINT", "http://host.containers.internal:4566")
+	if AWSEndpoint() != "" {
+		t.Fatalf("AWSEndpoint() = %q; want empty", AWSEndpoint())
+	}
 }

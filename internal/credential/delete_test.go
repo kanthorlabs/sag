@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -720,6 +721,55 @@ func TestResumeCase2StoredWasRunning(t *testing.T) {
 	}
 }
 
+const yamlWithAWSRes = `version: 1
+server:
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+storage:
+  aws:
+    region: us-east-1
+    credentials: secret:sag-aws-creds
+resources:
+  test-res:
+    kind: fakedb
+    connection: aws-sm:sag/test-res/conn
+    agents: [agent-a]
+`
+
+func TestDeleteUnreachableNoChange(t *testing.T) {
+	dir := t.TempDir()
+	writeSAGYAML(t, dir, yamlWithAWSRes)
+	before, _ := os.ReadFile(filepath.Join(dir, "sag.yaml"))
+
+	ds := newDeleteStorage(nil, "test-res")
+	awsDs := &deleteStorage{metas: make(map[string]secret.Metadata), listErr: secret.ErrUnavailable}
+	opts := DeleteOptions{
+		CfgDir:     dir,
+		Backend:    ds,
+		AWSBackend: awsDs,
+		Podman:     &fakePodmanCmd{},
+		Out:        io.Discard,
+		Err:        io.Discard,
+	}
+
+	tty := writeTTY(t, "test-res\n")
+
+	err := Delete(context.Background(), "test-res", tty, opts)
+	if err == nil || err.Error() != "backend aws-sm unreachable; no change" {
+		t.Fatalf("want unreachable error, got %v", err)
+	}
+	if len(ds.deleted) != 0 {
+		t.Errorf("podman secrets deleted despite aws backend unreachable: %v", ds.deleted)
+	}
+	if len(awsDs.deleted) != 0 {
+		t.Errorf("aws secrets deleted despite aws backend unreachable: %v", awsDs.deleted)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "sag.yaml"))
+	if string(before) != string(after) {
+		t.Errorf("sag.yaml changed despite aws backend unreachable")
+	}
+}
+
 func TestResumeCase3StoredUnowned(t *testing.T) {
 	dir := t.TempDir()
 	yaml := `version: 1
@@ -770,5 +820,74 @@ resources:
 	want := "skip foreign-ca not created by sag; not removed\n"
 	if !strings.Contains(outBuf.String(), want) {
 		t.Errorf("second delete: expected skip line %q; got %q", want, outBuf.String())
+	}
+}
+
+func TestDeleteAWSOwnership(t *testing.T) {
+	const awsYAML = `version: 1
+server:
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+storage:
+  aws:
+    region: us-east-1
+    credentials: secret:sag-aws-creds
+resources:
+  test-res:
+    kind: fakedb
+    connection: aws-sm:sag/test-res/conn
+    tls_ca: aws-sm:sag/test-res/ca
+    agents: [agent-a]
+%s`
+	const otherRes = `  other-res:
+    kind: fakedb
+    connection: aws-sm:sag/test-res/ca
+    agents: [agent-b]
+`
+	cases := map[string]struct {
+		extra       string
+		wantDeleted []string
+		wantOut     string
+	}{
+		"owned": {
+			wantDeleted: []string{"sag/test-res/ca", "sag/test-res/conn"},
+		},
+		"cross_referenced": {
+			extra:       otherRes,
+			wantDeleted: []string{"sag/test-res/conn"},
+			wantOut:     "skip aws-sm:sag/test-res/ca not created by sag; not removed\n",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeSAGYAML(t, dir, fmt.Sprintf(awsYAML, tc.extra))
+			awsDs := newDeleteStorage([]string{"sag/test-res/conn", "sag/test-res/ca"}, "test-res")
+			var outBuf strings.Builder
+			opts := DeleteOptions{
+				CfgDir:     dir,
+				Backend:    newDeleteStorage(nil, "test-res"),
+				AWSBackend: awsDs,
+				Podman:     &fakePodmanCmd{running: true},
+				Out:        &outBuf,
+				Err:        io.Discard,
+			}
+			if err := Delete(context.Background(), "test-res", writeTTY(t, "test-res\n"), opts); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+			slices.Sort(awsDs.deleted)
+			if !slices.Equal(awsDs.deleted, tc.wantDeleted) {
+				t.Errorf("deleted = %v; want %v", awsDs.deleted, tc.wantDeleted)
+			}
+			var skips []string
+			for _, line := range strings.SplitAfter(outBuf.String(), "\n") {
+				if strings.HasPrefix(line, "skip ") {
+					skips = append(skips, line)
+				}
+			}
+			if got := strings.Join(skips, ""); got != tc.wantOut {
+				t.Errorf("skip lines = %q; want %q", got, tc.wantOut)
+			}
+		})
 	}
 }

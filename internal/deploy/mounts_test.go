@@ -48,6 +48,38 @@ func TestSecretMountsSecretRefs(t *testing.T) {
 	}
 }
 
+func TestSecretMountsSkipAWS(t *testing.T) {
+	cfg := &config.Config{
+		Resources: map[string]config.Resource{
+			"main": {
+				Connection: config.SecretRef("aws-sm:sag/main/conn"),
+				TLSCA:      config.SecretRef("aws-sm:sag/main/ca"),
+			},
+		},
+	}
+	mounts := SecretMounts(cfg)
+	for _, m := range mounts {
+		if m == "aws-sm:sag/main/conn" || m == "aws-sm:sag/main/ca" {
+			t.Errorf("SecretMounts must not include aws-sm ref %q: %v", m, mounts)
+		}
+	}
+}
+
+func TestSecretMountsAWSCredentials(t *testing.T) {
+	cfg := &config.Config{
+		Storage: config.Storage{
+			AWS: config.StorageAWS{
+				Region:      "us-east-1",
+				Credentials: config.SecretRef("sag-aws-credentials"),
+			},
+		},
+	}
+	mounts := SecretMounts(cfg)
+	if !slices.Contains(mounts, "sag-aws-credentials") {
+		t.Errorf("SecretMounts missing storage.aws.credentials: %v", mounts)
+	}
+}
+
 func TestSecretMountsNoDuplicates(t *testing.T) {
 	cfg := &config.Config{
 		Server: config.Server{

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"path/filepath"
 	"slices"
 	"time"
@@ -20,7 +19,6 @@ import (
 	"github.com/kanthorlabs/sag/internal/mcpserver"
 	"github.com/kanthorlabs/sag/internal/pipeline"
 	"github.com/kanthorlabs/sag/internal/preflight"
-	"github.com/kanthorlabs/sag/internal/scrub"
 	"github.com/kanthorlabs/sag/internal/secret"
 )
 
@@ -77,7 +75,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return stageError(errSecrets, err)
 	}
-	scrubber := scrub.New(slices.Collect(maps.Values(creds)))
+	scrubber := newScrubber(cfg, creds)
 	log = slog.New(scrubHandler(log.Handler(), scrubber))
 	fatal := func(stage, err error) error {
 		return stageError(stage, scrubber.Error(err))
@@ -105,6 +103,18 @@ func Run(ctx context.Context, opts Options) error {
 		return fatal(errAudit, err)
 	}
 
+	var loader AWSLoader
+	if needsAWS(cfg) {
+		if opts.testAWSLoader != nil {
+			loader = opts.testAWSLoader
+		} else if b, aerr := newAWSDaemon(ctx, cfg.Storage.AWS.Region, string(cfg.Storage.AWS.Credentials)); aerr != nil {
+			log.Error("aws backend failed", "error", aerr.Error())
+			loader = failedAWSLoader{err: aerr}
+		} else {
+			loader = b
+		}
+	}
+
 	inv := inventory.New()
 	sched := preflight.New(preflight.Options{
 		Clock:           preflight.SystemClock(),
@@ -112,7 +122,7 @@ func Run(ctx context.Context, opts Options) error {
 		Log:             log,
 		RecheckInterval: cfg.Preflight.RecheckInterval,
 	})
-	opened, err := openResources(ctx, log, cfg, creds, inv, approvals, opts.WrapDialect, sched)
+	opened, err := openResources(ctx, log, cfg, creds, loader, scrubber, inv, approvals, opts.WrapDialect, sched)
 	defer closeResources(log, opened)
 	if err != nil {
 		return fatal(errResource, err)

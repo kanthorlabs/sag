@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/credential"
 	"github.com/kanthorlabs/sag/internal/hoststate"
@@ -25,7 +26,9 @@ import (
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
-const credentialCreateUsage = "usage: sag credential create <name> --kind <kind> [--agent <sub>]... [--description <text>] [--tls disable|verify-full|insecure-skip-verify] [--tls-ca <path>] [--stdin] [--accept-failed-check]"
+const backendFlagPodman = "podman"
+
+const credentialCreateUsage = "usage: sag credential create <name> --kind <kind> [--backend podman|aws-sm] [--agent <sub>]... [--description <text>] [--tls disable|verify-full|insecure-skip-verify] [--tls-ca <path>] [--stdin] [--accept-failed-check]"
 
 var (
 	runCredentialList    = credential.List
@@ -68,6 +71,29 @@ func defaultBuildCfgNoLock() (service.Config, func(), error) {
 	}, noop, nil
 }
 
+func loadSAGConfig(cfgDir string) (*config.Config, error) {
+	path := filepath.Join(cfgDir, "sag.yaml")
+	cfg, err := config.Load(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &config.Config{Resources: map[string]config.Resource{}}, nil
+		}
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func loadAWSBackend(cfgDir string) (secret.SecureStorage, error) {
+	sagCfg, err := loadSAGConfig(cfgDir)
+	if err != nil {
+		return nil, err
+	}
+	if sagCfg.Storage.AWS.Region == "" {
+		return nil, nil
+	}
+	return credential.BackendFor(sagCfg, secret.BackendAWSSM)
+}
+
 func credentialCreate(args []string, std IO) int {
 	opts, ok := parseCredentialCreateFlags(args, std)
 	if !ok {
@@ -84,7 +110,18 @@ func credentialCreate(args []string, std IO) int {
 	if !ok {
 		return fail(std, errors.New("internal: unexpected podman command type"))
 	}
-	storage := secretpodman.New(runner)
+
+	var storage secret.SecureStorage
+	if opts.Backend == secret.BackendAWSSM {
+		sagCfg, err := loadSAGConfig(cfg.CfgDir)
+		if err != nil {
+			return fail(std, err)
+		}
+		storage, opts.StorageErr = credential.BackendFor(sagCfg, secret.BackendAWSSM)
+	} else {
+		opts.Backend = secret.BackendPodman
+		storage = secretpodman.New(runner)
+	}
 
 	opts.Storage = storage
 	opts.CfgDir = cfg.CfgDir
@@ -152,6 +189,9 @@ func parseCredentialCreateFlags(args []string, std IO) (credential.CreateOptions
 	var kind string
 	fs.StringVar(&kind, "kind", "", "credential kind")
 
+	var backend string
+	fs.StringVar(&backend, "backend", backendFlagPodman, "secret backend: podman or aws-sm")
+
 	var agents multiFlag
 	fs.Var(&agents, "agent", "agent sub (repeatable)")
 
@@ -182,6 +222,14 @@ func parseCredentialCreateFlags(args []string, std IO) (credential.CreateOptions
 		fmt.Fprintln(std.Err, credentialCreateUsage)
 		return credential.CreateOptions{}, false
 	}
+	switch backend {
+	case backendFlagPodman:
+		backend = secret.BackendPodman
+	case secret.BackendAWSSM:
+	default:
+		fmt.Fprintf(std.Err, "sag: credential create: --backend %q is not valid; use %s or %s\n", backend, backendFlagPodman, secret.BackendAWSSM)
+		return credential.CreateOptions{}, false
+	}
 
 	var tlsMode core.TLSMode
 	switch tls {
@@ -209,6 +257,7 @@ func parseCredentialCreateFlags(args []string, std IO) (credential.CreateOptions
 	return credential.CreateOptions{
 		Name:              name,
 		Kind:              kind,
+		Backend:           backend,
 		Agents:            []string(agents),
 		Description:       description,
 		TLS:               tlsMode,
@@ -257,12 +306,18 @@ func credentialList(args []string, std IO) int {
 		return fail(std, errors.New("internal: unexpected podman command type"))
 	}
 
+	awsBackend, err := loadAWSBackend(cfg.CfgDir)
+	if err != nil {
+		return fail(std, err)
+	}
+
 	opts := credential.ListOptions{
-		SAGYaml: filepath.Join(cfg.CfgDir, "sag.yaml"),
-		CAPem:   filepath.Join(cfg.CfgDir, "ca.pem"),
-		Backend: secretpodman.New(runner),
-		Podman:  runner,
-		Stderr:  std.Err,
+		SAGYaml:    filepath.Join(cfg.CfgDir, "sag.yaml"),
+		CAPem:      filepath.Join(cfg.CfgDir, "ca.pem"),
+		Backend:    secretpodman.New(runner),
+		AWSBackend: awsBackend,
+		Podman:     runner,
+		Stderr:     std.Err,
 	}
 
 	entries, err := runCredentialList(context.Background(), opts)
@@ -318,11 +373,17 @@ func credentialInspect(args []string, std IO) int {
 		return fail(std, errors.New("internal: unexpected podman command type"))
 	}
 
+	awsBackend, err := loadAWSBackend(cfg.CfgDir)
+	if err != nil {
+		return fail(std, err)
+	}
+
 	opts := credential.InspectOptions{
-		SAGYaml: filepath.Join(cfg.CfgDir, "sag.yaml"),
-		Backend: secretpodman.New(runner),
-		Podman:  runner,
-		Stderr:  std.Err,
+		SAGYaml:    filepath.Join(cfg.CfgDir, "sag.yaml"),
+		Backend:    secretpodman.New(runner),
+		AWSBackend: awsBackend,
+		Podman:     runner,
+		Stderr:     std.Err,
 	}
 
 	entry, err := runCredentialInspect(context.Background(), name, opts)
@@ -409,10 +470,16 @@ func credentialDelete(args []string, std IO) int {
 		return fail(std, errors.New("internal: unexpected podman command type"))
 	}
 
+	awsBackend, err := loadAWSBackend(cfg.CfgDir)
+	if err != nil {
+		return fail(std, err)
+	}
+
 	opts := credential.DeleteOptions{
-		CfgDir:  cfg.CfgDir,
-		Backend: secretpodman.New(runner),
-		Podman:  cfg.Podman,
+		CfgDir:     cfg.CfgDir,
+		Backend:    secretpodman.New(runner),
+		AWSBackend: awsBackend,
+		Podman:     cfg.Podman,
 		ServiceStart: func(ctx context.Context, out io.Writer) error {
 			return startFn(ctx, cfg, stepline.New(out))
 		},
