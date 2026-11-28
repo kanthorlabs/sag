@@ -110,8 +110,8 @@ func TestNewuidmapMissingExit1(t *testing.T) {
 		Out:           stepline.New(io.Discard),
 	}
 	plan := Plan{Items: []PlanItem{{
-		Pin:    aptItem("5.4.2"),
-		Absent: true,
+		Pin:     aptItem("5.4.2"),
+		Absent:  true,
 		Approve: true,
 	}}}
 	_, err := d.Apply(context.Background(), plan)

@@ -3,6 +3,8 @@ package dxh_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -406,6 +408,25 @@ func TestTeardownRefusesUnsafePaths(t *testing.T) {
 		}
 		if len(r.calls) != 0 {
 			t.Errorf("Teardown(%+v) ran %v, want no call", cfg, r.calls)
+		}
+	}
+}
+
+func TestTeardownLinuxNoMachineSync(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux teardown")
+	}
+	cfgDir := filepath.Join(t.TempDir(), "sag")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r, cfg := newCleanTeardownFake("/home/u", "1000", cfgDir)
+	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
+		t.Fatalf("Teardown with an existing cfg dir on Linux: %v", err)
+	}
+	for _, c := range r.calls {
+		if strings.HasPrefix(strings.Join(c, " "), "podman machine") {
+			t.Errorf("Linux teardown called %q", c)
 		}
 	}
 }

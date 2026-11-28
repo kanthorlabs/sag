@@ -81,24 +81,24 @@ func (e *NewuidmapMissingError) Error() string {
 }
 
 type Deps struct {
-	PodmanVersion     func(ctx context.Context, path string) (string, error)
-	Download          func(ctx context.Context, url, dir string) (string, error)
-	SHA256            func(path string) (string, error)
-	Install           func(ctx context.Context, pkgPath string, noInteractive bool) error
-	FindPodman        func(stored string) (string, error)
-	MachineList       func(ctx context.Context, path string) ([]MachineInfo, error)
-	MachineInit       func(ctx context.Context, path string) error
-	MachineStart      func(ctx context.Context, path string) error
-	HasTerminal       func() bool
-	AskInstall        func(name, version, locator string) (bool, error)
+	PodmanVersion       func(ctx context.Context, path string) (string, error)
+	Download            func(ctx context.Context, url, dir string) (string, error)
+	SHA256              func(path string) (string, error)
+	Install             func(ctx context.Context, pkgPath string, noInteractive bool) error
+	FindPodman          func(stored string) (string, error)
+	MachineList         func(ctx context.Context, path string) ([]MachineInfo, error)
+	MachineInit         func(ctx context.Context, path string) error
+	MachineStart        func(ctx context.Context, path string) error
+	HasTerminal         func() bool
+	AskInstall          func(name, version, locator string) (bool, error)
 	AptCandidateVersion func(ctx context.Context, name string) (string, error)
 	AptInstall          func(ctx context.Context, name string, noInteractive bool) error
 	FindNewuidmap       func() bool
 	AskAptInstall       func(name, candidate, pin string) (bool, error)
-	IsAbsent          func() bool
-	StopBeforeInstall func() bool
-	Out               stepline.Writer
-	Print             io.Writer
+	IsAbsent            func() bool
+	StopBeforeInstall   func() bool
+	Out                 stepline.Writer
+	Print               io.Writer
 }
 
 func (d Deps) Make(ctx context.Context, items []pins.Item, podmanPath string, autoApprove []string) (Plan, error) {

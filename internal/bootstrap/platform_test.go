@@ -48,12 +48,12 @@ func TestOtherDistributionStepExit1(t *testing.T) {
 		OpenFile: func(path string) error {
 			return io.ErrUnexpectedEOF
 		},
-		UID:        func() string { return "1000" },
-		Home:       func() string { return "/home/user" },
-		SAGPath:    func() (string, error) { return "/usr/local/bin/sag", nil },
-		OSRelease:  func() (string, string, error) { return "ubuntu", "22.04", nil },
-		Out:        stepline.New(io.Discard),
-		Print:      io.Discard,
+		UID:       func() string { return "1000" },
+		Home:      func() string { return "/home/user" },
+		SAGPath:   func() (string, error) { return "/usr/local/bin/sag", nil },
+		OSRelease: func() (string, string, error) { return "ubuntu", "22.04", nil },
+		Out:       stepline.New(io.Discard),
+		Print:     io.Discard,
 	}
 	steps := deps.BuildSteps()
 	s := &State{Out: deps.Out}

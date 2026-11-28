@@ -69,7 +69,7 @@ func Teardown(ctx context.Context, r Runner, cfg TeardownConfig) error {
 		_, statErr := os.Stat(cfg.CfgDir)
 		if _, err := r.Output(ctx, "rm", "-rf", cfg.CfgDir); err != nil {
 			errs = append(errs, fmt.Sprintf("rm cfg: %s", err))
-		} else if statErr == nil {
+		} else if statErr == nil && runtime.GOOS != "linux" {
 			if err := waitMachineSeesAbsent(ctx, r, cfg.CfgDir, machineSyncTimeout); err != nil {
 				errs = append(errs, err.Error())
 			}
