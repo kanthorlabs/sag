@@ -529,6 +529,7 @@ func removeClaudeBackupsWithSAG(backupsDir string) error {
 	if err != nil {
 		return err
 	}
+	var errs []string
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -536,6 +537,7 @@ func removeClaudeBackupsWithSAG(backupsDir string) error {
 		p := filepath.Join(backupsDir, e.Name())
 		data, err := os.ReadFile(p)
 		if err != nil {
+			errs = append(errs, err.Error())
 			continue
 		}
 		var top map[string]json.RawMessage
@@ -550,8 +552,13 @@ func removeClaudeBackupsWithSAG(backupsDir string) error {
 			continue
 		}
 		if _, hasSAG := servers["sag"]; hasSAG {
-			_ = os.Remove(p)
+			if err := os.Remove(p); err != nil {
+				errs = append(errs, err.Error())
+			}
 		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return nil
 }

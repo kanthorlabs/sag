@@ -835,3 +835,38 @@ func TestClaudeRunningGate(t *testing.T) {
 		}
 	}
 }
+
+func TestTeardownReportsBackupRemoveFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("ZDOTDIR", "")
+
+	backups := filepath.Join(home, ".claude", "backups")
+	if err := os.MkdirAll(backups, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(backups, ".claude.json.backup.1")
+	if err := os.WriteFile(backup, []byte(`{"mcpServers":{"sag":{"type":"http"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(backups, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(backups, 0o700) })
+
+	f := newFake()
+	f.set("claude mcp remove sag -s user", []byte("ok\n"), nil)
+	f.set("pi mcp remove sag", []byte("ok\n"), nil)
+
+	err := dxh.TeardownHarnessFiles(context.Background(), f, home)
+	if err == nil {
+		t.Fatal("TeardownHarnessFiles: want error when a backup with mcpServers.sag cannot be removed, got nil")
+	}
+	if !strings.Contains(err.Error(), "claude backups") {
+		t.Errorf("TeardownHarnessFiles: error %q does not name the claude backups step", err)
+	}
+	if _, statErr := os.Stat(backup); statErr != nil {
+		t.Fatalf("backup must still exist for this test: %v", statErr)
+	}
+}

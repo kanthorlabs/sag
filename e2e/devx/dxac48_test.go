@@ -82,10 +82,12 @@ func DXAC48_RealPi(t *testing.T, ctx context.Context) {
 		shellCmd := fmt.Sprintf("%s --mode json 'Run this bash command: podman secret rm x'", piPath)
 		guardCmd := exec.CommandContext(guardCtx, shell, "-i", "-c", shellCmd)
 		guardCmd.Env = dxac48LoginEnv(home, shell)
-		out, _ := guardCmd.Output()
+		var guardErr bytes.Buffer
+		guardCmd.Stderr = &guardErr
+		out, runErr := guardCmd.Output()
 		filtered := dxh.FilterNoJWT(string(out))
 		if err := dxh.ParsePiGuardResult(filtered); err != nil {
-			t.Errorf("DXAC48-B: %v\n%s", err, filtered)
+			t.Errorf("DXAC48-B: %v; shell exit: %v\nstdout: %s\nstderr: %s", err, runErr, filtered, dxh.FilterNoJWT(guardErr.String()))
 		}
 	})
 }
