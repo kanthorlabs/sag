@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -28,13 +29,15 @@ import (
 )
 
 type Deps struct {
-	GOOS      func() string
-	GOARCH    func() string
-	OpenFile  func(string) error
-	UID       func() string
-	Home      func() string
-	SAGPath   func() (string, error)
-	OSRelease func() (string, string, error)
+	GOOS        func() string
+	GOARCH      func() string
+	OpenFile    func(string) error
+	UID         func() string
+	Home        func() string
+	SAGPath     func() (string, error)
+	OSRelease   func() (string, string, error)
+	Username    func() string
+	HasTerminal func() bool
 
 	ResolvePaths func() (hoststate.Paths, error)
 	EnsureCfg    func(hoststate.Paths) (bool, error)
@@ -90,6 +93,21 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 			return os.Executable()
 		},
 		OSRelease: readOSRelease,
+		Username: func() string {
+			u, err := user.Current()
+			if err != nil {
+				return ""
+			}
+			return u.Username
+		},
+		HasTerminal: func() bool {
+			tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+			if err != nil {
+				return false
+			}
+			tty.Close()
+			return true
+		},
 
 		ResolvePaths: hoststate.ResolvePaths,
 		EnsureCfg:    hoststate.EnsureCfg,

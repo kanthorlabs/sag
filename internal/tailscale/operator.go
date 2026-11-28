@@ -1,0 +1,13 @@
+//go:build !linux
+
+package tailscale
+
+import (
+	"context"
+
+	"github.com/kanthorlabs/sag/internal/stepline"
+)
+
+func EnsureOperator(_ context.Context, _ Command, _ string, _ bool, _ func() (bool, error), _ stepline.Writer) error {
+	return nil
+}

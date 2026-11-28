@@ -51,6 +51,10 @@ func dispatch(stdout, stderr io.Writer, dir string, args []string) int {
 		return handleIP(stdout, dir, args[1:])
 	case "serve":
 		return handleServe(stdout, stderr, dir, args[1:])
+	case "debug":
+		return handleDebug(stdout, stderr, dir, args[1:])
+	case "set":
+		return handleSet(stderr, dir, args[1:])
 	default:
 		fmt.Fprintf(stderr, "faketailscale: unknown command: %s\n", args[0])
 		return 1
@@ -119,4 +123,39 @@ func handleServeApply(stderr io.Writer, dir string) int {
 		return 1
 	}
 	return 0
+}
+
+func handleDebug(stdout, stderr io.Writer, dir string, args []string) int {
+	if len(args) < 1 || args[0] != "prefs" {
+		fmt.Fprintf(stderr, "faketailscale: unknown debug args: %v\n", args)
+		return 1
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "ts_prefs"))
+	if err != nil {
+		fmt.Fprintln(stdout, `{"OperatorUser":""}`)
+		return 0
+	}
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		fmt.Fprintln(stdout, `{"OperatorUser":""}`)
+		return 0
+	}
+	fmt.Fprintln(stdout, content)
+	return 0
+}
+
+func handleSet(stderr io.Writer, dir string, args []string) int {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--operator=") {
+			user := strings.TrimPrefix(arg, "--operator=")
+			prefs := `{"OperatorUser":"` + user + `"}`
+			if err := os.WriteFile(filepath.Join(dir, "ts_prefs"), []byte(prefs), 0o600); err != nil {
+				fmt.Fprintf(stderr, "faketailscale: write ts_prefs: %v\n", err)
+				return 1
+			}
+			return 0
+		}
+	}
+	fmt.Fprintf(stderr, "faketailscale: set: unknown args: %v\n", args)
+	return 1
 }

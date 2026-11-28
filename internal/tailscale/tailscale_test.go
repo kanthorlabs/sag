@@ -11,6 +11,7 @@ import (
 )
 
 type testCmd struct {
+	path      string
 	responses map[string]func() ([]byte, error)
 	recorded  []string
 }
@@ -22,6 +23,17 @@ func (c *testCmd) Output(_ context.Context, args ...string) ([]byte, error) {
 		return fn()
 	}
 	return nil, errors.New("unexpected call: " + key)
+}
+
+func (c *testCmd) RunWithSudo(_ context.Context, args ...string) error {
+	full := append([]string{"sudo", c.path}, args...)
+	key := strings.Join(full, " ")
+	c.recorded = append(c.recorded, key)
+	if fn, ok := c.responses[key]; ok {
+		_, err := fn()
+		return err
+	}
+	return nil
 }
 
 func TestAddressRange(t *testing.T) {

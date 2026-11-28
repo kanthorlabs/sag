@@ -36,6 +36,10 @@ func (fakeCmd) Output(_ context.Context, _ ...string) ([]byte, error) {
 	return nil, nil
 }
 
+func (fakeCmd) RunWithSudo(_ context.Context, _ ...string) error {
+	return nil
+}
+
 func baseDeps(dir string) Deps {
 	cfgDir := filepath.Join(dir, "sag")
 	out := stepline.New(io.Discard)
