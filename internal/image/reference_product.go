@@ -2,6 +2,6 @@
 
 package image
 
-func Reference() string {
+func Reference() (string, bool) {
 	return productReference()
 }

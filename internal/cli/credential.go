@@ -57,13 +57,14 @@ func defaultBuildCfgNoLock() (service.Config, func(), error) {
 	if err != nil {
 		return service.Config{}, noop, err
 	}
+	imageRef, _ := sagimage.Reference()
 	return service.Config{
 		Podman:  podman.Runner{Path: podmanPath},
 		CfgDir:  p.Cfg,
 		UID:     strconv.Itoa(os.Getuid()),
 		Home:    home,
 		BinPath: binPath,
-		Image:   sagimage.Reference(),
+		Image:   imageRef,
 	}, noop, nil
 }
 

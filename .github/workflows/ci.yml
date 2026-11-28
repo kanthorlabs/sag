@@ -78,7 +78,7 @@ jobs:
           node-version: "24"
       - run: go vet -tags devxtest ./...
       - run: go vet -tags devxe2e ./e2e/devx/...
-      - run: go test -count=1 -tags devxtest ./internal/testhook/...
+      - run: go test -count=1 -tags devxtest ./internal/...
       - run: node --test "internal/agentsetup/assets/pi/*.test.ts"
 
   ac35:
@@ -109,3 +109,19 @@ jobs:
         with:
           name: ac35
           path: ac35/
+
+  image-main:
+    needs: [unit, e2e, ac35, devx-unit]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: image-main
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    uses: ./.github/workflows/image.yml
+    with:
+      tag: main
+      version: main-${{ github.sha }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

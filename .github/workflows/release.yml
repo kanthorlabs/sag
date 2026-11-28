@@ -1,0 +1,91 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  image:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/image.yml
+    with:
+      tag: ${{ github.ref_name }}
+      version: ${{ github.ref_name }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  binaries:
+    needs: [image]
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: sag_darwin_arm64
+            runner: macos-26
+          - target: sag_linux_amd64
+            runner: ubuntu-24.04
+          - target: sag_linux_arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: "1"
+      TAG: ${{ github.ref_name }}
+      DIGEST: ${{ needs.image.outputs.digest }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: |
+          case "$DIGEST" in
+            sha256:*) ;;
+            *) echo "no image digest" >&2; exit 1 ;;
+          esac
+          go build -trimpath -ldflags "-X github.com/kanthorlabs/sag/internal/cli.Version=$TAG -X github.com/kanthorlabs/sag/internal/deploy.ImageDigest=$DIGEST" -o "$TARGET" ./cmd/sag
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ matrix.target }}
+          retention-days: 1
+
+  release:
+    needs: [image, binaries]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: sag_*
+          merge-multiple: true
+      - run: sha256sum sag_darwin_arm64 sag_linux_amd64 sag_linux_arm64 > SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: |
+            sag_darwin_arm64
+            sag_linux_amd64
+            sag_linux_arm64
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$TAG" --verify-tag --title "$TAG" sag_darwin_arm64 sag_linux_amd64 sag_linux_arm64 SHA256SUMS

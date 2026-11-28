@@ -114,7 +114,7 @@ func RunArgs(cfg *config.Config, opts RunOpts) []string {
 	p := DefaultFlags.Product
 	l := DefaultFlags.LogFlags
 
-	args := []string{"run", "-d", "--replace", "--name", "sag"}
+	args := []string{"run", "-d", "--replace", "--pull=never", "--name", "sag"}
 	args = append(args, "--log-driver", l.Driver)
 	args = append(args, "--log-opt", "max-size="+l.MaxSize)
 	args = append(args, p.SecurityArgs()...)

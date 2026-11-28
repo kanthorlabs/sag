@@ -136,3 +136,10 @@ func containsStr(s, sub string) bool {
 		return false
 	}()))
 }
+
+func TestRunArgsNeverPull(t *testing.T) {
+	args := deploy.RunArgs(minCfg(t), deploy.RunOpts{Image: "img", ConfigSource: "/etc/sag/sag.yaml"})
+	if !slices.Contains(args, "--pull=never") {
+		t.Fatalf("args = %v; want --pull=never", args)
+	}
+}

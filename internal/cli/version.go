@@ -1,6 +1,10 @@
 package cli
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/kanthorlabs/sag/internal/image"
+)
 
 const versionUsage = "usage: sag version"
 
@@ -9,6 +13,11 @@ func version(args []string, std IO) int {
 		fmt.Fprintln(std.Err, versionUsage)
 		return ExitUsage
 	}
-	fmt.Fprintf(std.Out, "sag %s\n", Version)
+	if std.Mode != ModeHost {
+		fmt.Fprintf(std.Out, "sag %s\n", Version)
+		return ExitOK
+	}
+	ref, _ := image.Reference()
+	fmt.Fprintf(std.Out, "sag %s %s\n", Version, ref)
 	return ExitOK
 }

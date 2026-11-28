@@ -97,13 +97,14 @@ func defaultBuildCfg() (service.Config, func(), error) {
 		return service.Config{}, noop, err
 	}
 
+	imageRef, _ := image.Reference()
 	cfg := service.Config{
 		Podman:  podman.Runner{Path: podmanPath},
 		CfgDir:  p.Cfg,
 		UID:     strconv.Itoa(os.Getuid()),
 		Home:    home,
 		BinPath: binPath,
-		Image:   image.Reference(),
+		Image:   imageRef,
 	}
 	return cfg, release, nil
 }
