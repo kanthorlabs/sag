@@ -21,7 +21,7 @@ func ChildEnv(env []string, groupDir string) ([]string, error) {
 	var out []string
 	for _, e := range env {
 		key, _, _ := strings.Cut(e, "=")
-		if allowedEnvKeys[key] || strings.HasPrefix(key, "SAG_TEST_") {
+		if allowedEnvKeys[key] || strings.HasPrefix(key, "SAG_TEST_") || strings.HasPrefix(key, "AWS_") {
 			out = append(out, e)
 		}
 	}

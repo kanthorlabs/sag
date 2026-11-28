@@ -54,19 +54,21 @@ type podmanInspector interface {
 }
 
 type ListOptions struct {
-	SAGYaml string
-	CAPem   string
-	Backend secret.SecureStorage
-	Podman  podmanInspector
-	Stderr  io.Writer
+	SAGYaml    string
+	CAPem      string
+	Backend    secret.SecureStorage
+	AWSBackend secret.SecureStorage
+	Podman     podmanInspector
+	Stderr     io.Writer
 }
 
 type InspectOptions struct {
-	SAGYaml string
-	CAPem   string
-	Backend secret.SecureStorage
-	Podman  podmanInspector
-	Stderr  io.Writer
+	SAGYaml    string
+	CAPem      string
+	Backend    secret.SecureStorage
+	AWSBackend secret.SecureStorage
+	Podman     podmanInspector
+	Stderr     io.Writer
 }
 
 func List(ctx context.Context, opts ListOptions) ([]Entry, error) {
@@ -83,7 +85,7 @@ func List(ctx context.Context, opts ListOptions) ([]Entry, error) {
 	entries := make([]Entry, 0, len(names))
 	for _, name := range names {
 		r := cfg.Resources[name]
-		e, err := buildEntry(ctx, name, r, opts.Backend, mountedSecrets, opts.Stderr)
+		e, err := buildEntry(ctx, name, r, opts.Backend, opts.AWSBackend, mountedSecrets, opts.Stderr)
 		if err != nil {
 			return nil, err
 		}
@@ -107,7 +109,7 @@ func Inspect(ctx context.Context, name string, opts InspectOptions) (Entry, erro
 
 	mountedSecrets, _ := getMountedSecrets(ctx, opts.Podman)
 
-	e, err := buildEntry(ctx, name, r, opts.Backend, mountedSecrets, opts.Stderr)
+	e, err := buildEntry(ctx, name, r, opts.Backend, opts.AWSBackend, mountedSecrets, opts.Stderr)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -182,6 +184,7 @@ func buildEntry(
 	name string,
 	r config.Resource,
 	backend secret.SecureStorage,
+	awsBackend secret.SecureStorage,
 	mountedSecrets map[string]bool,
 	stderr io.Writer,
 ) (Entry, error) {
@@ -210,15 +213,15 @@ func buildEntry(
 
 	unreachableWarned := false
 	for _, sp := range specs {
-		se, warned, err := buildSecretEntry(ctx, sp.name, sp.role, name, backend, mountedSecrets)
+		se, warnedBackend, err := buildSecretEntry(ctx, sp.name, sp.role, name, backend, awsBackend, mountedSecrets)
 		if err != nil {
 			return Entry{}, err
 		}
-		if warned && !unreachableWarned {
+		if warnedBackend != "" && !unreachableWarned {
 			unreachableWarned = true
 			if stderr != nil {
 				sw := stepline.New(stderr)
-				sw.Line(stepline.StatusWarn, "backend", backendPodman+" unreachable; secret metadata unavailable")
+				sw.Line(stepline.StatusWarn, "backend", warnedBackend+" unreachable; secret metadata unavailable")
 			}
 		}
 		e.Secrets = append(e.Secrets, se)
@@ -230,10 +233,23 @@ func buildSecretEntry(
 	ctx context.Context,
 	ref, role, resourceName string,
 	backend secret.SecureStorage,
+	awsBackend secret.SecureStorage,
 	mountedSecrets map[string]bool,
-) (SecretEntry, bool, error) {
-	secretName := ref
-	b := backendPodman
+) (SecretEntry, string, error) {
+	var secretName, b string
+	var chosenBackend secret.SecureStorage
+	isPodman := true
+
+	if strings.HasPrefix(ref, secret.BackendAWSSM+":") {
+		secretName = strings.TrimPrefix(ref, secret.BackendAWSSM+":")
+		b = secret.BackendAWSSM
+		chosenBackend = awsBackend
+		isPodman = false
+	} else {
+		secretName = ref
+		b = backendPodman
+		chosenBackend = backend
+	}
 
 	se := SecretEntry{
 		Name:    secretName,
@@ -241,17 +257,17 @@ func buildSecretEntry(
 		Role:    role,
 	}
 
-	unreachable := false
-	if backend != nil {
-		meta, err := backend.Metadata(ctx, secretName)
+	warnedBackend := ""
+	if chosenBackend != nil {
+		meta, err := chosenBackend.Metadata(ctx, secretName)
 		if err != nil {
 			if errors.Is(err, secret.ErrNotFound) {
 				exists := false
 				se.Exists = &exists
 			} else if errors.Is(err, secret.ErrUnavailable) {
-				unreachable = true
+				warnedBackend = b
 			} else {
-				return SecretEntry{}, false, err
+				return SecretEntry{}, "", err
 			}
 		} else {
 			exists := true
@@ -261,10 +277,10 @@ func buildSecretEntry(
 		}
 	}
 
-	if b == backendPodman {
+	if isPodman {
 		mounted := mountedSecrets[secretName]
 		se.Mounted = &mounted
 	}
 
-	return se, unreachable, nil
+	return se, warnedBackend, nil
 }

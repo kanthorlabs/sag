@@ -71,12 +71,12 @@ func addResourceToYAML(cfgDir, name, kind, description string, tls core.TLSMode,
 	res := resourceYAML{
 		Kind:        kind,
 		Description: description,
-		Connection:  "secret:" + connRef,
+		Connection:  connRef,
 		TLS:         string(tls),
 		Agents:      agents,
 	}
 	if hasCA {
-		res.TLSCA = "secret:" + caRef
+		res.TLSCA = caRef
 	}
 
 	var resNode yaml.Node
