@@ -5,7 +5,7 @@
 | Owner | Ulrich |
 | Status | Revision 8 |
 | Date | 2026-11-26 |
-| Base | `docs/PRD.md` revision 16, tag `sag-layer-6` |
+| Base | `docs/PRD.md` revision 16, commit `68843af` |
 
 ## 1. Scope
 

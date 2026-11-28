@@ -107,4 +107,4 @@ Agents edit code in their worktrees on the macOS development machine. They run e
 - Steps: README section 6.2. Fix each Linux defect of a criterion with the run `A, B` in this task. After a fix, run the phase A gate commands of the affected suites on the macOS development machine again.
 - ACs: DX-AC5, and each criterion with the run `A, B` in its phase B form.
 - Verify: on the Debian machine, `make test && make e2e LAYER=6 PG=17 && make e2e-devx SUITE=Main LAYER=10 PHASE=B && make e2e-devx SUITE=Pins LAYER=10 PHASE=B && make e2e-devx SUITE=Install LAYER=10 PHASE=B && make e2e-devx-unit LAYER=10 PHASE=B`. Expected: exit 0. The devx report shows each DX-AC with the run `A, B` or `B` `PASS`.
-- Done when: the tag `sag-devx-10` exists. The merge of `feat/devx` into `main` is a decision of Ulrich.
+- Done when: `docs/reviews/devx-layer-10.md` names the gate commit. The merge of `feat/devx` into `main` is a decision of Ulrich.
