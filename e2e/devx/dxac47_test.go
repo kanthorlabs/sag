@@ -71,24 +71,52 @@ func DXAC47_RealClaudeCode(t *testing.T, ctx context.Context) {
 		if err != nil {
 			t.Fatalf("DXAC47-A: claude mcp list: %v", err)
 		}
-		text := dxh.FilterNoJWT(string(out))
-		if !strings.Contains(strings.ToLower(text), "sag") {
-			t.Errorf("DXAC47-A: claude mcp list output does not mention sag:\n%s", text)
+		if err := dxh.ParseClaudeMCPListSAG(dxh.FilterNoJWT(string(out))); err != nil {
+			t.Errorf("DXAC47-A: %v", err)
 		}
 	})
 
 	t.Run("list_resources", func(t *testing.T) {
-		listCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		const tempName = "testcc47"
+
+		createCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
-		listCmd := exec.CommandContext(listCtx, claudePath, "-p", "--output-format", "json",
+		createCmd := exec.CommandContext(createCtx, sagBin,
+			"credential", "create", tempName,
+			"--kind", "postgres",
+			"--agent", "claude-code",
+			"--tls", "disable",
+			"--stdin",
+			"--accept-failed-check",
+		)
+		createCmd.Env = setupEnv
+		createCmd.Stdin = strings.NewReader("postgres://testuser:testpass@127.0.0.1:65432/testdb\n")
+		var createOut bytes.Buffer
+		createCmd.Stdout = &createOut
+		createCmd.Stderr = &createOut
+		if err := createCmd.Run(); err != nil {
+			t.Fatalf("DXAC47-B: credential create: %v\n%s", err, createOut.String())
+		}
+		defer func() {
+			delCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			delCmd := exec.CommandContext(delCtx, sagBin, "credential", "delete", tempName)
+			delCmd.Env = setupEnv
+			delCmd.Run() //nolint:errcheck
+		}()
+
+		listCtx, cancel2 := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel2()
+		listCmd := exec.CommandContext(listCtx, claudePath,
+			"-p", "--output-format", "json",
 			"List my available SAG credentials by calling list_resources")
 		listCmd.Env = claudeEnv
 		out, err := listCmd.Output()
 		if err != nil {
 			t.Fatalf("DXAC47-B: claude -p list resources: %v\n%s", err, dxh.FilterNoJWT(string(out)))
 		}
-		if strings.TrimSpace(dxh.FilterNoJWT(string(out))) == "" {
-			t.Errorf("DXAC47-B: claude -p output empty")
+		if err := dxh.ParseClaudeListResources(dxh.FilterNoJWT(string(out)), tempName); err != nil {
+			t.Errorf("DXAC47-B: %v\n%s", err, dxh.FilterNoJWT(string(out)))
 		}
 	})
 
@@ -103,24 +131,22 @@ func DXAC47_RealClaudeCode(t *testing.T, ctx context.Context) {
 		denyCmd.Env = claudeEnv
 		out, _ := denyCmd.Output()
 		filtered := dxh.FilterNoJWT(string(out))
-		if !strings.Contains(filtered, "permission_denials") {
-			t.Errorf("DXAC47-C: output has no permission_denials:\n%s", filtered)
+		if err := dxh.ParseClaudePermissionDenials(filtered, "sag credential delete x"); err != nil {
+			t.Errorf("DXAC47-C: %v\n%s", err, filtered)
 		}
 	})
 
 	t.Run("resource_x_absent", func(t *testing.T) {
 		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		checkCmd := exec.CommandContext(checkCtx, sagBin, "credential", "list")
+		checkCmd := exec.CommandContext(checkCtx, sagBin, "credential", "list", "--json")
 		checkCmd.Env = setupEnv
 		out, err := checkCmd.Output()
 		if err != nil {
-			t.Fatalf("DXAC47-D: credential list: %v", err)
+			t.Fatalf("DXAC47-D: credential list --json: %v", err)
 		}
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.TrimSpace(line) == "x" {
-				t.Errorf("DXAC47-D: resource x exists; want absent")
-			}
+		if err := dxh.ParseCredentialListNoName(string(out), "x"); err != nil {
+			t.Errorf("DXAC47-D: %v\n%s", err, string(out))
 		}
 	})
 }

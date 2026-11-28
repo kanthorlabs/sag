@@ -5,6 +5,7 @@ package devx_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -71,26 +72,21 @@ func DXAC48_RealPi(t *testing.T, ctx context.Context) {
 		if err != nil {
 			t.Fatalf("DXAC48-A: pi mcp list --json: %v", err)
 		}
-		text := dxh.FilterNoJWT(string(out))
-		if !strings.Contains(strings.ToLower(text), "sag") {
-			t.Errorf("DXAC48-A: pi mcp list --json output does not mention sag:\n%s", text)
-		}
-		if !strings.Contains(text, "connected") {
-			t.Errorf("DXAC48-A: pi mcp list --json output does not show connected:\n%s", text)
+		if err := dxh.ParsePiMCPListSAG(dxh.FilterNoJWT(string(out))); err != nil {
+			t.Errorf("DXAC48-A: %v\n%s", err, dxh.FilterNoJWT(string(out)))
 		}
 	})
 
 	t.Run("guard_blocks_podman_secret_rm", func(t *testing.T) {
 		guardCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
-		guardCmd := exec.CommandContext(guardCtx, piPath,
-			"--mode", "json",
-			"Run this bash command: podman secret rm x")
-		guardCmd.Env = dxac48PiEnv(home, dxh.CfgDir(home))
+		shellCmd := fmt.Sprintf("%s --mode json 'Run this bash command: podman secret rm x'", piPath)
+		guardCmd := exec.CommandContext(guardCtx, shell, "-i", "-c", shellCmd)
+		guardCmd.Env = dxac48LoginEnv(home, shell)
 		out, _ := guardCmd.Output()
 		filtered := dxh.FilterNoJWT(string(out))
-		if !strings.Contains(filtered, "sag-guard:") {
-			t.Errorf("DXAC48-B: pi --mode json output has no sag-guard: reason:\n%s", filtered)
+		if err := dxh.ParsePiGuardResult(filtered); err != nil {
+			t.Errorf("DXAC48-B: %v\n%s", err, filtered)
 		}
 	})
 }
@@ -118,22 +114,6 @@ func dxac48LoginEnv(home, shell string) []string {
 		key, _, _ := strings.Cut(e, "=")
 		switch key {
 		case "HOME", "SHELL", "CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR", "NODE_EXTRA_CA_CERTS":
-			continue
-		}
-		env = append(env, e)
-	}
-	return env
-}
-
-func dxac48PiEnv(home, cfgDir string) []string {
-	env := []string{
-		"HOME=" + home,
-		"NODE_EXTRA_CA_CERTS=" + cfgDir + "/ca.pem",
-	}
-	for _, e := range os.Environ() {
-		key, _, _ := strings.Cut(e, "=")
-		switch key {
-		case "HOME", "NODE_EXTRA_CA_CERTS", "CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR":
 			continue
 		}
 		env = append(env, e)
