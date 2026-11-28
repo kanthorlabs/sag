@@ -23,6 +23,7 @@ type CreateOptions struct {
 	TLSCAPem          []byte
 	Stdin             bool
 	AcceptFailedCheck bool
+	Backend           string
 
 	CfgDir string
 
@@ -45,10 +46,10 @@ func Create(ctx context.Context, opts CreateOptions) error {
 	if err := checkResourceAbsent(opts.CfgDir, opts.Name); err != nil {
 		return err
 	}
-	if err := checkSecretAbsent(ctx, opts.Storage, secretConnName(opts.Name)); err != nil {
+	if err := checkSecretAbsent(ctx, opts.Storage, secretConnName(opts.Backend, opts.Name)); err != nil {
 		return err
 	}
-	if err := checkSecretAbsent(ctx, opts.Storage, secretCAName(opts.Name)); err != nil {
+	if err := checkSecretAbsent(ctx, opts.Storage, secretCAName(opts.Backend, opts.Name)); err != nil {
 		return err
 	}
 
@@ -101,8 +102,8 @@ func Create(ctx context.Context, opts CreateOptions) error {
 }
 
 func applyCreate(ctx context.Context, opts CreateOptions, cred secret.Credential) error {
-	connName := secretConnName(opts.Name)
-	caName := secretCAName(opts.Name)
+	connName := secretConnName(opts.Backend, opts.Name)
+	caName := secretCAName(opts.Backend, opts.Name)
 
 	snapshot, err := snapshotYAML(opts.CfgDir)
 	if err != nil {
@@ -140,7 +141,9 @@ func applyCreate(ctx context.Context, opts CreateOptions, cred secret.Credential
 		return rollback(ctx, opts, snapshot, created, errors.New("test hook: fail at step 3 (tls-ca)"))
 	}
 
-	if err := addResourceToYAML(opts.CfgDir, opts.Name, opts.Kind, opts.Description, opts.TLS, opts.Agents, connName, caName, len(opts.TLSCAPem) > 0); err != nil {
+	connRef := backendRefPrefix(opts.Backend) + connName
+	caRef := backendRefPrefix(opts.Backend) + caName
+	if err := addResourceToYAML(opts.CfgDir, opts.Name, opts.Kind, opts.Description, opts.TLS, opts.Agents, connRef, caRef, len(opts.TLSCAPem) > 0); err != nil {
 		return rollback(ctx, opts, snapshot, created, err)
 	}
 
@@ -194,17 +197,34 @@ func checkSecretAbsent(ctx context.Context, s secret.SecureStorage, name string)
 	return err
 }
 
-func secretConnName(resourceName string) string {
+func secretConnName(backend, resourceName string) string {
+	if backend == secret.BackendAWSSM {
+		return "sag/" + resourceName + "/conn"
+	}
 	return "sag-res-" + resourceName + ".conn"
 }
 
-func secretCAName(resourceName string) string {
+func secretCAName(backend, resourceName string) string {
+	if backend == secret.BackendAWSSM {
+		return "sag/" + resourceName + "/ca"
+	}
 	return "sag-res-" + resourceName + ".ca"
+}
+
+func backendRefPrefix(backend string) string {
+	if backend == secret.BackendAWSSM {
+		return secret.BackendAWSSM + ":"
+	}
+	return secret.BackendPodman + ":"
 }
 
 func resourceNameFromSecret(secretName string) string {
 	s := strings.TrimPrefix(secretName, "sag-res-")
 	if i := strings.LastIndex(s, "."); i >= 0 {
+		return s[:i]
+	}
+	s = strings.TrimPrefix(s, "sag/")
+	if i := strings.LastIndex(s, "/"); i >= 0 {
 		return s[:i]
 	}
 	return s
