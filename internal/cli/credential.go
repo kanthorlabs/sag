@@ -26,7 +26,9 @@ import (
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
-const credentialCreateUsage = "usage: sag credential create <name> --kind <kind> [--backend secret|aws-sm] [--agent <sub>]... [--description <text>] [--tls disable|verify-full|insecure-skip-verify] [--tls-ca <path>] [--stdin] [--accept-failed-check]"
+const backendFlagPodman = "podman"
+
+const credentialCreateUsage = "usage: sag credential create <name> --kind <kind> [--backend podman|aws-sm] [--agent <sub>]... [--description <text>] [--tls disable|verify-full|insecure-skip-verify] [--tls-ca <path>] [--stdin] [--accept-failed-check]"
 
 var (
 	runCredentialList    = credential.List
@@ -115,10 +117,7 @@ func credentialCreate(args []string, std IO) int {
 		if err != nil {
 			return fail(std, err)
 		}
-		storage, err = credential.BackendFor(sagCfg, secret.BackendAWSSM)
-		if err != nil {
-			return fail(std, err)
-		}
+		storage, opts.StorageErr = credential.BackendFor(sagCfg, secret.BackendAWSSM)
 	} else {
 		opts.Backend = secret.BackendPodman
 		storage = secretpodman.New(runner)
@@ -191,7 +190,7 @@ func parseCredentialCreateFlags(args []string, std IO) (credential.CreateOptions
 	fs.StringVar(&kind, "kind", "", "credential kind")
 
 	var backend string
-	fs.StringVar(&backend, "backend", secret.BackendPodman, "secret backend: secret or aws-sm")
+	fs.StringVar(&backend, "backend", backendFlagPodman, "secret backend: podman or aws-sm")
 
 	var agents multiFlag
 	fs.Var(&agents, "agent", "agent sub (repeatable)")
@@ -223,8 +222,12 @@ func parseCredentialCreateFlags(args []string, std IO) (credential.CreateOptions
 		fmt.Fprintln(std.Err, credentialCreateUsage)
 		return credential.CreateOptions{}, false
 	}
-	if backend != secret.BackendPodman && backend != secret.BackendAWSSM {
-		fmt.Fprintf(std.Err, "sag: credential create: --backend %q is not valid; use %s or %s\n", backend, secret.BackendPodman, secret.BackendAWSSM)
+	switch backend {
+	case backendFlagPodman:
+		backend = secret.BackendPodman
+	case secret.BackendAWSSM:
+	default:
+		fmt.Fprintf(std.Err, "sag: credential create: --backend %q is not valid; use %s or %s\n", backend, backendFlagPodman, secret.BackendAWSSM)
 		return credential.CreateOptions{}, false
 	}
 

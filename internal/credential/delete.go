@@ -92,6 +92,13 @@ func backendsFromOpts(opts DeleteOptions) []backendPair {
 	return pairs
 }
 
+func secretRef(backend, name string) string {
+	if backend == secret.BackendAWSSM {
+		return secret.BackendAWSSM + ":" + name
+	}
+	return name
+}
+
 func collectDeleteState(ctx context.Context, name, cfgDir string, opts DeleteOptions) (deleteInfo, error) {
 	var info deleteInfo
 
@@ -137,9 +144,10 @@ func collectDeleteState(ctx context.Context, name, cfgDir string, opts DeleteOpt
 			return info, err
 		}
 		for _, m := range metas {
-			ownedSet[m.Name] = true
-			if otherRefs[m.Name] {
-				info.unowned = append(info.unowned, m.Name)
+			ref := secretRef(bp.name, m.Name)
+			ownedSet[ref] = true
+			if otherRefs[ref] {
+				info.unowned = append(info.unowned, ref)
 			} else {
 				info.owned = append(info.owned, ownedSecret{name: m.Name, backend: bp.backend})
 			}

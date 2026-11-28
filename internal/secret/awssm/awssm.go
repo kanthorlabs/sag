@@ -152,29 +152,36 @@ func (b *Backend) List(ctx context.Context, selector map[string]string) ([]secre
 		},
 	}
 
-	out, err := b.client.ListSecrets(ctx, &awssm.ListSecretsInput{
-		Filters: filters,
-	})
-	if err != nil {
-		return nil, mapErr(err)
-	}
-
 	var result []secret.Metadata
-	for _, entry := range out.SecretList {
-		labels := tagsToLabels(entry.Tags)
-		if !matchesSelector(labels, selector) {
-			continue
+	var token *string
+	for {
+		out, err := b.client.ListSecrets(ctx, &awssm.ListSecretsInput{
+			Filters:   filters,
+			NextToken: token,
+		})
+		if err != nil {
+			return nil, mapErr(err)
 		}
-		meta := secret.Metadata{
-			Labels: labels,
+		for _, entry := range out.SecretList {
+			labels := tagsToLabels(entry.Tags)
+			if !matchesSelector(labels, selector) {
+				continue
+			}
+			meta := secret.Metadata{
+				Labels: labels,
+			}
+			if entry.Name != nil {
+				meta.Name = *entry.Name
+			}
+			if entry.CreatedDate != nil {
+				meta.CreatedAt = *entry.CreatedDate
+			}
+			result = append(result, meta)
 		}
-		if entry.Name != nil {
-			meta.Name = *entry.Name
+		if aws.ToString(out.NextToken) == "" {
+			break
 		}
-		if entry.CreatedDate != nil {
-			meta.CreatedAt = *entry.CreatedDate
-		}
-		result = append(result, meta)
+		token = out.NextToken
 	}
 	return result, nil
 }

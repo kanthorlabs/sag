@@ -245,12 +245,131 @@ func TestScrubAddOnLoad(t *testing.T) {
 }
 
 func TestCredentialsFileScrubbed(t *testing.T) {
-	const credVal = "aws-cred-file-7q3x"
-	cred := secret.NewCredential("sag-aws-cred", []byte(credVal))
-	s := scrub.New([]secret.Credential{cred})
-	text := "aws error: " + credVal
-	if strings.Contains(s.String(text), credVal) {
-		t.Fatalf("credentials file value not redacted from start; got %q", s.String(text))
+	cfg, err := config.Parse([]byte(awsUnitConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const keyID, secretKey = "AKIAEXAMPLE7Q3X", "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY"
+	file := "[default]\naws_access_key_id = " + keyID + "\naws_secret_access_key=" + secretKey + "\n"
+	creds := map[string]secret.Credential{"sag-aws-cred": secret.NewCredential("sag-aws-cred", []byte(file))}
+	s := newScrubber(cfg, creds)
+	for _, v := range []string{keyID, secretKey, file} {
+		if got := s.String("aws error: " + v); strings.Contains(got, v) {
+			t.Errorf("value %q not redacted; got %q", v, got)
+		}
+	}
+}
+
+func TestScrubAddOnLoadTLSCA(t *testing.T) {
+	resetFake(t)
+	cfg, err := config.Parse([]byte(awsCAConfig("secret:sag-res-remote.conn")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := map[string]secret.Credential{
+		"sag-aws-cred":        secret.NewCredential("sag-aws-cred", []byte("aws-cred-4p7x")),
+		"sag-res-remote.conn": secret.NewCredential("sag-res-remote.conn", []byte("podman-conn-8m1d")),
+	}
+	s := scrub.New(nil)
+	sched := &fakeScheduler{}
+	loader := mapAWSLoader{"sag/remote/ca": "aws-ca-pem-3v6w"}
+	if _, err := openResources(context.Background(), noopLog(), cfg, creds, loader, s, inventory.New(), fakeApprovals{}, nil, sched); err != nil {
+		t.Fatalf("openResources: %v", err)
+	}
+	if _, err := sched.unopened[0].open(context.Background()); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if got := s.String("ca aws-ca-pem-3v6w"); strings.Contains(got, "aws-ca-pem-3v6w") {
+		t.Fatalf("aws-sm tls_ca not scrubbed after load; got %q", got)
+	}
+}
+
+func TestAWSBackendNeverStopsStart(t *testing.T) {
+	cases := map[string]struct {
+		storage   string
+		resources string
+		wantCalls int
+	}{
+		"region_without_refs": {
+			storage:   "storage:\n  aws:\n    region: us-east-1\n",
+			wantCalls: 0,
+		},
+		"backend_error": {
+			storage:   "storage:\n  aws:\n    region: us-east-1\n    credentials: secret:sag-aws-cred\n",
+			resources: "resources:\n  remote:\n    kind: daemon-fake\n    connection: aws-sm:sag/remote/conn\n    agents: [skeleton]\n",
+			wantCalls: 1,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			resetFake(t)
+			calls := 0
+			old := newAWSDaemon
+			newAWSDaemon = func(context.Context, string, string) (AWSLoader, error) {
+				calls++
+				return nil, errors.New("aws config broken")
+			}
+			t.Cleanup(func() { newAWSDaemon = old })
+
+			master := bytes.Repeat([]byte{7}, 32)
+			f := newFixture(t, master)
+			addr := freeAddr(t)
+			conf := fmt.Sprintf("version: 1\nserver:\n  listen: %s\n  tls_cert: secret:sag-tls-cert\n  tls_key: secret:sag-tls-key\n%s%s", addr, tc.storage, tc.resources)
+			if err := os.WriteFile(f.opts.ConfigPath, []byte(conf), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(f.opts.SecretsDir, "sag-aws-cred"), []byte("aws-cred-7q9z"), 0o400); err != nil {
+				t.Fatal(err)
+			}
+			ca, err := testenv.NewCA()
+			if err != nil {
+				t.Fatal(err)
+			}
+			certPEM, keyPEM, err := ca.Issue("127.0.0.1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			replaceSecret(t, f.opts.SecretsDir, "sag-tls-cert", certPEM)
+			replaceSecret(t, f.opts.SecretsDir, "sag-tls-key", keyPEM)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			exited := make(chan struct{})
+			var runErr error
+			go func() {
+				runErr = Run(ctx, f.opts)
+				close(exited)
+			}()
+			t.Cleanup(func() {
+				cancel()
+				<-exited
+			})
+
+			pool := x509.NewCertPool()
+			pool.AppendCertsFromPEM(ca.CertPEM)
+			client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
+			deadline := time.Now().Add(30 * time.Second)
+			for {
+				select {
+				case <-exited:
+					t.Fatalf("Run returned %v; want a running daemon", runErr)
+				default:
+				}
+				resp, herr := client.Get("https://" + addr + "/healthz")
+				if herr == nil {
+					_ = resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						break
+					}
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("healthz did not return 200 within 30s")
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			if calls != tc.wantCalls {
+				t.Fatalf("aws backend built %d times; want %d", calls, tc.wantCalls)
+			}
+		})
 	}
 }
 

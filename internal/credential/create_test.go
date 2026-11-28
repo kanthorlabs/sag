@@ -436,3 +436,30 @@ func TestArgsHoldNoValue(t *testing.T) {
 		t.Errorf("connection secret value = %q; want %q (value must reach storage)", string(conn.Reveal()), secretValue)
 	}
 }
+
+func TestAWSStorageRuleOrder(t *testing.T) {
+	storageErr := errors.New("credential: backend aws-sm needs storage.aws in sag.yaml")
+	cases := map[string]struct {
+		mutate func(*CreateOptions)
+		want   string
+	}{
+		"rule1_first":     {func(o *CreateOptions) { o.Name = "BAD" }, "invalid name"},
+		"rule4_first":     {func(o *CreateOptions) { o.Agents = nil }, "at least one --agent is required"},
+		"rule5_first":     {func(o *CreateOptions) { o.Description = strings.Repeat("y", 501) }, "--description: at most 500 characters"},
+		"rule6_before_7":  {func(o *CreateOptions) { o.ContainerRun = func(context.Context) (bool, error) { return false, nil } }, storageErr.Error()},
+		"rule6_no_secret": {func(o *CreateOptions) {}, storageErr.Error()},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			opts := baseOpts(t)
+			opts.Backend = secret.BackendAWSSM
+			opts.Storage = nil
+			opts.StorageErr = storageErr
+			tc.mutate(&opts)
+			err := Create(context.Background(), opts)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Create = %v; want %q", err, tc.want)
+			}
+		})
+	}
+}

@@ -28,6 +28,7 @@ type CreateOptions struct {
 	CfgDir string
 
 	Storage      secret.SecureStorage
+	StorageErr   error
 	KindLookup   func(string) (core.CredentialKind, bool)
 	CheckCred    func(ctx context.Context, kind string, tls core.TLSMode, cred secret.Credential, caPem []byte) error
 	ServiceStart func(ctx context.Context, out io.Writer) error
@@ -46,11 +47,13 @@ func Create(ctx context.Context, opts CreateOptions) error {
 	if err := checkResourceAbsent(opts.CfgDir, opts.Name); err != nil {
 		return err
 	}
-	if err := checkSecretAbsent(ctx, opts.Storage, secretConnName(opts.Backend, opts.Name)); err != nil {
-		return err
-	}
-	if err := checkSecretAbsent(ctx, opts.Storage, secretCAName(opts.Backend, opts.Name)); err != nil {
-		return err
+	if opts.StorageErr == nil {
+		if err := checkSecretAbsent(ctx, opts.Storage, secretConnName(opts.Backend, opts.Name)); err != nil {
+			return err
+		}
+		if err := checkSecretAbsent(ctx, opts.Storage, secretCAName(opts.Backend, opts.Name)); err != nil {
+			return err
+		}
 	}
 
 	ck, ok := opts.KindLookup(opts.Kind)
@@ -65,6 +68,9 @@ func Create(ctx context.Context, opts CreateOptions) error {
 	}
 	if err := validateTLSCAPem(opts.TLSCAPem); err != nil {
 		return err
+	}
+	if opts.StorageErr != nil {
+		return opts.StorageErr
 	}
 
 	running, err := opts.ContainerRun(ctx)
