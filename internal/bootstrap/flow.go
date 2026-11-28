@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -28,12 +29,15 @@ import (
 )
 
 type Deps struct {
-	GOOS     func() string
-	GOARCH   func() string
-	OpenFile func(string) error
-	UID      func() string
-	Home     func() string
-	SAGPath  func() (string, error)
+	GOOS        func() string
+	GOARCH      func() string
+	OpenFile    func(string) error
+	UID         func() string
+	Home        func() string
+	SAGPath     func() (string, error)
+	OSRelease   func() (string, string, error)
+	Username    func() string
+	HasTerminal func() bool
 
 	ResolvePaths func() (hoststate.Paths, error)
 	EnsureCfg    func(hoststate.Paths) (bool, error)
@@ -87,6 +91,22 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 		Home: func() string { return os.Getenv("HOME") },
 		SAGPath: func() (string, error) {
 			return os.Executable()
+		},
+		OSRelease: readOSRelease,
+		Username: func() string {
+			u, err := user.Current()
+			if err != nil {
+				return ""
+			}
+			return u.Username
+		},
+		HasTerminal: func() bool {
+			tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+			if err != nil {
+				return false
+			}
+			tty.Close()
+			return true
 		},
 
 		ResolvePaths: hoststate.ResolvePaths,
@@ -222,6 +242,15 @@ func Run(ctx context.Context, flags Flags, deps Deps) error {
 func (d Deps) stepPlatformCheck(_ context.Context, s *State) error {
 	if err := checkPlatform(d.GOOS(), d.GOARCH()); err != nil {
 		return err
+	}
+	if d.GOOS() == "linux" && d.OSRelease != nil {
+		id, versionID, err := d.OSRelease()
+		if err != nil {
+			return fmt.Errorf("bootstrap: read os-release: %w", err)
+		}
+		if err := checkLinuxDistro(d.GOOS(), d.GOARCH(), id, versionID); err != nil {
+			return err
+		}
 	}
 	uid := d.UID()
 	if uid == "0" {

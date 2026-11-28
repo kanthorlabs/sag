@@ -4,29 +4,27 @@ package deps
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
 )
 
-func DefaultPodmanVersion(_ context.Context, _ string) (string, error) {
-	return "", errors.New("deps: unsupported platform linux")
+func DefaultPodmanVersion(ctx context.Context, path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("deps: podman path is empty")
+	}
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
+	if err != nil {
+		return "", fmt.Errorf("deps: podman --version: %w", err)
+	}
+	line := strings.TrimSpace(string(out))
+	parts := strings.Fields(line)
+	if len(parts) < 3 {
+		return "", fmt.Errorf("deps: unexpected podman --version output: %q", line)
+	}
+	return parts[2], nil
 }
 
-func DefaultDownload(_ context.Context, _, _ string) (string, error) {
-	return "", errors.New("deps: unsupported platform linux")
-}
-
-func DefaultSHA256(_ string) (string, error) {
-	return "", errors.New("deps: unsupported platform linux")
-}
-
-func DefaultMachineList(_ context.Context, _ string) ([]MachineInfo, error) {
-	return nil, errors.New("deps: unsupported platform linux")
-}
-
-func DefaultMachineInit(_ context.Context, _ string) error {
-	return errors.New("deps: unsupported platform linux")
-}
-
-func DefaultMachineStart(_ context.Context, _ string) error {
-	return errors.New("deps: unsupported platform linux")
-}
+var DefaultMachineList func(context.Context, string) ([]MachineInfo, error) = nil
+var DefaultMachineInit func(context.Context, string) error = nil
+var DefaultMachineStart func(context.Context, string) error = nil

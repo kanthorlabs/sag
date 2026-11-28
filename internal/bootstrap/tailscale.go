@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/kanthorlabs/sag/internal/stepline"
 	"github.com/kanthorlabs/sag/internal/tailscale"
@@ -19,6 +20,20 @@ func (d Deps) stepTailscale(ctx context.Context, s *State) error {
 	cmd, found := tailscale.LookupCommand()
 	if !found {
 		return errors.New("tailscale: command not found at step 13")
+	}
+	username := ""
+	if d.Username != nil {
+		username = d.Username()
+	}
+	hasTerminal := d.HasTerminal != nil && d.HasTerminal()
+	ask := func() (bool, error) {
+		return d.Asker.YesNo(fmt.Sprintf(`Run "sudo tailscale set --operator=%s" so that SAG serves on Tailscale? [y/N] `, username))
+	}
+	if err := tailscale.EnsureOperator(ctx, cmd, username, hasTerminal, ask, s.Out); err != nil {
+		if errors.Is(err, tailscale.ErrOperatorSkip) {
+			return nil
+		}
+		return err
 	}
 	return tailscale.Apply(ctx, s.TailscaleState, cmd, s.Out)
 }

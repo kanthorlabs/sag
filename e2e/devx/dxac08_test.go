@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,6 +15,11 @@ import (
 
 func DXAC08_VersionRule(t *testing.T, ctx context.Context) {
 	t.Helper()
+
+	if runtime.GOOS == "linux" {
+		dxac08AptVersionRule(t, ctx)
+		return
+	}
 
 	sagBin, err := dxh.TestBinary()
 	if err != nil {
@@ -87,5 +93,71 @@ func DXAC08_VersionRule(t *testing.T, ctx context.Context) {
 	}
 	if versionParts2[2] != installedVersion {
 		t.Fatalf("DXAC08: podman version changed: before=%q after=%q", installedVersion, versionParts2[2])
+	}
+}
+
+func dxac08AptVersionRule(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	sagBin, err := dxh.TestBinary()
+	if err != nil {
+		t.Fatalf("DXAC08 apt: test binary: %v", err)
+	}
+
+	r := dxh.NewRunner()
+	dpkgVersion := func() string {
+		out, err := r.Output(ctx, "dpkg-query", "-W", "-f=${Version}", "podman")
+		if err != nil {
+			t.Fatalf("DXAC08 apt: dpkg-query podman: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	versionBefore := dpkgVersion()
+
+	t.Setenv("SAG_TEST_ABSENT", "")
+
+	olderGroupDir := t.TempDir()
+	t.Setenv("SAG_TEST_PINS", "podman 999.0.0 linux/* apt podman -\n")
+	olderChildEnv, err := dxh.ChildEnv(os.Environ(), olderGroupDir)
+	if err != nil {
+		t.Fatalf("DXAC08 apt older: child env: %v", err)
+	}
+	olderChildEnv = append(olderChildEnv, "PATH="+dxh.TestPATH(t.TempDir()))
+
+	stdout, stderr, code := runBootstrapNoTerminal(t, ctx, sagBin, olderChildEnv)
+	if code != 1 {
+		t.Fatalf("DXAC08 apt older: exit code = %d; want 1\nstdout=%s\nstderr=%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "fail podman candidate ") || !strings.Contains(stdout, ", pin 999.0.0") {
+		t.Fatalf("DXAC08 apt older: stdout = %q; want 'fail podman candidate <v>, pin 999.0.0' line\nstderr=%s", stdout, stderr)
+	}
+	if v := dpkgVersion(); v != versionBefore {
+		t.Fatalf("DXAC08 apt older: dpkg podman version changed: before=%q after=%q", versionBefore, v)
+	}
+	if _, statErr := os.Stat(dxh.CfgDir(os.Getenv("HOME"))); statErr == nil {
+		t.Fatal("DXAC08 apt older: cfg dir exists after failed bootstrap")
+	}
+
+	newerGroupDir := t.TempDir()
+	t.Setenv("SAG_TEST_PINS", "podman 1.0.0 linux/* apt podman -\n")
+	newerChildEnv, err := dxh.ChildEnv(os.Environ(), newerGroupDir)
+	if err != nil {
+		t.Fatalf("DXAC08 apt newer: child env: %v", err)
+	}
+	newerChildEnv = append(newerChildEnv, "PATH="+dxh.TestPATH(t.TempDir()))
+
+	stdout, stderr, code = runBootstrapNoTerminal(t, ctx, sagBin, newerChildEnv)
+	if code != 0 {
+		t.Fatalf("DXAC08 apt newer: exit code = %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "warn podman") {
+		t.Fatalf("DXAC08 apt newer: stdout = %q; want 'warn podman' line\nstderr=%s", stdout, stderr)
+	}
+	warnCount := strings.Count(stdout, "warn podman")
+	if warnCount != 1 {
+		t.Fatalf("DXAC08 apt newer: found %d 'warn podman' lines; want exactly 1", warnCount)
+	}
+	if v := dpkgVersion(); v != versionBefore {
+		t.Fatalf("DXAC08 apt newer: dpkg podman version changed: before=%q after=%q", versionBefore, v)
 	}
 }

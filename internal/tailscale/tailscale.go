@@ -3,7 +3,9 @@ package tailscale
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -14,10 +16,13 @@ const (
 	SkipCommandAbsent  = "command absent"
 	SkipDown           = "down"
 	SkipAddressInvalid = "address invalid"
+	SkipOperatorNotSet = "operator not set"
 
 	sagTCPForward = "127.0.0.1:8443"
 	sagPort       = "8443"
 )
+
+var ErrOperatorSkip = errors.New("tailscale: operator not set; skip")
 
 var cgnatNet *net.IPNet
 
@@ -36,6 +41,7 @@ type State struct {
 
 type Command interface {
 	Output(ctx context.Context, args ...string) ([]byte, error)
+	RunWithSudo(ctx context.Context, args ...string) error
 }
 
 type osCommand struct {
@@ -44,6 +50,20 @@ type osCommand struct {
 
 func (c osCommand) Output(ctx context.Context, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, c.path, args...).Output()
+}
+
+func (c osCommand) RunWithSudo(ctx context.Context, args ...string) error {
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer tty.Close()
+	full := append([]string{"sudo", c.path}, args...)
+	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
+	cmd.Stdin = tty
+	cmd.Stdout = tty
+	cmd.Stderr = tty
+	return cmd.Run()
 }
 
 func LookupCommand() (Command, bool) {

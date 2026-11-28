@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -153,15 +154,32 @@ func dxac40CollectSources(t *testing.T, ctx context.Context, home, cfgDir string
 		t.Fatal("DXAC40: audit file: empty; EnsureAgentSetup must have produced audit entries")
 	}
 
-	serviceLogPath := filepath.Join(home, "Library", "Logs", "sag", "service.log")
-	serviceData, err := os.ReadFile(serviceLogPath)
-	if err != nil {
-		t.Fatalf("DXAC40: service log %s: %v", serviceLogPath, err)
+	if runtime.GOOS == "linux" {
+		journalData, err := dxh.UserJournal(ctx, r, 1000)
+		if err != nil {
+			t.Fatalf("DXAC40: user journal: %v", err)
+		}
+		if len(journalData) == 0 {
+			t.Fatal("DXAC40: user journal: empty")
+		}
+		sources["service log"] = string(journalData)
+
+		qContent, err := quadletContent(home)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("DXAC40: read quadlet file: %v", err)
+		}
+		sources["quadlet file"] = qContent
+	} else {
+		serviceLogPath := filepath.Join(home, "Library", "Logs", "sag", "service.log")
+		serviceData, err := os.ReadFile(serviceLogPath)
+		if err != nil {
+			t.Fatalf("DXAC40: service log %s: %v", serviceLogPath, err)
+		}
+		if len(serviceData) == 0 {
+			t.Fatalf("DXAC40: service log %s: empty", serviceLogPath)
+		}
+		sources["service log"] = string(serviceData)
 	}
-	if len(serviceData) == 0 {
-		t.Fatalf("DXAC40: service log %s: empty", serviceLogPath)
-	}
-	sources["service log"] = string(serviceData)
 
 	cfgFiles, err := dxac40ReadDirFiles(cfgDir)
 	if err != nil {

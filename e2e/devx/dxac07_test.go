@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -96,7 +97,7 @@ func DXAC07_ReleaseChecksum(t *testing.T, ctx context.Context) {
 
 	wrongBytes := sha256.Sum256([]byte("wrong-content-for-dxac07"))
 	wrongHash := hex.EncodeToString(wrongBytes[:])
-	t.Setenv("SAG_TEST_PINS", fmt.Sprintf("testpkg 0.1.0 darwin/arm64 release %s %s\n", pkgURL, wrongHash))
+	t.Setenv("SAG_TEST_PINS", fmt.Sprintf("testpkg 0.1.0 %s/%s release %s %s\n", runtime.GOOS, runtime.GOARCH, pkgURL, wrongHash))
 
 	childEnv, err := dxh.ChildEnv(os.Environ(), groupDir)
 	if err != nil {
@@ -120,7 +121,7 @@ func DXAC07_ReleaseChecksum(t *testing.T, ctx context.Context) {
 	}
 
 	_ = os.Remove(recordFile)
-	t.Setenv("SAG_TEST_PINS", fmt.Sprintf("testpkg 0.1.0 darwin/arm64 release %s %s\n", pkgURL, correctHash))
+	t.Setenv("SAG_TEST_PINS", fmt.Sprintf("testpkg 0.1.0 %s/%s release %s %s\n", runtime.GOOS, runtime.GOARCH, pkgURL, correctHash))
 
 	childEnv, err = dxh.ChildEnv(os.Environ(), groupDir)
 	if err != nil {

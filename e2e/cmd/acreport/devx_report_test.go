@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -253,5 +254,37 @@ func TestDevxReadsEachSuite(t *testing.T) {
 	}
 	if !suites["Main"] || !suites["Pins"] {
 		t.Errorf("suites = %v, want Main and Pins", suites)
+	}
+}
+
+func TestDevxTestPhaseA(t *testing.T) {
+	findAC := func(r devxReport) devxACResult {
+		for _, ac := range r.ACs {
+			if ac.ID == "DX-AC39" {
+				return ac
+			}
+		}
+		t.Fatal("DX-AC39 missing from report")
+		return devxACResult{}
+	}
+
+	main := devxParsed(t, "Main",
+		devxSkeletonPass("Main"),
+		devxFinished("Main", "DXAC39_ClaudeCodeSetup", "pass"),
+	)
+	rB := buildDevxReport(9, "B", "", []suiteRun{main}, devx.ACTable, buildInfo{Commit: "abc123"})
+	if ac := findAC(rB); ac.Status != statusPass {
+		t.Errorf("phase B DX-AC39 status = %s, want %s; tests=%v", ac.Status, statusPass, ac.Tests)
+	}
+	if slices.Contains(rB.Gate.Failing, "DXAC39_DefaultPath") {
+		t.Errorf("phase B gate failing = %v; DXAC39_DefaultPath runs in phase A only", rB.Gate.Failing)
+	}
+
+	rA := buildDevxReport(9, "A", "", []suiteRun{main}, devx.ACTable, buildInfo{Commit: "abc123"})
+	if ac := findAC(rA); ac.Status != statusFail {
+		t.Errorf("phase A DX-AC39 status = %s, want %s without DXAC39_DefaultPath", ac.Status, statusFail)
+	}
+	if !slices.Contains(rA.Gate.Failing, "DXAC39_DefaultPath") {
+		t.Errorf("phase A gate failing = %v, want DXAC39_DefaultPath", rA.Gate.Failing)
 	}
 }

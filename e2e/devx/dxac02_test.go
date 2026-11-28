@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"testing"
 
@@ -159,6 +160,12 @@ func DXAC02_ContainerAndCert(t *testing.T, ctx context.Context) {
 	for i, ip := range wantIPs {
 		if !serverCert.IPAddresses[i].Equal(ip) {
 			t.Fatal("server cert IP SANs do not match expected addresses")
+		}
+	}
+
+	if runtime.GOOS == "linux" {
+		if !quadletExists(home) {
+			t.Fatal("Quadlet file missing after bootstrap (phase B)")
 		}
 	}
 }

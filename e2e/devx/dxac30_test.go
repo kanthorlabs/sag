@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ import (
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
 )
 
-const registryImage = "docker.io/library/registry:3.0.0@sha256:832ef18332f0dde1edff9b45d796231c68f9b9108cf91acb5e6fac450b8fbdcb"
+const registryImage = "docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e"
 
 func init() {
 	imageTests["DXAC30_ImageSelection"] = DXAC30_ImageSelection
@@ -258,7 +259,12 @@ func dxac30AssertAbsent(t *testing.T, ctx context.Context, r dxh.Runner, refs ..
 
 func dxac30RegistriesConf(t *testing.T, ctx context.Context, r dxh.Runner) string {
 	t.Helper()
-	out, err := r.Output(ctx, "podman", "machine", "ssh", "--", "sh", "-c", "cat /etc/containers/registries.conf /etc/containers/registries.conf.d/* 2>/dev/null; true")
+	script := "cat /etc/containers/registries.conf /etc/containers/registries.conf.d/* 2>/dev/null; true"
+	args := []string{"podman", "machine", "ssh", "--", "sh", "-c", script}
+	if runtime.GOOS == "linux" {
+		args = []string{"sh", "-c", "cat /etc/containers/registries.conf /etc/containers/registries.conf.d/* \"$HOME/.config/containers/registries.conf\" \"$HOME\"/.config/containers/registries.conf.d/* 2>/dev/null; true"}
+	}
+	out, err := r.Output(ctx, args[0], args[1:]...)
 	if err != nil {
 		t.Fatalf("DXAC30: read registry configuration: %v", err)
 	}

@@ -2,7 +2,7 @@ package service
 
 import "fmt"
 
-var acceptedPlatforms = []string{"darwin/arm64"}
+var acceptedPlatforms = []string{"darwin/arm64", "linux/amd64", "linux/arm64"}
 
 func unsupportedPlatformErr(goos, goarch string) error {
 	return fmt.Errorf("unsupported platform %s/%s", goos, goarch)

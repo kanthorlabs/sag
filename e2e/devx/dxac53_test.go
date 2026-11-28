@@ -4,7 +4,9 @@ package devx_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -77,11 +79,7 @@ func DXAC53_PortHolder(t *testing.T, ctx context.Context) {
 		t.Fatalf("service stop before service start tests: %v\n%s", err, out)
 	}
 
-	ctrIDOut, err := r.Output(ctx, "podman", "container", "inspect", "sag", "--format", "{{.Id}}")
-	if err != nil {
-		t.Fatalf("container inspect sag: %v", err)
-	}
-	ctrID := strings.TrimSpace(string(ctrIDOut))
+	ctrID := dxac53SagState(t, ctx, r)
 
 	t.Run("ServiceStartProcess", func(t *testing.T) {
 		ln := listenRetry(t, "127.0.0.1:8443")
@@ -96,12 +94,8 @@ func DXAC53_PortHolder(t *testing.T, ctx context.Context) {
 			t.Fatalf("service start with process holder: fail line missing; output:\n%s", out)
 		}
 
-		ctrIDOut2, err := r.Output(ctx, "podman", "container", "inspect", "sag", "--format", "{{.Id}}")
-		if err != nil {
-			t.Fatalf("container inspect sag after service start: %v", err)
-		}
-		if got := strings.TrimSpace(string(ctrIDOut2)); got != ctrID {
-			t.Fatalf("container ID changed after service start with process holder: before=%q after=%q", ctrID, got)
+		if got := dxac53SagState(t, ctx, r); got != ctrID {
+			t.Fatalf("sag state changed after service start with process holder: before=%q after=%q", ctrID, got)
 		}
 	})
 
@@ -130,12 +124,8 @@ func DXAC53_PortHolder(t *testing.T, ctx context.Context) {
 			t.Fatalf("service start with container holder: fail line missing; output:\n%s", out)
 		}
 
-		ctrIDOut2, err := r.Output(ctx, "podman", "container", "inspect", "sag", "--format", "{{.Id}}")
-		if err != nil {
-			t.Fatalf("container inspect sag after service start: %v", err)
-		}
-		if got := strings.TrimSpace(string(ctrIDOut2)); got != ctrID {
-			t.Fatalf("container ID changed after service start with container holder: before=%q after=%q", ctrID, got)
+		if got := dxac53SagState(t, ctx, r); got != ctrID {
+			t.Fatalf("sag state changed after service start with container holder: before=%q after=%q", ctrID, got)
 		}
 	})
 }
@@ -209,4 +199,30 @@ func buildHolderImage(t *testing.T, ctx context.Context) string {
 	})
 
 	return img
+}
+
+func dxac53SagState(t *testing.T, ctx context.Context, r dxh.Runner) string {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		out, err := r.Output(ctx, "podman", "container", "inspect", "sag", "--format", "{{.Id}}")
+		if err != nil {
+			t.Fatalf("container inspect sag: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	ctr := "absent"
+	if out, err := r.Output(ctx, "podman", "container", "inspect", "sag", "--format", "{{.Id}}"); err == nil {
+		ctr = strings.TrimSpace(string(out))
+	}
+	qPath := filepath.Join(os.Getenv("HOME"), ".config", "containers", "systemd", "sag.container")
+	info, err := os.Stat(qPath)
+	if err != nil {
+		t.Fatalf("stat Quadlet file: %v", err)
+	}
+	data, err := os.ReadFile(qPath)
+	if err != nil {
+		t.Fatalf("read Quadlet file: %v", err)
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("container=%s quadlet=%x mtime=%d", ctr, sum, info.ModTime().UnixNano())
 }

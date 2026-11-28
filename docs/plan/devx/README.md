@@ -7,7 +7,7 @@
 | Revision | 3 |
 | Date | 2026-11-26 |
 | Source of truth | `docs/PRD-devx.md`, revision 8 (commit `8227e10`) |
-| Base | `docs/PRD.md` revision 16, tag `sag-layer-6`, v1 plan in `docs/plan/` |
+| Base | `docs/PRD.md` revision 16, commit `68843af`, v1 plan in `docs/plan/` |
 | Scope | `sag bootstrap`, `sag service`, `sag credential`, `sag logs`, SecureStorage (Podman, AWS Secrets Manager), Tailscale serve, port checks, `sag agent setup`, release flow, removal of the development scripts. DX-AC1 to DX-AC53. |
 
 `docs/PRD-devx.md` wins on any conflict with this plan. "PRD-devx N" names section N of that file.
@@ -33,7 +33,7 @@ The rules of `docs/plan/README.md` sections 1 to 7 apply. The v1 files `foundati
 | Task worktree | `.dev/<task-id>` | `.dev/<task-id>`, for example `.dev/D4.2` |
 | Claims, merge lock | `.dev/claims/<task-id>/`, `.dev/claims/merge.lock/` | Same paths |
 | DX run lock | None | `.dev/claims/devx-e2e.lock/`. `make e2e-devx` holds it during a run. The file `owner` in the lock directory holds the PID and the worktree of the run. |
-| Layer tag | `sag-layer-<N>` | `sag-devx-<N>`. `sag-devx-0` marks the commit of this plan. |
+| Layer mark | `sag-layer-<N>` | No tag. The gate commit in `docs/reviews/devx-layer-<N>.md` marks the layer. Only `vX.Y.Z` tags exist, and each one is a release. |
 | Review file | `docs/reviews/layer-<N>.md` | `docs/reviews/devx-layer-<N>.md` |
 | Layer count | 6 | 10. Phase A: layers 1 to 9. Phase B: layer 10. |
 | Gate proof | Local e2e matrix | Phase A: local run on the macOS development machine. Phase B: run on the Debian machine. No CI job is a gate. |
@@ -64,7 +64,6 @@ Layer 0 has no contract task and no gate. `D1.0` starts after `D0.1`, `D0.2`, an
 Run these commands one time in `.dev/devx` after Ulrich approves this plan:
 
 ```sh
-git tag sag-devx-0 feat/devx
 mkdir -p ../claims ../local
 ```
 
@@ -163,7 +162,7 @@ Podman store (ruling Q36):
 
 Child environment:
 
-- `dxh` builds the environment of each child process under test (`sag`, `claude`, `pi`, `node`, and the programs that they start) from an allow list: `HOME`, the test `PATH`, `TMPDIR`, `USER`, `LANG`, and each `SAG_TEST_*` variable.
+- `dxh` builds the environment of each child process under test (`sag`, `claude`, `pi`, `node`, and the programs that they start) from an allow list: `HOME`, the test `PATH`, `TMPDIR`, `USER`, `LANG`, and each `SAG_TEST_*` variable. On Linux, `XDG_RUNTIME_DIR` also passes, so that `systemctl --user` reaches the user manager (PRD-devx 17.1).
 - The harness commands of the preconditions and the teardown (`podman`, `launchctl`, `rm`, `git`) keep the environment of the run, so that they reach the same Podman machine.
 - No other variable passes. This removes `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, `NODE_EXTRA_CA_CERTS`, `XDG_CONFIG_HOME`, `ZDOTDIR`, `SHELL`, and each `CLAUDE*` variable.
 - A criterion test sets a variable only when its criterion states it, for example `SHELL=/bin/bash` for DX-AC41.
@@ -202,8 +201,8 @@ Who runs what:
 ### 2.2 Phase B: Debian machine
 
 - Layer 10 is blocked until Ulrich gives access to the Debian machine.
-- At the start of phase B, Ulrich rules the Debian version and the Linux platform scope (PRD-devx 1.4).
-- A PRD-devx revision records the ruling before `D10.0` starts.
+- Ruling of Ulrich (2026-11-28): Debian 13 (trixie), amd64 and arm64. PRD-devx revision 9 records it. The Linux pin is `podman 5.4.2`, the Debian 13 package.
+- The Debian machine is `homelab` (`ssh homelab`). It is the machine of a teammate. The work is in `/home/cantholabs/Projects/kanthorlabs/sag` and its `.dev`. Go 1.27.4 is in `/usr/local/go`. A non-interactive `ssh` shell does not read `~/.zshrc`, so each remote command starts with `export PATH=/usr/local/go/bin:$PATH`.
 - The constraints of section 2.1 apply to the Debian machine until Ulrich states other rules.
 - The test user needs linger and `sudo -n` (PRD-devx 17.1). DX-AC5 removes and installs Podman on the machine.
 
@@ -375,12 +374,12 @@ The v1 gate (`docs/plan/README.md` section 7) applies on `feat/devx` with these 
 4. Read `e2e/report/devx/ac-report.md`. Expected: the gate rule of section 5.4 holds. Run `podman system df` and record the output.
 5. If a step fails, fix the cause in `.dev/devx` and run the step again.
 
-- The review diff is `git diff sag-devx-<N-1> > ../local/devx-layer-<N>.diff`.
+- The review diff is `git diff <gate commit of layer N-1> > ../local/devx-layer-<N>.diff`. The gate commit is in `docs/reviews/devx-layer-<N-1>.md`.
 - The review sub-agent uses `model: fable` and `effort: high`. It gets the diff, the PRD-devx sections of the layer, the AC report, and the layer file. It counts as one agent of the pool.
 - After the review fixes, run steps 1 to 4 again. This second run is part of the gate.
 - The review file appends the final `ac-report.md` table, the `env` block, and the two `podman system df` outputs of the second run.
 - A growth of the reclaimable size from the previous gate to this gate is a defect of the layer.
-- The gate closes when the tag `sag-devx-<N>` exists and the gate rule holds.
+- The gate closes when the gate rule holds and `docs/reviews/devx-layer-<N>.md` names the gate commit.
 
 ### 6.2 Phase B gate
 

@@ -36,6 +36,10 @@ func (fakeCmd) Output(_ context.Context, _ ...string) ([]byte, error) {
 	return nil, nil
 }
 
+func (fakeCmd) RunWithSudo(_ context.Context, _ ...string) error {
+	return nil
+}
+
 func baseDeps(dir string) Deps {
 	cfgDir := filepath.Join(dir, "sag")
 	out := stepline.New(io.Discard)
@@ -173,7 +177,7 @@ func TestStepOrder(t *testing.T) {
 
 func TestUnsupportedPlatformExit1(t *testing.T) {
 	deps := Deps{
-		GOOS:   func() string { return "linux" },
+		GOOS:   func() string { return "windows" },
 		GOARCH: func() string { return "amd64" },
 		Out:    stepline.New(io.Discard),
 		Print:  io.Discard,
@@ -184,8 +188,8 @@ func TestUnsupportedPlatformExit1(t *testing.T) {
 	if err == nil {
 		t.Fatal("step platform-check: want error, got nil")
 	}
-	if err.Error() != "unsupported platform linux/amd64" {
-		t.Fatalf("step platform-check error = %q; want %q", err.Error(), "unsupported platform linux/amd64")
+	if err.Error() != "unsupported platform windows/amd64" {
+		t.Fatalf("step platform-check error = %q; want %q", err.Error(), "unsupported platform windows/amd64")
 	}
 }
 

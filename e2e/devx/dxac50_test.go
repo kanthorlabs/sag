@@ -14,7 +14,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -62,6 +64,15 @@ func DXAC50_TailscaleFake(t *testing.T, ctx context.Context) {
 		if err := os.WriteFile(filepath.Join(binDir, "tailscale"), data, 0o755); err != nil {
 			t.Fatalf("DXAC50: install fake binary: %v", err)
 		}
+		if runtime.GOOS == "linux" {
+			u, err := user.Current()
+			if err != nil {
+				t.Fatalf("DXAC50: current user: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(binDir, "ts_prefs"), []byte(`{"OperatorUser":"`+u.Username+`"}`), 0o600); err != nil {
+				t.Fatalf("DXAC50: write ts_prefs: %v", err)
+			}
+		}
 	}
 
 	removeFake := func() {
@@ -69,7 +80,7 @@ func DXAC50_TailscaleFake(t *testing.T, ctx context.Context) {
 	}
 
 	cleanState := func() {
-		for _, f := range []string{"ts_ip4", "ts_serve_status", "ts_rule", "ts_args"} {
+		for _, f := range []string{"ts_ip4", "ts_serve_status", "ts_rule", "ts_args", "ts_prefs"} {
 			_ = os.Remove(filepath.Join(binDir, f))
 		}
 	}
@@ -134,6 +145,10 @@ func DXAC50_TailscaleFake(t *testing.T, ctx context.Context) {
 			[]net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1"), net.ParseIP(fakeTailscaleIP)})
 
 		dxac50CheckPortBinding(t, r, ctx)
+
+		if runtime.GOOS == "linux" {
+			dxac50CheckQuadletPort(t, home)
+		}
 	})
 
 	t.Run("idempotent", func(t *testing.T) {
@@ -269,6 +284,27 @@ func DXAC50_TailscaleFake(t *testing.T, ctx context.Context) {
 			t.Fatalf("DXAC50 skip-command-absent: skip line appears %d times; want 1\nstdout=%q", n, stdout)
 		}
 	})
+
+	if runtime.GOOS == "linux" {
+		t.Run("operator-not-set", func(t *testing.T) {
+			cleanState()
+			installFake(t)
+			writeState(t, "ts_ip4", fakeTailscaleIP)
+			writeState(t, "ts_prefs", `{"OperatorUser":"other-user"}`)
+
+			stdout, stderr, code := runBS(t)
+			if code != 0 {
+				t.Fatalf("DXAC50 operator-not-set: exit %d; want 0\nstdout=%s\nstderr=%s", code, stdout, stderr)
+			}
+			if n := countLine(stdout, "skip tailscale operator not set; loopback only"); n != 1 {
+				t.Fatalf("DXAC50 operator-not-set: skip line appears %d times; want 1\nstdout=%q", n, stdout)
+			}
+			args := readState("ts_args")
+			if strings.Contains(args, "serve --bg") {
+				t.Fatalf("DXAC50 operator-not-set: serve --bg in ts_args; want none\n%s", args)
+			}
+		})
+	}
 
 	t.Run("conflict-other-target", func(t *testing.T) {
 		cleanState()
@@ -506,6 +542,29 @@ func dxac50BuildFakeTailscale(t *testing.T, ctx context.Context) (string, error)
 		return "", fmt.Errorf("go build: %w: %s", err, buildOut)
 	}
 	return binPath, nil
+}
+
+func dxac50CheckQuadletPort(t *testing.T, home string) {
+	t.Helper()
+	quadletPath := filepath.Join(home, ".config", "containers", "systemd", "sag.container")
+	data, err := os.ReadFile(quadletPath)
+	if err != nil {
+		t.Fatalf("DXAC50 quadlet-port: read sag.container: %v", err)
+	}
+	content := string(data)
+	wantLine := "PublishPort=127.0.0.1:8443:8443"
+	if !strings.Contains(content, wantLine) {
+		t.Fatalf("DXAC50 quadlet-port: sag.container does not contain %q; got:\n%s", wantLine, content)
+	}
+	count := 0
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "PublishPort=") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("DXAC50 quadlet-port: sag.container has %d PublishPort lines; want exactly 1; got:\n%s", count, content)
+	}
 }
 
 func dxac50RunBootstrap(t *testing.T, ctx context.Context, groupDir, binDir, sagBin string) (string, string, int) {

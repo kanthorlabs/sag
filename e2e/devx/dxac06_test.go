@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -25,7 +26,7 @@ func DXAC06_InstallApproval(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC06: test binary: %v", err)
 	}
 
-	testPins := "testpkg 0.1.0 darwin/arm64 release https://example.com/fake.pkg abc1230000000000000000000000000000000000000000000000000000000000\n"
+	testPins := "testpkg 0.1.0 " + runtime.GOOS + "/" + runtime.GOARCH + " release https://example.com/fake.pkg abc1230000000000000000000000000000000000000000000000000000000000\n"
 	t.Setenv("SAG_TEST_ABSENT", "1")
 	t.Setenv("SAG_TEST_PINS", testPins)
 

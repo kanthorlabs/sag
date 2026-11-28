@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,6 +169,7 @@ func TestNoTerminalExit3NoChange(t *testing.T) {
 		Home:       home,
 		Env:        map[string]string{"CLAUDE_CONFIG_DIR": claudeDir},
 		PodmanPath: "podman",
+		Asker:      prompt.Asker{Open: func() (io.ReadWriteCloser, error) { return nil, errors.New("no terminal") }},
 	}
 
 	_, err := planOnly(context.Background(), opts)

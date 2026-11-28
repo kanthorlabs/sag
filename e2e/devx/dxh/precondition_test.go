@@ -30,7 +30,7 @@ func TestRefusesSecondMachine(t *testing.T) {
 	r := newFake()
 	r.set("podman machine list --format {{.Name}} {{.Running}}", []byte("podman-machine-default true\npodman-machine-other true\n"), nil)
 
-	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for two machines")
@@ -44,7 +44,7 @@ func TestRefusesStoppedMachine(t *testing.T) {
 	r := newFake()
 	r.set("podman machine list --format {{.Name}} {{.Running}}", []byte("podman-machine-default false\n"), nil)
 
-	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for stopped machine")
@@ -59,7 +59,7 @@ func TestRefusesLowDisk(t *testing.T) {
 	r.set("podman machine list --format {{.Name}} {{.Running}}", []byte("podman-machine-default true\n"), nil)
 	r.set("podman machine ssh podman-machine-default df -Pk /var", []byte("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/vda1 102400000 1024000 5000000 95% /var\n"), nil)
 
-	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for low disk")
@@ -73,7 +73,7 @@ func TestRefusesContainerSag(t *testing.T) {
 	r := goodMachineRunner()
 	r.set("podman ps -a --filter name=^sag$ --format {{.Names}}", []byte("sag\n"), nil)
 
-	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for container sag")
@@ -87,7 +87,7 @@ func TestRefusesDevContainers(t *testing.T) {
 	r := goodMachineRunner()
 	r.set("podman ps -a --filter name=^sag-dev$ --format {{.Names}}", []byte("sag-dev\n"), nil)
 
-	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for sag-dev container")
@@ -128,7 +128,7 @@ func TestRefusesSAGSecretsOrVolume(t *testing.T) {
 	r := goodMachineRunner()
 	r.set("podman secret ls --filter name=^sag-master-key$ --format {{.Name}}", []byte("sag-master-key\n"), nil)
 
-	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for sag-master-key secret")
@@ -252,7 +252,7 @@ func TestRefusesVolume(t *testing.T) {
 	r := goodMachineRunner()
 	r.set("podman volume inspect sag-state", nil, nil)
 
-	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for existing sag-state volume")
@@ -266,7 +266,7 @@ func TestRefusesImage(t *testing.T) {
 	r := goodMachineRunner()
 	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", []byte("docker.io/kanthorlabs/sag:main\n"), nil)
 
-	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for existing image")
@@ -281,7 +281,7 @@ func TestRefusesSagResourceLabel(t *testing.T) {
 	r.set("podman secret ls --format {{.Name}}", []byte("sag-res-canary.conn\n"), nil)
 	r.set(`podman secret inspect sag-res-canary.conn --format {{index .Spec.Labels "sag.resource"}}`, []byte("true"), nil)
 
-	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
 	err := dxh.CheckPreconditions(context.Background(), r, cfg)
 	if err == nil {
 		t.Fatal("expected error for secret with sag.resource label")
@@ -293,7 +293,7 @@ func TestRefusesSagResourceLabel(t *testing.T) {
 
 func TestAnchoredSecretNameFilter(t *testing.T) {
 	r := goodMachineRunner()
-	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag"}
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
 	if err := dxh.CheckPreconditions(context.Background(), r, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -305,5 +305,74 @@ func TestAnchoredSecretNameFilter(t *testing.T) {
 		if strings.Contains(joined, "name=sag") && !strings.Contains(joined, "name=^sag") {
 			t.Errorf("secret name filter missing anchors: %v", call)
 		}
+	}
+}
+
+func goodLinuxRunner() *fakeRunner {
+	r := newFake()
+	r.set("podman info --format {{.Store.GraphRoot}}", []byte("/home/u/.local/share/containers/storage\n"), nil)
+	r.set("df -Pk /home/u/.local/share/containers/storage", []byte("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/sda1 102400000 1024000 90000000 2% /\n"), nil)
+	r.set("podman ps -a --filter name=^sag$ --format {{.Names}}", nil, nil)
+	r.set("podman ps -a --filter name=^sag-dev$ --format {{.Names}}", nil, nil)
+	r.set("podman ps -a --filter name=^sag-dev-pg$ --format {{.Names}}", nil, nil)
+	r.set("podman volume inspect sag-state", nil, errors.New("no such volume"))
+	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-master-key$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-tls-cert$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-tls-key$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-aws-credentials$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --format {{.Name}}", nil, nil)
+	r.set("systemctl --user show -p LoadState --value sag.service", []byte("not-found\n"), nil)
+	return r
+}
+
+func TestLinuxPreconditions(t *testing.T) {
+	r := goodLinuxRunner()
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
+	if err := dxh.CheckLinuxPreconditions(context.Background(), r, cfg); err != nil {
+		t.Fatalf("expected no error: %v", err)
+	}
+	for _, call := range r.calls {
+		if len(call) >= 2 && call[0] == "podman" && call[1] == "machine" {
+			t.Errorf("Linux preconditions called 'podman machine': %v", call)
+		}
+	}
+}
+
+func TestLinuxRefusesLowDisk(t *testing.T) {
+	r := goodLinuxRunner()
+	r.set("df -Pk /home/u/.local/share/containers/storage", []byte("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/sda1 102400000 97400000 5000000 95% /\n"), nil)
+
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
+	err := dxh.CheckLinuxPreconditions(context.Background(), r, cfg)
+	if err == nil {
+		t.Fatal("expected error for low disk")
+	}
+	if !strings.Contains(err.Error(), "free space") {
+		t.Errorf("error = %q, want it to mention 'free space'", err)
+	}
+}
+
+func TestLinuxRefusesExistingUnit(t *testing.T) {
+	for _, state := range []string{"loaded", "masked", "bad-setting"} {
+		r := goodLinuxRunner()
+		r.set("systemctl --user show -p LoadState --value sag.service", []byte(state+"\n"), nil)
+		cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return false }}
+		err := dxh.CheckLinuxPreconditions(context.Background(), r, cfg)
+		if err == nil || !strings.Contains(err.Error(), "unit sag.service exists") {
+			t.Errorf("LoadState %s: got %v; want unit sag.service exists", state, err)
+		}
+	}
+}
+
+func TestLinuxRefusesQuadletFile(t *testing.T) {
+	r := goodLinuxRunner()
+	cfg := dxh.PreconditionConfig{CfgDir: "/home/u/.config/sag", QuadletExists: func() bool { return true }}
+	if err := dxh.CheckLinuxPreconditions(context.Background(), r, cfg); err == nil || !strings.Contains(err.Error(), "quadlet file exists") {
+		t.Errorf("got %v; want quadlet file exists", err)
+	}
+	cfg.QuadletExists = nil
+	if err := dxh.CheckLinuxPreconditions(context.Background(), r, cfg); err == nil || !strings.Contains(err.Error(), "QuadletExists is not set") {
+		t.Errorf("nil QuadletExists: got %v; want QuadletExists is not set", err)
 	}
 }
