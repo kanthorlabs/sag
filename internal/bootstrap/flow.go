@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -90,7 +91,13 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 		SAGPath: func() (string, error) {
 			return os.Executable()
 		},
-		Username: func() string { return os.Getenv("USER") },
+		Username: func() string {
+			u, err := user.Current()
+			if err != nil {
+				return ""
+			}
+			return u.Username
+		},
 		HasTerminal: func() bool {
 			tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 			if err != nil {

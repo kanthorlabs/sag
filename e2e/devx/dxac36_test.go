@@ -86,17 +86,39 @@ func testDXAC36_HostGuards(t *testing.T, ctx context.Context, groupDir, binDir s
 
 		if runtime.GOOS == "linux" {
 			t.Run("uid0_exits_one", func(t *testing.T) {
-				cmd := exec.CommandContext(ctx, "sudo", "-n", sagDevxtest, "bootstrap", "--autostart", "no")
-				out, err := cmd.CombinedOutput()
-				var exitErr2 *exec.ExitError
-				if !errors.As(err, &exitErr2) {
-					t.Fatalf("sudo -n sag bootstrap: want exit error, got %v; output: %s", err, out)
+				hostCmds := [][]string{
+					{sagDevxtest, "bootstrap", "--autostart", "no"},
+					{sagDevxtest, "service", "start"},
+					{sagDevxtest, "service", "stop"},
+					{sagDevxtest, "credential", "create", "dummy", "--kind", "openai"},
+					{sagDevxtest, "credential", "list"},
+					{sagDevxtest, "credential", "inspect", "dummy"},
+					{sagDevxtest, "credential", "delete", "dummy"},
+					{sagDevxtest, "logs", "daemon"},
+					{sagDevxtest, "logs", "audit"},
+					{sagDevxtest, "agent", "setup", "pi"},
+					{sagDevxtest, "resource", "test", "dummy"},
+					{sagDevxtest, "jwt", "generate", "sub"},
+					{sagDevxtest, "extension", "approve", "dummy"},
+					{sagDevxtest, "extension", "revoke", "dummy"},
 				}
-				if exitErr2.ExitCode() != 1 {
-					t.Fatalf("sudo -n sag bootstrap: exit %d; want 1; output: %s", exitErr2.ExitCode(), out)
-				}
-				if !strings.Contains(string(out), "refused to run as UID 0") {
-					t.Fatalf("sudo -n sag bootstrap: output %q does not say 'refused to run as UID 0'", out)
+				for _, args := range hostCmds {
+					args := args
+					label := strings.Join(args[1:], " ")
+					sudoArgs := append([]string{"-n"}, args...)
+					cmd := exec.CommandContext(ctx, "sudo", sudoArgs...)
+					out, err := cmd.CombinedOutput()
+					var exitErr2 *exec.ExitError
+					if !errors.As(err, &exitErr2) {
+						t.Errorf("%s: want exit error, got %v; output: %s", label, err, out)
+						continue
+					}
+					if exitErr2.ExitCode() != 1 {
+						t.Errorf("%s: exit %d; want 1; output: %s", label, exitErr2.ExitCode(), out)
+					}
+					if !strings.Contains(string(out), "host commands refuse root") {
+						t.Errorf("%s: output %q does not say 'host commands refuse root'", label, out)
+					}
 				}
 			})
 		}

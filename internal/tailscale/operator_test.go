@@ -11,18 +11,23 @@ import (
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
 
+const testTailscalePath = "/usr/bin/tailscale"
+
 func TestOperatorPrompt(t *testing.T) {
 	var buf bytes.Buffer
 	out := stepline.New(&buf)
 
-	cmd := &testCmd{responses: map[string]func() ([]byte, error){
-		"debug prefs": func() ([]byte, error) {
-			return []byte(`{"OperatorUser":"other"}`), nil
+	cmd := &testCmd{
+		path: testTailscalePath,
+		responses: map[string]func() ([]byte, error){
+			"debug prefs": func() ([]byte, error) {
+				return []byte(`{"OperatorUser":"other"}`), nil
+			},
+			"sudo " + testTailscalePath + " set --operator=testuser": func() ([]byte, error) {
+				return nil, nil
+			},
 		},
-		"set --operator=testuser": func() ([]byte, error) {
-			return nil, nil
-		},
-	}}
+	}
 
 	asked := false
 	ask := func() (bool, error) {
@@ -37,14 +42,15 @@ func TestOperatorPrompt(t *testing.T) {
 	if !asked {
 		t.Fatal("EnsureOperator did not call ask when operator not set and terminal available")
 	}
+	want := "sudo " + testTailscalePath + " set --operator=testuser"
 	found := false
 	for _, call := range cmd.recorded {
-		if call == "set --operator=testuser" {
+		if call == want {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("EnsureOperator did not call set --operator=testuser; recorded: %v", cmd.recorded)
+		t.Fatalf("EnsureOperator did not record %q; got: %v", want, cmd.recorded)
 	}
 }
 
@@ -52,11 +58,14 @@ func TestOperatorNoTerminalSkips(t *testing.T) {
 	var buf bytes.Buffer
 	out := stepline.New(&buf)
 
-	cmd := &testCmd{responses: map[string]func() ([]byte, error){
-		"debug prefs": func() ([]byte, error) {
-			return []byte(`{"OperatorUser":"other"}`), nil
+	cmd := &testCmd{
+		path: testTailscalePath,
+		responses: map[string]func() ([]byte, error){
+			"debug prefs": func() ([]byte, error) {
+				return []byte(`{"OperatorUser":"other"}`), nil
+			},
 		},
-	}}
+	}
 
 	ask := func() (bool, error) {
 		t.Fatal("ask should not be called when no terminal")
@@ -71,20 +80,29 @@ func TestOperatorNoTerminalSkips(t *testing.T) {
 	if !bytes.Contains([]byte(output), []byte("skip tailscale operator not set; loopback only")) {
 		t.Fatalf("EnsureOperator did not write skip line; got %q", output)
 	}
+	for _, call := range cmd.recorded {
+		if call == "sudo "+testTailscalePath+" set --operator=testuser" {
+			t.Fatal("RunWithSudo was called despite no terminal")
+		}
+	}
 }
 
 func TestOperatorSetBeforeServe(t *testing.T) {
 	var buf bytes.Buffer
 	out := stepline.New(&buf)
 
-	cmd := &testCmd{responses: map[string]func() ([]byte, error){
-		"debug prefs": func() ([]byte, error) {
-			return []byte(`{"OperatorUser":"other"}`), nil
+	sudoSetAlice := "sudo " + testTailscalePath + " set --operator=alice"
+	cmd := &testCmd{
+		path: testTailscalePath,
+		responses: map[string]func() ([]byte, error){
+			"debug prefs": func() ([]byte, error) {
+				return []byte(`{"OperatorUser":"other"}`), nil
+			},
+			sudoSetAlice: func() ([]byte, error) {
+				return nil, nil
+			},
 		},
-		"set --operator=alice": func() ([]byte, error) {
-			return nil, nil
-		},
-	}}
+	}
 
 	err := EnsureOperator(context.Background(), cmd, "alice", true, func() (bool, error) {
 		return true, nil
@@ -101,12 +119,15 @@ func TestOperatorSetBeforeServe(t *testing.T) {
 	}
 	setIdx := -1
 	for i, call := range cmd.recorded {
-		if call == "set --operator=alice" {
+		if call == sudoSetAlice {
 			setIdx = i
 		}
 	}
 	if setIdx < 0 {
-		t.Fatalf("set --operator=alice not in recorded calls: %v", cmd.recorded)
+		t.Fatalf("%q not in recorded calls: %v", sudoSetAlice, cmd.recorded)
+	}
+	if setIdx < 1 {
+		t.Fatalf("sudo set called before debug prefs; recorded: %v", cmd.recorded)
 	}
 }
 
@@ -114,11 +135,14 @@ func TestOperatorAlreadySet(t *testing.T) {
 	var buf bytes.Buffer
 	out := stepline.New(&buf)
 
-	cmd := &testCmd{responses: map[string]func() ([]byte, error){
-		"debug prefs": func() ([]byte, error) {
-			return []byte(`{"OperatorUser":"alice"}`), nil
+	cmd := &testCmd{
+		path: testTailscalePath,
+		responses: map[string]func() ([]byte, error){
+			"debug prefs": func() ([]byte, error) {
+				return []byte(`{"OperatorUser":"alice"}`), nil
+			},
 		},
-	}}
+	}
 
 	ask := func() (bool, error) {
 		t.Fatal("ask should not be called when operator already set")
@@ -130,8 +154,8 @@ func TestOperatorAlreadySet(t *testing.T) {
 		t.Fatalf("EnsureOperator: %v", err)
 	}
 	for _, call := range cmd.recorded {
-		if call == "set --operator=alice" {
-			t.Fatal("set was called when operator already set")
+		if call == "sudo "+testTailscalePath+" set --operator=alice" {
+			t.Fatal("RunWithSudo was called when operator already set")
 		}
 	}
 }

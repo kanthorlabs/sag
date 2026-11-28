@@ -34,7 +34,7 @@ func EnsureOperator(ctx context.Context, cmd Command, currentUser string, hasTer
 		out.Line(stepline.StatusSkip, "tailscale", SkipOperatorNotSet+"; loopback only")
 		return ErrOperatorSkip
 	}
-	if _, err := cmd.Output(ctx, "set", "--operator="+currentUser); err != nil {
+	if err := cmd.RunWithSudo(ctx, "set", "--operator="+currentUser); err != nil {
 		return err
 	}
 	return nil
