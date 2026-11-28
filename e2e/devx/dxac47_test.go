@@ -28,6 +28,7 @@ func init() {
 func DXAC47_RealClaudeCode(t *testing.T, ctx context.Context) {
 	t.Helper()
 	dxh.EnsureBootstrapped(t)
+	dxh.EnsureCanary(t)
 
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
@@ -93,7 +94,7 @@ func DXAC47_RealClaudeCode(t *testing.T, ctx context.Context) {
 			"--accept-failed-check",
 		)
 		createCmd.Env = setupEnv
-		createCmd.Stdin = strings.NewReader("postgres://testuser:testpass@127.0.0.1:65432/testdb\n")
+		createCmd.Stdin = strings.NewReader(canaryHostDSN(t, ctx) + "\n")
 		var createOut bytes.Buffer
 		createCmd.Stdout = &createOut
 		createCmd.Stderr = &createOut

@@ -39,23 +39,7 @@ func DXAC45_AgentIssue(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC45: wait idle after EnsureCanary: %v", err)
 	}
 
-	parts := dxh.ActiveCanaryParts
-	pgPortOut, pgPortErr := dxh.NewRunner().Output(ctx, "podman", "port", "sag-canary-pg", "5432/tcp")
-	if pgPortErr != nil {
-		t.Fatalf("DXAC45: get canary PG host port: %v", pgPortErr)
-	}
-	pgPortLine := strings.TrimSpace(string(pgPortOut))
-	pgHostPort := pgPortLine
-	if i := strings.LastIndex(pgPortLine, ":"); i >= 0 {
-		pgHostPort = pgPortLine[i+1:]
-	}
-	canaryURL := &url.URL{
-		Scheme: "postgres",
-		User:   url.UserPassword(parts.User, parts.Password),
-		Host:   "host.containers.internal:" + pgHostPort,
-		Path:   "/" + parts.Database,
-	}
-	canaryDSN := canaryURL.String()
+	canaryDSN := canaryHostDSN(t, ctx)
 
 	sagBin, err := dxh.TestBinary()
 	if err != nil {
@@ -410,4 +394,24 @@ func dxac45BumpAuthVersion(t *testing.T, sagCfgDir string) error {
 	}
 	newData := strings.Join(newLines, "\n")
 	return os.WriteFile(yamlPath, []byte(newData), 0o644)
+}
+
+func canaryHostDSN(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	parts := dxh.ActiveCanaryParts
+	pgPortOut, err := dxh.NewRunner().Output(ctx, "podman", "port", "sag-canary-pg", "5432/tcp")
+	if err != nil {
+		t.Fatalf("get canary PG host port: %v", err)
+	}
+	pgHostPort := strings.TrimSpace(string(pgPortOut))
+	if i := strings.LastIndex(pgHostPort, ":"); i >= 0 {
+		pgHostPort = pgHostPort[i+1:]
+	}
+	canaryURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(parts.User, parts.Password),
+		Host:   "host.containers.internal:" + pgHostPort,
+		Path:   "/" + parts.Database,
+	}
+	return canaryURL.String()
 }
