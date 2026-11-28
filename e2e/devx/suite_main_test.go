@@ -49,6 +49,9 @@ func TestDevxMain(t *testing.T) {
 		LaunchAgentExists: func() bool {
 			return pathExists(filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist"))
 		},
+		QuadletExists: func() bool {
+			return pathExists(filepath.Join(home, ".config", "containers", "systemd", "sag.container"))
+		},
 	}
 	devDir, err := dxh.SharedDevDir()
 	if err != nil {

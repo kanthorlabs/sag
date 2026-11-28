@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -34,7 +35,11 @@ func SuiteEntry(t *testing.T, r Runner, pcfg PreconditionConfig, tcfg TeardownCo
 		pcfg.Marker = true
 	}
 
-	if err := CheckPreconditionsWithRecovery(ctx, r, pcfg, func(ctx context.Context) error {
+	check := CheckPreconditionsWithRecovery
+	if runtime.GOOS == "linux" {
+		check = CheckLinuxPreconditionsWithRecovery
+	}
+	if err := check(ctx, r, pcfg, func(ctx context.Context) error {
 		return Teardown(ctx, r, tcfg)
 	}); err != nil {
 		t.Fatalf("suite precondition: %v", err)

@@ -14,6 +14,7 @@ type PreconditionConfig struct {
 	PortHeld          func() bool
 	CfgExists         func() bool
 	LaunchAgentExists func() bool
+	QuadletExists     func() bool
 	Marker            bool
 }
 
@@ -163,4 +164,80 @@ func CheckPreconditionsWithRecovery(ctx context.Context, r Runner, cfg Precondit
 		return fmt.Errorf("precondition: recovery teardown: %w", err2)
 	}
 	return CheckPreconditions(ctx, r, cfg)
+}
+
+func CheckLinuxPreconditions(ctx context.Context, r Runner, cfg PreconditionConfig) error {
+	if err := CheckLinuxFreeSpace(ctx, r); err != nil {
+		return err
+	}
+	if err := checkContainers(ctx, r); err != nil {
+		return err
+	}
+	if cfg.PortHeld != nil && cfg.PortHeld() {
+		return fmt.Errorf("precondition: port 8443 is held")
+	}
+	if err := checkVolumeAndImage(ctx, r); err != nil {
+		return err
+	}
+	if err := checkSecrets(ctx, r); err != nil {
+		return err
+	}
+	if cfg.CfgExists != nil && cfg.CfgExists() {
+		return fmt.Errorf("precondition: cfg directory exists: %s", cfg.CfgDir)
+	}
+	if cfg.QuadletExists == nil {
+		return fmt.Errorf("precondition: QuadletExists is not set")
+	}
+	if cfg.QuadletExists() {
+		return fmt.Errorf("precondition: quadlet file exists")
+	}
+	return checkLinuxUnit(ctx, r)
+}
+
+func CheckLinuxFreeSpace(ctx context.Context, r Runner) error {
+	out, err := r.Output(ctx, "podman", "info", "--format", "{{.Store.GraphRoot}}")
+	if err != nil {
+		return fmt.Errorf("precondition: podman info: %w", err)
+	}
+	root := strings.TrimSpace(string(out))
+	if root == "" {
+		return fmt.Errorf("precondition: empty podman graph root")
+	}
+	dfOut, err := r.Output(ctx, "df", "-Pk", root)
+	if err != nil {
+		return fmt.Errorf("precondition: df %s: %w", root, err)
+	}
+	gib, err := parseDFAvailable(string(dfOut))
+	if err != nil {
+		return fmt.Errorf("precondition: df %s parse: %w", root, err)
+	}
+	if gib < minFreeGiB {
+		return fmt.Errorf("precondition: fail podman store free space %d GiB; need 10", gib)
+	}
+	return nil
+}
+
+func CheckLinuxPreconditionsWithRecovery(ctx context.Context, r Runner, cfg PreconditionConfig, teardown func(context.Context) error) error {
+	err := CheckLinuxPreconditions(ctx, r, cfg)
+	if err == nil {
+		return nil
+	}
+	if !cfg.Marker {
+		return err
+	}
+	if err2 := teardown(ctx); err2 != nil {
+		return fmt.Errorf("precondition: recovery teardown: %w", err2)
+	}
+	return CheckLinuxPreconditions(ctx, r, cfg)
+}
+
+func checkLinuxUnit(ctx context.Context, r Runner) error {
+	out, err := r.Output(ctx, "systemctl", "--user", "show", "-p", "LoadState", "--value", "sag.service")
+	if err != nil {
+		return fmt.Errorf("precondition: systemctl --user show sag.service: %w", err)
+	}
+	if state := strings.TrimSpace(string(out)); state != "not-found" {
+		return fmt.Errorf("precondition: unit sag.service exists (LoadState %s)", state)
+	}
+	return nil
 }
