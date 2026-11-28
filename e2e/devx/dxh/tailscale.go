@@ -64,6 +64,9 @@ func EqualServeStatus(a, b []byte) error {
 }
 
 func MaskTailscaleIP(text, ip string) string {
+	if ip == "" {
+		return text
+	}
 	return strings.ReplaceAll(text, ip, "<tailscale IP>")
 }
 

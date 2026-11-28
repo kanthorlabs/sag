@@ -153,15 +153,5 @@ func DXAC47_RealClaudeCode(t *testing.T, ctx context.Context) {
 }
 
 func dxac47Env(home string, extra ...string) []string {
-	env := []string{"HOME=" + home}
-	for _, e := range os.Environ() {
-		key, _, _ := strings.Cut(e, "=")
-		switch key {
-		case "HOME", "CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR", "NODE_EXTRA_CA_CERTS":
-			continue
-		}
-		env = append(env, e)
-	}
-	env = append(env, extra...)
-	return env
+	return append(dxh.UserChildEnv(os.Environ(), userRealBinDir), extra...)
 }

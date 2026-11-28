@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -92,31 +91,9 @@ func DXAC48_RealPi(t *testing.T, ctx context.Context) {
 }
 
 func dxac48Env(home string, extra ...string) []string {
-	env := []string{"HOME=" + home}
-	for _, e := range os.Environ() {
-		key, _, _ := strings.Cut(e, "=")
-		switch key {
-		case "HOME", "CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR", "NODE_EXTRA_CA_CERTS":
-			continue
-		}
-		env = append(env, e)
-	}
-	env = append(env, extra...)
-	return env
+	return append(dxh.UserChildEnv(os.Environ(), userRealBinDir), extra...)
 }
 
 func dxac48LoginEnv(home, shell string) []string {
-	env := []string{
-		"HOME=" + home,
-		"SHELL=" + shell,
-	}
-	for _, e := range os.Environ() {
-		key, _, _ := strings.Cut(e, "=")
-		switch key {
-		case "HOME", "SHELL", "CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR", "NODE_EXTRA_CA_CERTS":
-			continue
-		}
-		env = append(env, e)
-	}
-	return env
+	return append(dxh.UserChildEnv(os.Environ(), userRealBinDir), "SHELL="+shell)
 }
