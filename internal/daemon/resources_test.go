@@ -16,6 +16,7 @@ import (
 	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/inventory"
+	"github.com/kanthorlabs/sag/internal/scrub"
 	"github.com/kanthorlabs/sag/internal/secret"
 	"github.com/kanthorlabs/sag/internal/sql"
 )
@@ -136,6 +137,10 @@ func (s *fakeScheduler) AddUnopened(name string, open func(ctx context.Context) 
 	s.unopened = append(s.unopened, unopened{name: name, open: open, timeout: timeout})
 }
 
+func (s *fakeScheduler) AddUnopenedImmediate(name string, open func(ctx context.Context) (core.Resource, error), timeout time.Duration) {
+	s.unopened = append(s.unopened, unopened{name: name, open: open, timeout: timeout})
+}
+
 type fakeApprovals struct{}
 
 func (fakeApprovals) Verify(string, string) error { return nil }
@@ -157,7 +162,7 @@ func openWith(t *testing.T, kind, dsn string, approvals core.ApprovalVerifier, w
 	}
 	creds := map[string]secret.Credential{"sag-main": secret.NewCredential("sag-main", []byte(dsn))}
 	r := openResult{inv: inventory.New(), sched: &fakeScheduler{}, log: &strings.Builder{}}
-	r.set, err = openResources(context.Background(), slog.New(slog.NewJSONHandler(r.log, nil)), cfg, creds, r.inv, approvals, wrap, r.sched)
+	r.set, err = openResources(context.Background(), slog.New(slog.NewJSONHandler(r.log, nil)), cfg, creds, nil, scrub.New(nil), r.inv, approvals, wrap, r.sched)
 	t.Cleanup(func() { closeResources(slog.New(slog.NewJSONHandler(io.Discard, nil)), r.set) })
 	if err != nil {
 		t.Fatalf("openResources: %v", err)

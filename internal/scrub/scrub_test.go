@@ -140,3 +140,32 @@ func TestNoDSNInError(t *testing.T) {
 		t.Fatalf("Error = %+v; want nil Cause", noCause)
 	}
 }
+
+func TestAddConcurrent(t *testing.T) {
+	extra := "xc-secret-7q2rp9"
+	s := New(nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Add(secret.NewCredential("extra", []byte(extra)))
+	}()
+	for i := 0; i < 1000; i++ {
+		_ = s.String("some text with " + extra)
+	}
+	<-done
+	if got := s.String("leak " + extra); strings.Contains(got, extra) {
+		t.Fatalf("String after Add held secret %q", extra)
+	}
+}
+
+func TestAddAppearsInString(t *testing.T) {
+	extra := "xc-new-secret-k7m3"
+	s := New(nil)
+	if got := s.String(extra); got != extra {
+		t.Fatalf("String before Add changed text: %q", got)
+	}
+	s.Add(secret.NewCredential("extra", []byte(extra)))
+	if got := s.String(extra); got != redacted {
+		t.Fatalf("String after Add = %q; want %s", got, redacted)
+	}
+}

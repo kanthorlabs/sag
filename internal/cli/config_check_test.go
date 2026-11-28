@@ -112,3 +112,17 @@ func TestConfigCheckUsage(t *testing.T) {
 		}
 	}
 }
+
+func TestAWSRefSkipsFileCheck(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"sag-tls-cert", "sag-tls-key", "sag-master-key", "sag-aws-credentials", "sag-local-db"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setConfigCheckPaths(t, Paths{Secrets: dir, SecretUID: os.Getuid()})
+	code, out, errOut := runConfigCheck("--config", configFixture("d82-aws-ref"))
+	if code != ExitOK || !strings.Contains(out, "config ok") {
+		t.Fatalf("exit = %d, stdout %q, stderr %q; want 0 and config ok", code, out, errOut)
+	}
+}
