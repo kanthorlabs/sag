@@ -138,10 +138,14 @@ func dxac41BuildTestHome(t *testing.T, cfgDir string) string {
 	}
 
 	localShareContainers := filepath.Join(testHome, ".local", "share", "containers", "podman")
-	if err := os.MkdirAll(filepath.Dir(localShareContainers), 0o700); err != nil {
-		t.Fatalf("DXAC41: mkdir .local/share/containers: %v", err)
-	}
 	realLocalShare := filepath.Join(os.Getenv("HOME"), ".local", "share", "containers", "podman")
+	if runtime.GOOS == "linux" {
+		localShareContainers = filepath.Dir(localShareContainers)
+		realLocalShare = filepath.Dir(realLocalShare)
+	}
+	if err := os.MkdirAll(filepath.Dir(localShareContainers), 0o700); err != nil {
+		t.Fatalf("DXAC41: mkdir .local/share: %v", err)
+	}
 	if _, err := os.Stat(realLocalShare); err == nil {
 		if err := os.Symlink(realLocalShare, localShareContainers); err != nil {
 			t.Fatalf("DXAC41: symlink podman machine: %v", err)
@@ -164,6 +168,9 @@ func dxac41BuildTestHome(t *testing.T, cfgDir string) string {
 	defer os.Setenv("HOME", oldHome)
 	if _, err := r.Output(testCtx, "podman", "ps", "--quiet"); err != nil {
 		t.Fatalf("DXAC41 D6-a: podman ps from test home failed: %v; test home: %s; stop: cannot fall back to real home", err, testHome)
+	}
+	if _, err := r.Output(testCtx, "podman", "container", "exists", "sag"); err != nil {
+		t.Fatalf("DXAC41 D6-a: podman from test home does not see the container sag: %v", err)
 	}
 
 	return testHome
@@ -385,6 +392,10 @@ func dxac41BaseEnvForHome(t *testing.T, home, piDir, binDir string) []string {
 		switch key {
 		case "TMPDIR", "USER", "LANG":
 			env = append(env, e)
+		case "XDG_RUNTIME_DIR":
+			if runtime.GOOS == "linux" {
+				env = append(env, e)
+			}
 		default:
 			if strings.HasPrefix(key, "SAG_TEST_") {
 				env = append(env, e)
