@@ -129,6 +129,39 @@ func TestLinuxStartOrder(t *testing.T) {
 	}
 }
 
+func TestStartAutostartFromAnswers(t *testing.T) {
+	dir := t.TempDir()
+	writeSAGYAML(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "answers.json"), []byte(`{"autostart":"yes"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := newFakeSC()
+	d := testLinuxDeps(sc)
+
+	home := t.TempDir()
+	cfg := Config{
+		Podman: nopRunner{},
+		CfgDir: dir,
+		UID:    "1000",
+		Home:   home,
+		Image:  "localhost/sag:test",
+	}
+
+	var out strings.Builder
+	if err := start(context.Background(), cfg, d, writerOf(&out)); err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(quadletPath(home))
+	if err != nil {
+		t.Fatalf("read quadlet: %v", err)
+	}
+	if !strings.Contains(string(content), "[Install]") || !strings.Contains(string(content), "WantedBy=default.target") {
+		t.Fatal("Quadlet missing [Install]/WantedBy=default.target when answers.json autostart=yes")
+	}
+}
+
 func TestQuadletAutostartNo(t *testing.T) {
 	dir := t.TempDir()
 	writeSAGYAML(t, dir)

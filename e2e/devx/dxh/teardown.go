@@ -31,7 +31,7 @@ func Teardown(ctx context.Context, r Runner, cfg TeardownConfig) error {
 		errs = append(errs, fmt.Sprintf("labeled objects: %s", err))
 	}
 	if runtime.GOOS == "linux" {
-		if _, err := r.Output(ctx, "systemctl", "--user", "stop", "sag"); err != nil {
+		if err := linuxStopUnit(ctx, r); err != nil {
 			errs = append(errs, fmt.Sprintf("systemctl stop sag: %s", err))
 		}
 		if _, err := r.Output(ctx, "rm", "-f", cfg.Home+"/.config/containers/systemd/sag.container"); err != nil {
@@ -164,6 +164,15 @@ func removeLabeledObjects(ctx context.Context, r Runner) error {
 		}
 	}
 	return nil
+}
+
+func linuxStopUnit(ctx context.Context, r Runner) error {
+	out, err := r.Output(ctx, "systemctl", "--user", "show", "-p", "LoadState", "--value", "sag.service")
+	if err != nil || strings.TrimSpace(string(out)) == "not-found" {
+		return nil
+	}
+	_, err = r.Output(ctx, "systemctl", "--user", "stop", "sag")
+	return err
 }
 
 func macOSBootout(ctx context.Context, r Runner, uid string) error {

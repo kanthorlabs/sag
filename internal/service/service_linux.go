@@ -17,6 +17,7 @@ import (
 
 	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/deploy"
+	"github.com/kanthorlabs/sag/internal/hoststate"
 	"github.com/kanthorlabs/sag/internal/podman"
 	"github.com/kanthorlabs/sag/internal/stepline"
 )
@@ -93,14 +94,6 @@ func quadletPath(home string) string {
 	return filepath.Join(home, ".config", "containers", "systemd", "sag.container")
 }
 
-func fileContains(path, substr string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(data), substr)
-}
-
 func writeQuadlet(qPath string, sagCfg *config.Config, cfg Config, autostart bool) error {
 	content := deploy.Quadlet(sagCfg, deploy.RunOpts{
 		Image:         cfg.Image,
@@ -130,9 +123,13 @@ func start(ctx context.Context, cfg Config, d linuxDeps, out stepline.Writer) er
 		return fmt.Errorf("load sag.yaml: %w", err)
 	}
 
-	qPath := quadletPath(cfg.Home)
-	autostart := fileContains(qPath, "[Install]")
+	answers, err := hoststate.LoadAnswers(hoststate.Paths{AnswersJSON: filepath.Join(cfg.CfgDir, "answers.json")})
+	if err != nil {
+		return fmt.Errorf("load answers.json: %w", err)
+	}
+	autostart := answers.Autostart == "yes"
 
+	qPath := quadletPath(cfg.Home)
 	if err := writeQuadlet(qPath, sagCfg, cfg, autostart); err != nil {
 		return fmt.Errorf("write quadlet: %w", err)
 	}

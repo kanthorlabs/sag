@@ -18,6 +18,7 @@ func newCleanTeardownFake(home, uid, cfgDir string) (*fakeRunner, dxh.TeardownCo
 	r.set("podman volume ls --filter label=sag.devx-e2e=1 --format {{.Name}}", nil, nil)
 	r.set("podman network ls --filter label=sag.devx-e2e=1 --format {{.Name}}", nil, nil)
 	if runtime.GOOS == "linux" {
+		r.set("systemctl --user show -p LoadState --value sag.service", []byte("active\n"), nil)
 		r.set("systemctl --user stop sag", nil, nil)
 		r.set("rm -f "+home+"/.config/containers/systemd/sag.container", nil, nil)
 		r.set("systemctl --user daemon-reload", nil, nil)
@@ -58,6 +59,7 @@ func TestTeardownOrder(t *testing.T) {
 	var platform [][]string
 	if runtime.GOOS == "linux" {
 		platform = [][]string{
+			{"systemctl", "--user", "show", "-p", "LoadState", "--value", "sag.service"},
 			{"systemctl", "--user", "stop", "sag"},
 			{"rm", "-f", "/home/u/.config/containers/systemd/sag.container"},
 			{"systemctl", "--user", "daemon-reload"},
@@ -177,6 +179,37 @@ func TestTeardownCleanMachineIsNil(t *testing.T) {
 
 	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
 		t.Fatalf("expected nil on clean machine: %v", err)
+	}
+}
+
+func TestTeardownLinuxSkipsStopWhenUnitAbsent(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	r := newFake()
+	r.set("podman secret ls --format {{.Name}}", nil, nil)
+	r.set("podman ps -a --filter label=sag.devx-e2e=1 --format {{.Names}}", nil, nil)
+	r.set("podman volume ls --filter label=sag.devx-e2e=1 --format {{.Name}}", nil, nil)
+	r.set("podman network ls --filter label=sag.devx-e2e=1 --format {{.Name}}", nil, nil)
+	r.set("systemctl --user show -p LoadState --value sag.service", []byte("not-found\n"), nil)
+	r.set("rm -f /home/u/.config/containers/systemd/sag.container", nil, nil)
+	r.set("systemctl --user daemon-reload", nil, nil)
+	r.set("podman rm -f sag", nil, nil)
+	r.set("podman volume ls --filter name=^sag-state$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-master-key$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-tls-cert$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-tls-key$ --format {{.Name}}", nil, nil)
+	r.set("podman secret ls --filter name=^sag-aws-credentials$ --format {{.Name}}", nil, nil)
+	r.set("podman image ls --filter reference=docker.io/kanthorlabs/sag --format {{.Repository}}:{{.Tag}}", nil, nil)
+	cfg := dxh.TeardownConfig{Home: "/home/u", UID: "1000"}
+
+	if err := dxh.Teardown(context.Background(), r, cfg); err != nil {
+		t.Fatalf("Teardown on clean machine: %v", err)
+	}
+	for _, call := range r.calls {
+		if strings.Join(call, " ") == "systemctl --user stop sag" {
+			t.Fatal("Teardown called systemctl stop when unit was not-found")
+		}
 	}
 }
 
