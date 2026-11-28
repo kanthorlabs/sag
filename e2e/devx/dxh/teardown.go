@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -29,14 +30,26 @@ func Teardown(ctx context.Context, r Runner, cfg TeardownConfig) error {
 	if err := removeLabeledObjects(ctx, r); err != nil {
 		errs = append(errs, fmt.Sprintf("labeled objects: %s", err))
 	}
-	if err := macOSBootout(ctx, r, cfg.UID); err != nil {
-		errs = append(errs, fmt.Sprintf("launchctl bootout: %s", err))
-	}
-	if _, err := r.Output(ctx, "rm", "-f", cfg.Home+"/Library/LaunchAgents/net.kanthorlabs.sag.plist"); err != nil {
-		errs = append(errs, fmt.Sprintf("rm plist: %s", err))
-	}
-	if _, err := r.Output(ctx, "rm", "-rf", cfg.Home+"/Library/Logs/sag"); err != nil {
-		errs = append(errs, fmt.Sprintf("rm logs: %s", err))
+	if runtime.GOOS == "linux" {
+		if _, err := r.Output(ctx, "systemctl", "--user", "stop", "sag"); err != nil {
+			errs = append(errs, fmt.Sprintf("systemctl stop sag: %s", err))
+		}
+		if _, err := r.Output(ctx, "rm", "-f", cfg.Home+"/.config/containers/systemd/sag.container"); err != nil {
+			errs = append(errs, fmt.Sprintf("rm quadlet: %s", err))
+		}
+		if _, err := r.Output(ctx, "systemctl", "--user", "daemon-reload"); err != nil {
+			errs = append(errs, fmt.Sprintf("systemctl daemon-reload: %s", err))
+		}
+	} else {
+		if err := macOSBootout(ctx, r, cfg.UID); err != nil {
+			errs = append(errs, fmt.Sprintf("launchctl bootout: %s", err))
+		}
+		if _, err := r.Output(ctx, "rm", "-f", cfg.Home+"/Library/LaunchAgents/net.kanthorlabs.sag.plist"); err != nil {
+			errs = append(errs, fmt.Sprintf("rm plist: %s", err))
+		}
+		if _, err := r.Output(ctx, "rm", "-rf", cfg.Home+"/Library/Logs/sag"); err != nil {
+			errs = append(errs, fmt.Sprintf("rm logs: %s", err))
+		}
 	}
 	if _, err := r.Output(ctx, "podman", "rm", "-f", "sag"); err != nil {
 		errs = append(errs, fmt.Sprintf("podman rm sag: %s", err))

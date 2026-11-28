@@ -3,6 +3,7 @@ package dxh_test
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -16,10 +17,16 @@ func newCleanTeardownFake(home, uid, cfgDir string) (*fakeRunner, dxh.TeardownCo
 	r.set("podman ps -a --filter label=sag.devx-e2e=1 --format {{.Names}}", nil, nil)
 	r.set("podman volume ls --filter label=sag.devx-e2e=1 --format {{.Name}}", nil, nil)
 	r.set("podman network ls --filter label=sag.devx-e2e=1 --format {{.Name}}", nil, nil)
-	r.set("launchctl print gui/"+uid+"/net.kanthorlabs.sag", nil, nil)
-	r.set("launchctl bootout gui/"+uid+"/net.kanthorlabs.sag", nil, nil)
-	r.set("rm -f "+home+"/Library/LaunchAgents/net.kanthorlabs.sag.plist", nil, nil)
-	r.set("rm -rf "+home+"/Library/Logs/sag", nil, nil)
+	if runtime.GOOS == "linux" {
+		r.set("systemctl --user stop sag", nil, nil)
+		r.set("rm -f "+home+"/.config/containers/systemd/sag.container", nil, nil)
+		r.set("systemctl --user daemon-reload", nil, nil)
+	} else {
+		r.set("launchctl print gui/"+uid+"/net.kanthorlabs.sag", nil, nil)
+		r.set("launchctl bootout gui/"+uid+"/net.kanthorlabs.sag", nil, nil)
+		r.set("rm -f "+home+"/Library/LaunchAgents/net.kanthorlabs.sag.plist", nil, nil)
+		r.set("rm -rf "+home+"/Library/Logs/sag", nil, nil)
+	}
 	r.set("podman rm -f sag", nil, nil)
 	r.set("podman volume ls --filter name=^sag-state$ --format {{.Name}}", nil, nil)
 	r.set("podman secret ls --filter name=^sag-master-key$ --format {{.Name}}", nil, nil)
@@ -41,16 +48,29 @@ func TestTeardownOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := [][]string{
+	shared := [][]string{
 		{"podman", "secret", "ls", "--format", "{{.Name}}"},
 		{"podman", "ps", "-a", "--filter", "label=sag.devx-e2e=1", "--format", "{{.Names}}"},
 		{"podman", "volume", "ls", "--filter", "label=sag.devx-e2e=1", "--format", "{{.Name}}"},
 		{"podman", "secret", "ls", "--format", "{{.Name}}"},
 		{"podman", "network", "ls", "--filter", "label=sag.devx-e2e=1", "--format", "{{.Name}}"},
-		{"launchctl", "print", "gui/1000/net.kanthorlabs.sag"},
-		{"launchctl", "bootout", "gui/1000/net.kanthorlabs.sag"},
-		{"rm", "-f", "/home/u/Library/LaunchAgents/net.kanthorlabs.sag.plist"},
-		{"rm", "-rf", "/home/u/Library/Logs/sag"},
+	}
+	var platform [][]string
+	if runtime.GOOS == "linux" {
+		platform = [][]string{
+			{"systemctl", "--user", "stop", "sag"},
+			{"rm", "-f", "/home/u/.config/containers/systemd/sag.container"},
+			{"systemctl", "--user", "daemon-reload"},
+		}
+	} else {
+		platform = [][]string{
+			{"launchctl", "print", "gui/1000/net.kanthorlabs.sag"},
+			{"launchctl", "bootout", "gui/1000/net.kanthorlabs.sag"},
+			{"rm", "-f", "/home/u/Library/LaunchAgents/net.kanthorlabs.sag.plist"},
+			{"rm", "-rf", "/home/u/Library/Logs/sag"},
+		}
+	}
+	tail := [][]string{
 		{"podman", "rm", "-f", "sag"},
 		{"podman", "volume", "ls", "--filter", "name=^sag-state$", "--format", "{{.Name}}"},
 		{"podman", "secret", "ls", "--filter", "name=^sag-master-key$", "--format", "{{.Name}}"},
@@ -60,6 +80,7 @@ func TestTeardownOrder(t *testing.T) {
 		{"podman", "image", "ls", "--filter", "reference=docker.io/kanthorlabs/sag", "--format", "{{.Repository}}:{{.Tag}}"},
 		{"rm", "-rf", "/home/u/.config/sag"},
 	}
+	want := append(append(shared, platform...), tail...)
 	if len(r.calls) != len(want) {
 		t.Fatalf("got %d calls, want %d:\n%v", len(r.calls), len(want), r.calls)
 	}
@@ -204,11 +225,20 @@ func TestTeardownRemovesFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantSubstrings := []string{
-		"/home/u/Library/LaunchAgents/net.kanthorlabs.sag.plist",
-		"/home/u/Library/Logs/sag",
-		"/home/u/.config/sag",
-		"sag-aws-credentials",
+	var wantSubstrings []string
+	if runtime.GOOS == "linux" {
+		wantSubstrings = []string{
+			"/home/u/.config/containers/systemd/sag.container",
+			"/home/u/.config/sag",
+			"sag-aws-credentials",
+		}
+	} else {
+		wantSubstrings = []string{
+			"/home/u/Library/LaunchAgents/net.kanthorlabs.sag.plist",
+			"/home/u/Library/Logs/sag",
+			"/home/u/.config/sag",
+			"sag-aws-credentials",
+		}
 	}
 	joined := func() string {
 		var parts []string
