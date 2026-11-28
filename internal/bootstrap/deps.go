@@ -47,20 +47,24 @@ func (d Deps) stepDeps(ctx context.Context, s *State) error {
 	}
 
 	dd := deps.Deps{
-		PodmanVersion:     deps.DefaultPodmanVersion,
-		Download:          deps.DefaultDownload,
-		SHA256:            deps.DefaultSHA256,
-		Install:           deps.DefaultInstall,
-		FindPodman:        d.FindPodman,
-		MachineList:       deps.DefaultMachineList,
-		MachineInit:       deps.DefaultMachineInit,
-		MachineStart:      deps.DefaultMachineStart,
-		HasTerminal:       makeHasTerminal(s.Asker),
-		AskInstall:        makeAskInstall(s.Asker),
-		IsAbsent:          testhook.Absent,
-		StopBeforeInstall: testhook.StopBeforeInstall,
-		Out:               s.Out,
-		Print:             d.Print,
+		PodmanVersion:       deps.DefaultPodmanVersion,
+		Download:            deps.DefaultDownload,
+		SHA256:              deps.DefaultSHA256,
+		Install:             deps.DefaultInstall,
+		FindPodman:          d.FindPodman,
+		MachineList:         deps.DefaultMachineList,
+		MachineInit:         deps.DefaultMachineInit,
+		MachineStart:        deps.DefaultMachineStart,
+		HasTerminal:         makeHasTerminal(s.Asker),
+		AskInstall:          makeAskInstall(s.Asker),
+		AptCandidateVersion: deps.DefaultAptCandidateVersion,
+		AptInstall:          deps.DefaultAptInstall,
+		FindNewuidmap:       deps.DefaultFindNewuidmap,
+		AskAptInstall:       makeAskAptInstall(s.Asker),
+		IsAbsent:            testhook.Absent,
+		StopBeforeInstall:   testhook.StopBeforeInstall,
+		Out:                 s.Out,
+		Print:               d.Print,
 	}
 
 	newPath, err := dd.Apply(ctx, s.DepPlan)
@@ -97,11 +101,13 @@ func defaultPlanDeps(findPodman func(stored string) (string, error)) func(contex
 		}
 
 		dd := deps.Deps{
-			PodmanVersion: deps.DefaultPodmanVersion,
-			IsAbsent:      testhook.Absent,
-			Out:           s.Out,
-			HasTerminal:   makeHasTerminal(s.Asker),
-			AskInstall:    makeAskInstall(s.Asker),
+			PodmanVersion:       deps.DefaultPodmanVersion,
+			IsAbsent:            testhook.Absent,
+			Out:                 s.Out,
+			HasTerminal:         makeHasTerminal(s.Asker),
+			AskInstall:          makeAskInstall(s.Asker),
+			AptCandidateVersion: deps.DefaultAptCandidateVersion,
+			AskAptInstall:       makeAskAptInstall(s.Asker),
 		}
 
 		plan, err := dd.Make(ctx, s.Pins, s.PodmanPath, s.Flags.AutoApprove)
@@ -127,5 +133,11 @@ func makeHasTerminal(asker prompt.Asker) func() bool {
 func makeAskInstall(asker prompt.Asker) func(name, version, locator string) (bool, error) {
 	return func(name, version, locator string) (bool, error) {
 		return asker.YesNo("Install " + name + " " + version + " from " + locator + "? [y/N] ")
+	}
+}
+
+func makeAskAptInstall(asker prompt.Asker) func(name, candidate, pin string) (bool, error) {
+	return func(name, candidate, pin string) (bool, error) {
+		return asker.YesNo("Install " + name + " from apt (candidate " + candidate + ", pin " + pin + ")? [y/N] ")
 	}
 }
