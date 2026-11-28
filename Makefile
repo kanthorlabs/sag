@@ -22,7 +22,7 @@ E2E_TEST := $(GO) test -tags e2e -json -count=1 -timeout 30m
 SHARED_ROOT := $(patsubst %/.git,%,$(shell git rev-parse --path-format=absolute --git-common-dir))
 DEVX_LOCK := $(SHARED_ROOT)/.dev/claims/devx-e2e.lock
 
-.PHONY: build build-devxtest image image-conformance test test-integration e2e e2e-devx e2e-devx-unit e2e-matrix contract-check dev-up dev-down
+.PHONY: build build-devxtest image image-conformance test test-integration e2e e2e-devx e2e-devx-unit e2e-matrix contract-check
 
 build:
 	CGO_ENABLED=1 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/sag ./cmd/sag
@@ -107,9 +107,3 @@ contract-check:
 	$(GO) vet -tags devxtest ./...
 	$(GO) vet -tags devxe2e ./e2e/devx/...
 	$(GO) test -count=1 ./internal/core/...
-
-dev-up:
-	./scripts/dev-up.sh
-
-dev-down:
-	./scripts/dev-down.sh
