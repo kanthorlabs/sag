@@ -274,6 +274,10 @@ func buildDevxAC(row devx.ACRow, runs []suiteRun, layer int, phase string) devxA
 	allLayerPass := true
 	countInLayer := 0
 	for i, t := range row.Tests {
+		if t.Run != "" && !rowInPhase(t.Run, phase) {
+			ac.Tests[i] = devxTestResult{Name: t.Name, Layer: t.Layer, Status: statusOtherPhase}
+			continue
+		}
 		status := findDevxTestStatus(runs, t.Name)
 		if t.Layer > layer {
 			status = statusNotImplemented
@@ -318,6 +322,10 @@ func buildDevxACFiltered(row devx.ACRow, runs []suiteRun, layer int, phase strin
 	allMatchPass := true
 	anyMatchFail := false
 	for i, t := range row.Tests {
+		if t.Run != "" && !rowInPhase(t.Run, phase) {
+			ac.Tests[i] = devxTestResult{Name: t.Name, Layer: t.Layer, Status: statusOtherPhase}
+			continue
+		}
 		status := statusNotImplemented
 		if t.Layer <= layer && re.MatchString(t.Name) {
 			anyMatch = true

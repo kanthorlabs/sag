@@ -3,6 +3,7 @@ package devx
 type ACTest struct {
 	Name  string
 	Layer int
+	Run   string
 }
 
 type ACRow struct {
@@ -247,7 +248,7 @@ var ACTable = []ACRow{
 		RunBy: "both",
 		Tests: []ACTest{
 			{Name: "DXAC39_ClaudeCodeSetup", Layer: 6},
-			{Name: "DXAC39_DefaultPath", Layer: 9},
+			{Name: "DXAC39_DefaultPath", Layer: 9, Run: "A"},
 		},
 	},
 	{
