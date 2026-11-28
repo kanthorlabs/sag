@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -74,11 +75,11 @@ func ReadTailscaleIPv4(ctx context.Context, r Runner) (string, error) {
 	ip := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
 	parsed := net.ParseIP(ip)
 	if parsed == nil {
-		return "", fmt.Errorf("prerequisite missing: tailscale ip invalid: %q", ip)
+		return "", errors.New("prerequisite missing: tailscale ip -4 printed no valid address")
 	}
 	_, tsRange, _ := net.ParseCIDR("100.64.0.0/10")
 	if !tsRange.Contains(parsed) {
-		return "", fmt.Errorf("prerequisite missing: tailscale ip not in 100.64.0.0/10: %q", ip)
+		return "", errors.New("prerequisite missing: tailscale ip -4 printed an address outside 100.64.0.0/10")
 	}
 	return ip, nil
 }

@@ -1,6 +1,7 @@
 package dxh_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -115,4 +116,21 @@ func TestStatusCompare(t *testing.T) {
 			t.Fatal("EqualServeStatus: invalid JSON second: got nil; want error")
 		}
 	})
+}
+
+func TestReadTailscaleIPv4ErrorHasNoAddress(t *testing.T) {
+	for _, out := range []string{"192.168.1.10\n", "0.0.0.0\n"} {
+		r := newFake()
+		r.set("tailscale ip -4", []byte(out), nil)
+		_, err := dxh.ReadTailscaleIPv4(context.Background(), r)
+		if err == nil {
+			t.Fatalf("ReadTailscaleIPv4(%q): want error", out)
+		}
+		if strings.Contains(err.Error(), strings.TrimSpace(out)) {
+			t.Errorf("error holds the address: %v", err)
+		}
+		if !strings.Contains(err.Error(), "prerequisite missing") {
+			t.Errorf("error = %v; want prerequisite missing", err)
+		}
+	}
 }

@@ -53,6 +53,22 @@ func DXAC52_MacTailscale(t *testing.T, ctx context.Context) {
 		t.Fatal("DXAC52: prerequisite missing: TCP 8443 entry already in tailscale serve status")
 	}
 
+	t.Cleanup(func() {
+		cctx := context.Background()
+		raw, err := dxh.ReadServeStatusJSON(cctx, r)
+		if err != nil {
+			t.Errorf("DXAC52: cleanup: read serve status: %s", mask(err.Error()))
+			return
+		}
+		parsed, err := dxh.ParseServeStatus(raw)
+		if err != nil || !dxh.HasTCP8443(parsed) {
+			return
+		}
+		if _, err := r.Output(cctx, "tailscale", "serve", "--tcp", "8443", "off"); err != nil {
+			t.Errorf("DXAC52: cleanup: tailscale serve --tcp 8443 off: %s", mask(err.Error()))
+		}
+	})
+
 	sagBin, err := dxh.TestBinary()
 	if err != nil {
 		t.Fatalf("DXAC52: test binary: %v", err)
@@ -120,15 +136,15 @@ func DXAC52_MacTailscale(t *testing.T, ctx context.Context) {
 	}
 
 	if err := dxac52CurlHealthz(ctx, cfgDir, tsIP); err != nil {
-		t.Fatalf("DXAC52: curl https://<tailscale IP>:8443/healthz: %v", err)
+		t.Fatalf("DXAC52: curl https://<tailscale IP>:8443/healthz: %s", mask(err.Error()))
 	}
 
 	if err := dxac52CheckNoWildcardListener(ctx); err != nil {
-		t.Fatalf("DXAC52: lsof: %v", err)
+		t.Fatalf("DXAC52: lsof: %s", mask(err.Error()))
 	}
 
 	if _, err := r.Output(ctx, "tailscale", "serve", "--tcp", "8443", "off"); err != nil {
-		t.Fatalf("DXAC52: tailscale serve --tcp 8443 off: %v", err)
+		t.Fatalf("DXAC52: tailscale serve --tcp 8443 off: %s", mask(err.Error()))
 	}
 
 	statusAfterOff, err := dxh.ReadServeStatusJSON(ctx, r)
@@ -149,7 +165,7 @@ func DXAC52_MacTailscale(t *testing.T, ctx context.Context) {
 	}
 
 	if err := dxh.EqualServeStatus(statusBefore, statusAfterOff); err != nil {
-		t.Fatalf("DXAC52: serve status after off != before: %v", err)
+		t.Fatalf("DXAC52: serve status after off != before: %s", mask(err.Error()))
 	}
 }
 
