@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -260,13 +261,25 @@ func testHarnessSkeleton(t *testing.T, ctx context.Context, groupDir, binDir str
 	r := dxh.NewRunner()
 	home := os.Getenv("HOME")
 
-	uid := fmt.Sprintf("%d", os.Getuid())
-	if out, err := r.Output(ctx, "launchctl", "print", "gui/"+uid); err != nil {
-		t.Fatalf("launchctl print gui/%s: %v; output: %s", uid, err, out)
-	}
-
-	if err := checkFileWriteRemove(filepath.Join(home, "Library", "LaunchAgents")); err != nil {
-		t.Fatalf("file write/remove in ~/Library/LaunchAgents: %v", err)
+	if runtime.GOOS == "linux" {
+		if out, err := r.Output(ctx, "systemctl", "--user", "show-environment"); err != nil {
+			t.Fatalf("systemctl --user show-environment: %v; output: %s", err, out)
+		}
+		quadletDir := filepath.Join(home, ".config", "containers", "systemd")
+		if err := os.MkdirAll(quadletDir, 0o755); err != nil {
+			t.Fatalf("mkdir ~/.config/containers/systemd: %v", err)
+		}
+		if err := checkFileWriteRemove(quadletDir); err != nil {
+			t.Fatalf("file write/remove in ~/.config/containers/systemd: %v", err)
+		}
+	} else {
+		uid := fmt.Sprintf("%d", os.Getuid())
+		if out, err := r.Output(ctx, "launchctl", "print", "gui/"+uid); err != nil {
+			t.Fatalf("launchctl print gui/%s: %v; output: %s", uid, err, out)
+		}
+		if err := checkFileWriteRemove(filepath.Join(home, "Library", "LaunchAgents")); err != nil {
+			t.Fatalf("file write/remove in ~/Library/LaunchAgents: %v", err)
+		}
 	}
 	configBase := configBaseDir(home)
 	if err := os.MkdirAll(configBase, 0o700); err != nil {

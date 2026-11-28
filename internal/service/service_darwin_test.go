@@ -395,22 +395,6 @@ func TestAutostartDisableRemovesPlist(t *testing.T) {
 	}
 }
 
-func TestLinuxUnsupported(t *testing.T) {
-	err := unsupportedPlatformErr("linux", "amd64")
-	if err == nil {
-		t.Fatal("expected non-nil error")
-	}
-	if err.Error() != "unsupported platform linux/amd64" {
-		t.Fatalf("error = %q; want %q", err.Error(), "unsupported platform linux/amd64")
-	}
-	if CheckPlatform("linux", "amd64") == nil {
-		t.Fatal("CheckPlatform(linux, amd64) = nil; want error")
-	}
-	if err2 := CheckPlatform("darwin", "arm64"); err2 != nil {
-		t.Fatalf("CheckPlatform(darwin, arm64) = %v; want nil", err2)
-	}
-}
-
 type countingSSH struct {
 	fakeRunner
 	failures int

@@ -25,14 +25,6 @@ func DefaultPodmanVersion(ctx context.Context, path string) (string, error) {
 	return parts[2], nil
 }
 
-func DefaultDownload(_ context.Context, _, _ string) (string, error) {
-	return "", fmt.Errorf("deps: download not supported on linux; use apt")
-}
-
-func DefaultSHA256(_ string) (string, error) {
-	return "", fmt.Errorf("deps: sha256 not supported on linux; use apt")
-}
-
 var DefaultMachineList func(context.Context, string) ([]MachineInfo, error) = nil
 var DefaultMachineInit func(context.Context, string) error = nil
 var DefaultMachineStart func(context.Context, string) error = nil
