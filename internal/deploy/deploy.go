@@ -7,6 +7,7 @@ import (
 
 	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/secret"
+	"github.com/kanthorlabs/sag/internal/testhook"
 )
 
 var ImageDigest = ""
@@ -127,6 +128,9 @@ func RunArgs(cfg *config.Config, opts RunOpts) []string {
 	for _, name := range SecretMounts(cfg) {
 		args = append(args, "--secret", p.Secret(name, name, ""))
 	}
+	if ep := testhook.AWSEndpoint(); ep != "" {
+		args = append(args, "-e", "AWS_ENDPOINT_URL_SECRETS_MANAGER="+ep)
+	}
 	args = append(args, opts.Image)
 	return append(args, "serve")
 }
@@ -160,6 +164,9 @@ func Quadlet(cfg *config.Config, opts RunOpts) string {
 	fmt.Fprintln(&b, "Volume="+p.StateVolume(StateVolumeName))
 	for _, name := range SecretMounts(cfg) {
 		fmt.Fprintln(&b, "Secret="+p.Secret(name, name, ""))
+	}
+	if ep := testhook.AWSEndpoint(); ep != "" {
+		fmt.Fprintln(&b, "Environment=AWS_ENDPOINT_URL_SECRETS_MANAGER="+ep)
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "[Service]")

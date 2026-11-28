@@ -439,6 +439,80 @@ resources:
 	}
 }
 
+func TestListMixedBackends(t *testing.T) {
+	const mixedYAML = `version: 1
+server:
+  tls_cert: "secret:sag-tls-cert"
+  tls_key: "secret:sag-tls-key"
+storage:
+  aws:
+    region: us-east-1
+    credentials: "secret:sag-aws-creds"
+resources:
+  mydb:
+    kind: postgres
+    connection: "secret:sag-res-mydb.conn"
+    agents: [agent-a]
+  awsdb:
+    kind: postgres
+    connection: "aws-sm:sag/awsdb/conn"
+    agents: [agent-b]
+`
+	dir := t.TempDir()
+	yamlPath := writeSAGYaml(t, dir, mixedYAML)
+	ts := time.Now()
+
+	podmanBe := &fakeBackend{
+		metas: map[string]secret.Metadata{
+			"sag-res-mydb.conn": {
+				Name:      "sag-res-mydb.conn",
+				Labels:    map[string]string{"sag.resource": "mydb"},
+				CreatedAt: ts,
+			},
+		},
+	}
+	awsBe := &fakeBackend{
+		metas: map[string]secret.Metadata{
+			"sag/awsdb/conn": {
+				Name:      "sag/awsdb/conn",
+				Labels:    map[string]string{"sag.resource": "awsdb"},
+				CreatedAt: ts,
+			},
+		},
+	}
+
+	entries, err := List(context.Background(), ListOptions{
+		SAGYaml:    yamlPath,
+		Backend:    podmanBe,
+		AWSBackend: awsBe,
+		Podman:     &fakePodman{},
+		Stderr:     io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want 2 entries, got %d", len(entries))
+	}
+
+	awsEntry := entries[0]
+	mydbEntry := entries[1]
+
+	if awsEntry.Name != "awsdb" {
+		t.Errorf("want awsdb first (sorted), got %q", awsEntry.Name)
+	}
+	if len(awsEntry.Secrets) == 0 || awsEntry.Secrets[0].Backend != "aws-sm" {
+		t.Errorf("awsdb: want backend aws-sm, got %v", awsEntry.Secrets)
+	}
+
+	if mydbEntry.Name != "mydb" {
+		t.Errorf("want mydb second (sorted), got %q", mydbEntry.Name)
+	}
+	if len(mydbEntry.Secrets) == 0 || mydbEntry.Secrets[0].Backend != "podman" {
+		t.Errorf("mydb: want backend podman, got %v", mydbEntry.Secrets)
+	}
+}
+
 func sortedKeys(m map[string]bool) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

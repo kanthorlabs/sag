@@ -7,6 +7,7 @@ toolchain go1.27.4
 require (
 	github.com/aws/aws-sdk-go-v2 v1.48.2
 	github.com/aws/aws-sdk-go-v2/config v1.33.23
+	github.com/aws/aws-sdk-go-v2/credentials v1.21.5
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.51.2
 	github.com/creack/pty v1.1.24
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -21,7 +22,6 @@ require (
 )
 
 require (
-	github.com/aws/aws-sdk-go-v2/credentials v1.21.5 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.11 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.14 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.14 // indirect

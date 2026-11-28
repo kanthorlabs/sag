@@ -12,6 +12,7 @@ import (
 	"github.com/kanthorlabs/sag/internal/config"
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/inventory"
+	"github.com/kanthorlabs/sag/internal/scrub"
 	"github.com/kanthorlabs/sag/internal/secret"
 	"github.com/kanthorlabs/sag/internal/sql"
 )
@@ -21,6 +22,7 @@ var preflightSlack = 10 * time.Second
 type resourceScheduler interface {
 	Add(name string, res core.Resource, timeout time.Duration)
 	AddUnopened(name string, open func(ctx context.Context) (core.Resource, error), timeout time.Duration)
+	AddUnopenedImmediate(name string, open func(ctx context.Context) (core.Resource, error), timeout time.Duration)
 }
 
 type resourceSet struct {
@@ -40,7 +42,7 @@ func (s *resourceSet) all() []core.Resource {
 	return slices.Clone(s.list)
 }
 
-func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, creds map[string]secret.Credential, inv *inventory.Inventory, approvals core.ApprovalVerifier, wrap func(sql.Dialect) sql.Dialect, sched resourceScheduler) (*resourceSet, error) {
+func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, creds map[string]secret.Credential, loader AWSLoader, scrubber scrub.Scrubber, inv *inventory.Inventory, approvals core.ApprovalVerifier, wrap func(sql.Dialect) sql.Dialect, sched resourceScheduler) (*resourceSet, error) {
 	opened := &resourceSet{}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Resources)) {
 		r := cfg.Resources[name]
@@ -59,8 +61,17 @@ func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, cr
 			Status:       inventory.StatusPending,
 		}
 		rc := ResourceConfig(name, r, creds, approvals)
-		cred := creds[string(r.Connection)]
 		timeout := r.Limits.ConnectTimeout + preflightSlack
+		if loader != nil && len(AWSRefs(r)) > 0 {
+			entry.Status = inventory.StatusUnavailable
+			if err := inv.Add(entry); err != nil {
+				return opened, fmt.Errorf("%s: %w", name, err)
+			}
+			openFn := awsOpenFunc(log, loader, scrubber, inv, opened, name, r, creds, adapter, approvals, wrap)
+			sched.AddUnopenedImmediate(name, openFn, timeout)
+			continue
+		}
+		cred := creds[string(r.Connection)]
 		res, err := openResource(ctx, adapter, rc, cred, wrap)
 		if err != nil {
 			log.Error("resource open failed", "resource", name, "error", err.Error())

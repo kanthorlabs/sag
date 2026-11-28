@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/kanthorlabs/sag/internal/core"
 	"github.com/kanthorlabs/sag/internal/secret"
@@ -16,28 +17,42 @@ const redacted = "[REDACTED]"
 
 const passwordKey = "password"
 
+type scrubState struct {
+	mu   sync.RWMutex
+	set  map[string]bool
+	repl *strings.Replacer
+}
+
 type Scrubber struct {
-	replacer *strings.Replacer
+	state *scrubState
 }
 
 func New(secrets []secret.Credential) Scrubber {
-	set := map[string]bool{}
+	st := &scrubState{set: map[string]bool{}}
 	for _, c := range secrets {
-		value := string(c.Reveal())
-		trimmed := strings.TrimSpace(value)
-		values := append([]string{value, trimmed}, urlPasswords(trimmed)...)
-		values = append(values, kvPasswords(trimmed)...)
-		for _, v := range values {
-			for _, form := range encodedForms(v) {
-				if form != "" {
-					set[form] = true
-				}
+		addForms(st.set, c)
+	}
+	if len(st.set) > 0 {
+		st.repl = buildReplacer(st.set)
+	}
+	return Scrubber{state: st}
+}
+
+func addForms(set map[string]bool, c secret.Credential) {
+	value := string(c.Reveal())
+	trimmed := strings.TrimSpace(value)
+	values := append([]string{value, trimmed}, urlPasswords(trimmed)...)
+	values = append(values, kvPasswords(trimmed)...)
+	for _, v := range values {
+		for _, form := range encodedForms(v) {
+			if form != "" {
+				set[form] = true
 			}
 		}
 	}
-	if len(set) == 0 {
-		return Scrubber{}
-	}
+}
+
+func buildReplacer(set map[string]bool) *strings.Replacer {
 	needles := make([]string, 0, len(set))
 	for n := range set {
 		needles = append(needles, n)
@@ -49,16 +64,33 @@ func New(secrets []secret.Credential) Scrubber {
 	for _, n := range needles {
 		pairs = append(pairs, n, redacted)
 	}
-	return Scrubber{replacer: strings.NewReplacer(pairs...)}
+	return strings.NewReplacer(pairs...)
 }
 
-func (s *Scrubber) Add(_ secret.Credential) {}
+func (s Scrubber) Add(c secret.Credential) {
+	if s.state == nil {
+		return
+	}
+	s.state.mu.Lock()
+	defer s.state.mu.Unlock()
+	before := len(s.state.set)
+	addForms(s.state.set, c)
+	if len(s.state.set) > before {
+		s.state.repl = buildReplacer(s.state.set)
+	}
+}
 
 func (s Scrubber) String(text string) string {
-	if s.replacer == nil {
+	if s.state == nil {
 		return text
 	}
-	return s.replacer.Replace(text)
+	s.state.mu.RLock()
+	repl := s.state.repl
+	s.state.mu.RUnlock()
+	if repl == nil {
+		return text
+	}
+	return repl.Replace(text)
 }
 
 func (s Scrubber) Error(err error) error {

@@ -58,3 +58,7 @@ func FailTLSCACreate() bool {
 func RequireHTTPS() bool {
 	return false
 }
+
+func AWSEndpoint() string {
+	return os.Getenv("SAG_TEST_AWS_ENDPOINT")
+}

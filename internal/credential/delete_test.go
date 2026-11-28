@@ -720,6 +720,55 @@ func TestResumeCase2StoredWasRunning(t *testing.T) {
 	}
 }
 
+const yamlWithAWSRes = `version: 1
+server:
+  tls_cert: secret:sag-tls-cert
+  tls_key: secret:sag-tls-key
+storage:
+  aws:
+    region: us-east-1
+    credentials: secret:sag-aws-creds
+resources:
+  test-res:
+    kind: fakedb
+    connection: aws-sm:sag/test-res/conn
+    agents: [agent-a]
+`
+
+func TestDeleteUnreachableNoChange(t *testing.T) {
+	dir := t.TempDir()
+	writeSAGYAML(t, dir, yamlWithAWSRes)
+	before, _ := os.ReadFile(filepath.Join(dir, "sag.yaml"))
+
+	ds := newDeleteStorage(nil, "test-res")
+	awsDs := &deleteStorage{metas: make(map[string]secret.Metadata), listErr: secret.ErrUnavailable}
+	opts := DeleteOptions{
+		CfgDir:     dir,
+		Backend:    ds,
+		AWSBackend: awsDs,
+		Podman:     &fakePodmanCmd{},
+		Out:        io.Discard,
+		Err:        io.Discard,
+	}
+
+	tty := writeTTY(t, "test-res\n")
+
+	err := Delete(context.Background(), "test-res", tty, opts)
+	if err == nil || !strings.Contains(err.Error(), "unreachable") {
+		t.Fatalf("want unreachable error, got %v", err)
+	}
+	if len(ds.deleted) != 0 {
+		t.Errorf("podman secrets deleted despite aws backend unreachable: %v", ds.deleted)
+	}
+	if len(awsDs.deleted) != 0 {
+		t.Errorf("aws secrets deleted despite aws backend unreachable: %v", awsDs.deleted)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "sag.yaml"))
+	if string(before) != string(after) {
+		t.Errorf("sag.yaml changed despite aws backend unreachable")
+	}
+}
+
 func TestResumeCase3StoredUnowned(t *testing.T) {
 	dir := t.TempDir()
 	yaml := `version: 1

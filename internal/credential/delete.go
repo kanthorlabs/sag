@@ -30,6 +30,7 @@ var (
 type DeleteOptions struct {
 	CfgDir       string
 	Backend      secret.SecureStorage
+	AWSBackend   secret.SecureStorage
 	Podman       podman.Command
 	ServiceStart func(ctx context.Context, out io.Writer) error
 	Out          io.Writer
@@ -63,15 +64,35 @@ func ParseDeleteArgs(args []string) (string, error) {
 	return fset.Arg(0), nil
 }
 
+type ownedSecret struct {
+	name    string
+	backend secret.SecureStorage
+}
+
 type deleteInfo struct {
 	hasEntry bool
 	kind     string
 	agents   []string
-	owned    []string
+	owned    []ownedSecret
 	unowned  []string
 }
 
-func collectDeleteState(ctx context.Context, name, cfgDir string, backend secret.SecureStorage) (deleteInfo, error) {
+type backendPair struct {
+	name    string
+	backend secret.SecureStorage
+}
+
+const displayNamePodman = "podman"
+
+func backendsFromOpts(opts DeleteOptions) []backendPair {
+	pairs := []backendPair{{name: displayNamePodman, backend: opts.Backend}}
+	if opts.AWSBackend != nil {
+		pairs = append(pairs, backendPair{name: secret.BackendAWSSM, backend: opts.AWSBackend})
+	}
+	return pairs
+}
+
+func collectDeleteState(ctx context.Context, name, cfgDir string, opts DeleteOptions) (deleteInfo, error) {
 	var info deleteInfo
 
 	cfg, err := loadSAGConfig(cfgDir)
@@ -106,24 +127,22 @@ func collectDeleteState(ctx context.Context, name, cfgDir string, backend secret
 		}
 	}
 
-	metas, err := backend.List(ctx, map[string]string{"sag.resource": name})
-	if err != nil {
-		if errors.Is(err, secret.ErrUnavailable) {
-			return info, fmt.Errorf("backend podman unreachable; no change")
+	ownedSet := make(map[string]bool)
+	for _, bp := range backendsFromOpts(opts) {
+		metas, err := bp.backend.List(ctx, map[string]string{"sag.resource": name})
+		if err != nil {
+			if errors.Is(err, secret.ErrUnavailable) {
+				return info, fmt.Errorf("backend %s unreachable; no change", bp.name)
+			}
+			return info, err
 		}
-		return info, err
-	}
-
-	ownedSet := make(map[string]bool, len(metas))
-	for _, m := range metas {
-		ownedSet[m.Name] = true
-	}
-
-	for _, m := range metas {
-		if otherRefs[m.Name] {
-			info.unowned = append(info.unowned, m.Name)
-		} else {
-			info.owned = append(info.owned, m.Name)
+		for _, m := range metas {
+			ownedSet[m.Name] = true
+			if otherRefs[m.Name] {
+				info.unowned = append(info.unowned, m.Name)
+			} else {
+				info.owned = append(info.owned, ownedSecret{name: m.Name, backend: bp.backend})
+			}
 		}
 	}
 
@@ -143,7 +162,7 @@ func printDeleteInfo(tty *os.File, name string, info deleteInfo) {
 		fmt.Fprintf(tty, "agents: %s\n", strings.Join(info.agents, ", "))
 	}
 	for _, s := range info.owned {
-		fmt.Fprintf(tty, "secret: %s\n", s)
+		fmt.Fprintf(tty, "secret: %s\n", s.name)
 	}
 }
 
@@ -291,7 +310,7 @@ func Delete(ctx context.Context, name string, tty *os.File, opts DeleteOptions) 
 
 	sagYaml := filepath.Join(opts.CfgDir, "sag.yaml")
 
-	info, err := collectDeleteState(ctx, name, opts.CfgDir, opts.Backend)
+	info, err := collectDeleteState(ctx, name, opts.CfgDir, opts)
 	if err != nil {
 		return err
 	}
@@ -365,8 +384,8 @@ func Delete(ctx context.Context, name string, tty *os.File, opts DeleteOptions) 
 	}
 
 	for _, s := range info.owned {
-		if err := opts.Backend.Delete(ctx, s); err != nil {
-			return fmt.Errorf("delete secret %s: %w", s, err)
+		if err := s.backend.Delete(ctx, s.name); err != nil {
+			return fmt.Errorf("delete secret %s: %w", s.name, err)
 		}
 	}
 
