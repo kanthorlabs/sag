@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"maps"
+	"slices"
 	"strings"
 
 	"github.com/kanthorlabs/sag/internal/config"
@@ -11,6 +12,7 @@ import (
 	"github.com/kanthorlabs/sag/internal/inventory"
 	"github.com/kanthorlabs/sag/internal/scrub"
 	"github.com/kanthorlabs/sag/internal/secret"
+	"github.com/kanthorlabs/sag/internal/secret/awssm"
 	"github.com/kanthorlabs/sag/internal/sql"
 )
 
@@ -43,6 +45,54 @@ func LoadAWSRefs(ctx context.Context, loader AWSLoader, r config.Resource, creds
 	return out, nil
 }
 
+var newAWSDaemon = func(ctx context.Context, region, credentialsName string) (AWSLoader, error) {
+	return awssm.NewDaemon(ctx, region, credentialsName)
+}
+
+type failedAWSLoader struct{ err error }
+
+func (l failedAWSLoader) Load(context.Context, string) (secret.Credential, error) {
+	return secret.Credential{}, l.err
+}
+
+func needsAWS(cfg *config.Config) bool {
+	for _, r := range cfg.Resources {
+		if len(AWSRefs(r)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func newScrubber(cfg *config.Config, creds map[string]secret.Credential) scrub.Scrubber {
+	scrubber := scrub.New(slices.Collect(maps.Values(creds)))
+	if cfg.Storage.AWS.Credentials != "" {
+		if file, ok := creds[string(cfg.Storage.AWS.Credentials)]; ok {
+			for _, v := range awsCredentialValues(file.Reveal()) {
+				scrubber.Add(secret.NewCredential(string(cfg.Storage.AWS.Credentials), []byte(v)))
+			}
+		}
+	}
+	return scrubber
+}
+
+func awsCredentialValues(file []byte) []string {
+	var out []string
+	for _, line := range strings.Split(string(file), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "aws_access_key_id", "aws_secret_access_key", "aws_session_token":
+			if v := strings.TrimSpace(value); v != "" {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
 func awsOpenFunc(log *slog.Logger, loader AWSLoader, scrubber scrub.Scrubber, inv *inventory.Inventory, opened *resourceSet, name string, r config.Resource, creds map[string]secret.Credential, adapter core.Adapter, approvals core.ApprovalVerifier, wrap func(sql.Dialect) sql.Dialect) func(context.Context) (core.Resource, error) {
 	return func(ctx context.Context) (core.Resource, error) {
 		loaded, err := LoadAWSRefs(ctx, loader, r, creds)
@@ -50,8 +100,10 @@ func awsOpenFunc(log *slog.Logger, loader AWSLoader, scrubber scrub.Scrubber, in
 			log.Error("aws-sm load failed", "resource", name)
 			return nil, err
 		}
+		for _, ref := range AWSRefs(r) {
+			scrubber.Add(loaded[string(ref)])
+		}
 		cred := loaded[string(r.Connection)]
-		scrubber.Add(cred)
 		res, err := openResource(ctx, adapter, ResourceConfig(name, r, loaded, approvals), cred, wrap)
 		if err != nil {
 			log.Error("resource open failed", "resource", name, "error", err.Error())

@@ -10,9 +10,12 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
+	"github.com/kanthorlabs/sag/internal/testenv"
 )
 
 func init() {
@@ -33,13 +36,23 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC31: wait launch agent idle: %v", err)
 	}
 
+	ca, err := testenv.NewCA()
+	if err != nil {
+		t.Fatalf("DXAC31: test CA: %v", err)
+	}
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, ca.CertPEM, 0o600); err != nil {
+		t.Fatalf("DXAC31: write CA: %v", err)
+	}
+
 	t.Log("create with aws-sm backend")
 	code, combined := runSAGWithInputAndEnvExtra(t, ctx, []byte(fakeDSN), nil,
 		"credential", "create", resName,
 		"--kind", "postgres",
 		"--agent", "pi",
 		"--backend", "aws-sm",
-		"--tls", "disable",
+		"--tls", "verify-full",
+		"--tls-ca", caFile,
 		"--stdin",
 		"--accept-failed-check",
 	)
@@ -88,10 +101,18 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 		if _, hasMounted := sm["mounted"]; hasMounted {
 			t.Errorf("DXAC31: aws-sm secret must not have mounted field; got %v", sm)
 		}
+		if sm["exists"] != true || sm["owned"] != true {
+			t.Errorf("DXAC31: aws-sm secret must exist and be owned; got %v", sm)
+		}
+	}
+
+	if len(secrets) != 2 {
+		t.Errorf("DXAC31: credential list: %d secrets; want connection and tls_ca", len(secrets))
 	}
 
 	t.Log("check aws secret tags")
-	dxac31AssertTags(t, ctx, resName)
+	dxac31AssertTags(t, ctx, resName, "conn", "connection")
+	dxac31AssertTags(t, ctx, resName, "ca", "tls_ca")
 
 	t.Log("resource test passes with aws-sm backend")
 	const realResName = "dxac31-realdb"
@@ -116,7 +137,7 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 	if err := dxh.WaitLaunchAgentIdle(ctx, r, uid); err != nil {
 		t.Fatalf("DXAC31: wait idle after real create: %v", err)
 	}
-	dxac31AssertTags(t, ctx, realResName)
+	dxac31AssertTags(t, ctx, realResName, "conn", "connection")
 	rtStdout, rtStderr, rtErr := runSAGWithStderr(t, ctx, "resource", "test", realResName)
 	if rtErr != nil {
 		t.Fatalf("DXAC31: resource test %s: %v\nstdout: %s\nstderr: %s", realResName, rtErr, rtStdout, rtStderr)
@@ -125,6 +146,7 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 	if realDelCode != 0 {
 		t.Fatalf("DXAC31: delete real: exit %d; output: %s", realDelCode, realDelTTY.RawOutput())
 	}
+	dxac31AssertNoSkip(t, realDelTTY.RawOutput())
 	if err := dxh.WaitLaunchAgentIdle(ctx, r, uid); err != nil {
 		t.Fatalf("DXAC31: wait idle after real delete: %v", err)
 	}
@@ -134,6 +156,7 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 	if code != 0 {
 		t.Fatalf("DXAC31: delete %s: exit %d; output: %s", resName, code, tty.RawOutput())
 	}
+	dxac31AssertNoSkip(t, tty.RawOutput())
 
 	if err := dxh.WaitLaunchAgentIdle(ctx, r, uid); err != nil {
 		t.Fatalf("DXAC31: wait launch agent idle after delete: %v", err)
@@ -155,30 +178,40 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 	}
 
 	t.Log("AWS secrets gone from LocalStack after delete")
-	for _, name := range []string{resName, realResName} {
-		exists, err := dxh.LocalStackSecretExists(ctx, "sag/"+name+"/conn")
+	for _, name := range []string{"sag/" + resName + "/conn", "sag/" + resName + "/ca", "sag/" + realResName + "/conn"} {
+		exists, err := dxh.LocalStackSecretExists(ctx, name)
 		if err != nil {
-			t.Fatalf("DXAC31: describe sag/%s/conn after delete: %v", name, err)
+			t.Fatalf("DXAC31: describe %s after delete: %v", name, err)
 		}
 		if exists {
-			t.Errorf("DXAC31: AWS secret sag/%s/conn still present after delete", name)
+			t.Errorf("DXAC31: AWS secret %s still present after delete", name)
 		}
 	}
 }
 
-func dxac31AssertTags(t *testing.T, ctx context.Context, resName string) {
+func dxac31AssertTags(t *testing.T, ctx context.Context, resName, suffix, role string) {
 	t.Helper()
-	got, err := dxh.LocalStackTags(ctx, "sag/"+resName+"/conn")
+	name := "sag/" + resName + "/" + suffix
+	got, err := dxh.LocalStackTags(ctx, name)
 	if err != nil {
-		t.Fatalf("DXAC31: tags of sag/%s/conn: %v", resName, err)
+		t.Fatalf("DXAC31: tags of %s: %v", name, err)
 	}
 	want := map[string]string{
 		"sag.resource": resName,
 		"sag.kind":     "postgres",
-		"sag.role":     "connection",
+		"sag.role":     role,
 	}
 	if !maps.Equal(got, want) {
-		t.Errorf("DXAC31: tags of sag/%s/conn = %v; want exactly %v", resName, got, want)
+		t.Errorf("DXAC31: tags of %s = %v; want exactly %v", name, got, want)
+	}
+}
+
+func dxac31AssertNoSkip(t *testing.T, out string) {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "skip ") {
+			t.Errorf("DXAC31: delete printed a skip line for an owned secret: %q", line)
+		}
 	}
 }
 

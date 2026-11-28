@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awssm "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"github.com/kanthorlabs/sag/internal/secret"
@@ -28,9 +30,10 @@ type fakeClient struct {
 	describeOut *awssm.DescribeSecretOutput
 	describeErr error
 
-	listOut *awssm.ListSecretsOutput
-	listIn  *awssm.ListSecretsInput
-	listErr error
+	listOut   *awssm.ListSecretsOutput
+	listPages map[string]*awssm.ListSecretsOutput
+	listIn    *awssm.ListSecretsInput
+	listErr   error
 
 	callDelay time.Duration
 }
@@ -116,6 +119,13 @@ func (f *fakeClient) ListSecrets(ctx context.Context, params *awssm.ListSecretsI
 	}
 	if f.listErr != nil {
 		return nil, f.listErr
+	}
+	if f.listPages != nil {
+		page, ok := f.listPages[aws.ToString(params.NextToken)]
+		if !ok {
+			return nil, fmt.Errorf("unknown page token %q", aws.ToString(params.NextToken))
+		}
+		return page, nil
 	}
 	if f.listOut == nil {
 		return &awssm.ListSecretsOutput{}, nil
@@ -241,6 +251,33 @@ func TestListTagFilter(t *testing.T) {
 	}
 	if tagKeyFilter == nil {
 		t.Fatal("no tag-key filter sent to ListSecrets")
+	}
+}
+
+func TestListAllPages(t *testing.T) {
+	entry := func(name, res string) types.SecretListEntry {
+		k := "sag.resource"
+		return types.SecretListEntry{Name: aws.String(name), Tags: []types.Tag{{Key: &k, Value: aws.String(res)}}}
+	}
+	fc := &fakeClient{listPages: map[string]*awssm.ListSecretsOutput{
+		"": {
+			SecretList: []types.SecretListEntry{entry("sag/other/conn", "other"), entry("sag/myres/conn", "myres")},
+			NextToken:  aws.String("p2"),
+		},
+		"p2": {
+			SecretList: []types.SecretListEntry{entry("sag/myres/ca", "myres")},
+		},
+	}}
+	metas, err := newBackend(fc).List(context.Background(), map[string]string{"sag.resource": "myres"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var names []string
+	for _, m := range metas {
+		names = append(names, m.Name)
+	}
+	if !slices.Equal(names, []string{"sag/myres/conn", "sag/myres/ca"}) {
+		t.Fatalf("names = %v; want both pages of myres", names)
 	}
 }
 

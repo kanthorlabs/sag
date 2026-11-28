@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"path/filepath"
 	"slices"
 	"time"
@@ -20,9 +19,7 @@ import (
 	"github.com/kanthorlabs/sag/internal/mcpserver"
 	"github.com/kanthorlabs/sag/internal/pipeline"
 	"github.com/kanthorlabs/sag/internal/preflight"
-	"github.com/kanthorlabs/sag/internal/scrub"
 	"github.com/kanthorlabs/sag/internal/secret"
-	"github.com/kanthorlabs/sag/internal/secret/awssm"
 )
 
 var (
@@ -78,10 +75,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return stageError(errSecrets, err)
 	}
-	scrubber := scrub.New(slices.Collect(maps.Values(creds)))
-	if awsCred, ok := creds[string(cfg.Storage.AWS.Credentials)]; ok && cfg.Storage.AWS.Credentials != "" {
-		scrubber.Add(awsCred)
-	}
+	scrubber := newScrubber(cfg, creds)
 	log = slog.New(scrubHandler(log.Handler(), scrubber))
 	fatal := func(stage, err error) error {
 		return stageError(stage, scrubber.Error(err))
@@ -110,14 +104,13 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	var loader AWSLoader
-	if cfg.Storage.AWS.Region != "" {
+	if needsAWS(cfg) {
 		if opts.testAWSLoader != nil {
 			loader = opts.testAWSLoader
+		} else if b, aerr := newAWSDaemon(ctx, cfg.Storage.AWS.Region, string(cfg.Storage.AWS.Credentials)); aerr != nil {
+			log.Error("aws backend failed", "error", aerr.Error())
+			loader = failedAWSLoader{err: aerr}
 		} else {
-			b, aerr := awssm.NewDaemon(ctx, cfg.Storage.AWS.Region, string(cfg.Storage.AWS.Credentials))
-			if aerr != nil {
-				return fatal(errResource, fmt.Errorf("aws backend: %w", aerr))
-			}
 			loader = b
 		}
 	}
