@@ -17,6 +17,28 @@ func aptItem(version string) pins.Item {
 	}
 }
 
+func TestParseAptCachePolicy(t *testing.T) {
+	output := "podman:\n  Installed: 5.4.2+ds1-2+b1\n  Candidate: 5.4.2+ds1-2+b2\n  Version table:\n"
+	v, err := parseAptCachePolicy(output)
+	if err != nil {
+		t.Fatalf("parseAptCachePolicy: %v", err)
+	}
+	if v != "5.4.2" {
+		t.Fatalf("parseAptCachePolicy = %q; want %q", v, "5.4.2")
+	}
+}
+
+func TestParseAptCachePolicyNone(t *testing.T) {
+	output := "podman:\n  Installed: (none)\n  Candidate: (none)\n"
+	v, err := parseAptCachePolicy(output)
+	if err != nil {
+		t.Fatalf("parseAptCachePolicy (none): %v", err)
+	}
+	if v != "" {
+		t.Fatalf("parseAptCachePolicy (none) = %q; want empty", v)
+	}
+}
+
 func TestAptVersionParse(t *testing.T) {
 	v, err := aptVersionParse("1:5.4.2+ds1-2+b2")
 	if err != nil {

@@ -15,37 +15,46 @@ func init() {
 	installTests["DXAC05_PodmanAptInstall"] = DXAC05_PodmanAptInstall
 }
 
+const aptPodman = "/usr/bin/podman"
+const sagTestImage = "localhost/sag:devx-e2e"
+
 func DXAC05_PodmanAptInstall(t *testing.T, ctx context.Context) {
 	t.Helper()
 
 	r := dxh.NewRunner()
 
-	storeOut, err := r.Output(ctx, "podman", "info", "--format", "{{.Store.GraphRoot}}")
+	dpkgVersionBefore, err := r.Output(ctx, "dpkg-query", "-W", "-f=${Version}", "podman")
 	if err != nil {
-		t.Fatalf("DXAC05: podman info: %v", err)
+		t.Fatalf("DXAC05: dpkg-query before remove: %v", err)
 	}
-	graphRoot := strings.TrimSpace(string(storeOut))
-	if graphRoot == "" {
-		t.Fatal("DXAC05: empty graphRoot from podman info")
+	pkgVersionBefore := strings.TrimSpace(string(dpkgVersionBefore))
+	if pkgVersionBefore == "" {
+		t.Fatal("DXAC05: empty dpkg-query output before remove")
 	}
 
-	podmanOut, err := r.Output(ctx, "podman", "--version")
+	imageIDOut, err := r.Output(ctx, aptPodman, "image", "inspect", "--format", "{{.Id}}", sagTestImage)
 	if err != nil {
-		t.Fatalf("DXAC05: podman --version before remove: %v", err)
+		t.Fatalf("DXAC05: podman image inspect %s: %v", sagTestImage, err)
 	}
-	versionBefore := parsePodmanVersion(t, podmanOut)
+	imageIDBefore := strings.TrimSpace(string(imageIDOut))
+	if imageIDBefore == "" {
+		t.Fatalf("DXAC05: empty image ID for %s", sagTestImage)
+	}
 
 	if _, err := r.Output(ctx, "sudo", "-n", "apt-get", "remove", "-y", "podman"); err != nil {
 		t.Fatalf("DXAC05: apt-get remove podman: %v", err)
 	}
 	t.Cleanup(func() {
+		if _, statErr := os.Stat(aptPodman); statErr == nil {
+			return
+		}
 		if _, rerr := r.Output(context.Background(), "sudo", "-n", "apt-get", "install", "-y", "podman"); rerr != nil {
-			t.Logf("DXAC05 cleanup: apt-get install podman: %v", rerr)
+			t.Errorf("DXAC05 cleanup: apt-get install podman failed, /usr/bin/podman is absent: %v", rerr)
 		}
 	})
 
-	if _, statErr := os.Stat(graphRoot); statErr != nil {
-		t.Fatalf("DXAC05: rootless store %q gone after apt-get remove: %v", graphRoot, statErr)
+	if _, statErr := os.Stat(aptPodman); statErr == nil {
+		t.Fatalf("DXAC05: %s still present after apt-get remove", aptPodman)
 	}
 
 	sagBin, err := dxh.TestBinary()
@@ -54,10 +63,12 @@ func DXAC05_PodmanAptInstall(t *testing.T, ctx context.Context) {
 	}
 
 	groupDir := t.TempDir()
+	binDir := t.TempDir()
 	childEnv, err := dxh.ChildEnv(os.Environ(), groupDir)
 	if err != nil {
 		t.Fatalf("DXAC05: child env: %v", err)
 	}
+	childEnv = append(childEnv, "PATH="+dxh.TestPATH(binDir))
 
 	stdout, stderr, code := runBootstrapNoTerminal(t, ctx, sagBin, childEnv, "--auto-approve", "podman@5.4.2")
 	if code != 0 {
@@ -67,29 +78,29 @@ func DXAC05_PodmanAptInstall(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC05: stdout = %q; want 'install podman' line", stdout)
 	}
 
-	if _, err := r.Output(ctx, "which", "newuidmap"); err != nil {
-		t.Fatalf("DXAC05: newuidmap not in PATH after install: %v", err)
+	if _, statErr := os.Stat(aptPodman); statErr != nil {
+		t.Fatalf("DXAC05: %s absent after bootstrap: %v", aptPodman, statErr)
 	}
 
-	podmanOut2, err := r.Output(ctx, "podman", "--version")
+	if _, err := os.Stat("/usr/bin/newuidmap"); err != nil {
+		t.Fatalf("DXAC05: /usr/bin/newuidmap absent after bootstrap: %v", err)
+	}
+
+	dpkgVersionAfter, err := r.Output(ctx, "dpkg-query", "-W", "-f=${Version}", "podman")
 	if err != nil {
-		t.Fatalf("DXAC05: podman --version after install: %v", err)
+		t.Fatalf("DXAC05: dpkg-query after bootstrap: %v", err)
 	}
-	versionAfter := parsePodmanVersion(t, podmanOut2)
-	if versionAfter != versionBefore {
-		t.Fatalf("DXAC05: podman version changed: before=%q after=%q", versionBefore, versionAfter)
+	pkgVersionAfter := strings.TrimSpace(string(dpkgVersionAfter))
+	if pkgVersionAfter != pkgVersionBefore {
+		t.Fatalf("DXAC05: dpkg podman version changed: before=%q after=%q", pkgVersionBefore, pkgVersionAfter)
 	}
 
-	if _, statErr := os.Stat(graphRoot); statErr != nil {
-		t.Fatalf("DXAC05: rootless store %q missing after re-install: %v", graphRoot, statErr)
+	imageIDOut2, err := r.Output(ctx, aptPodman, "image", "inspect", "--format", "{{.Id}}", sagTestImage)
+	if err != nil {
+		t.Fatalf("DXAC05: podman image inspect %s after bootstrap: %v", sagTestImage, err)
 	}
-}
-
-func parsePodmanVersion(t *testing.T, out []byte) string {
-	t.Helper()
-	parts := strings.Fields(strings.TrimSpace(string(out)))
-	if len(parts) < 3 {
-		t.Fatalf("DXAC05: unexpected podman --version output: %q", out)
+	imageIDAfter := strings.TrimSpace(string(imageIDOut2))
+	if imageIDAfter != imageIDBefore {
+		t.Fatalf("DXAC05: image %s ID changed: before=%q after=%q", sagTestImage, imageIDBefore, imageIDAfter)
 	}
-	return parts[2]
 }
