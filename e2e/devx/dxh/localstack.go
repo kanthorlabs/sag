@@ -4,6 +4,8 @@ package dxh
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -59,6 +61,7 @@ func EnsureLocalStack(t *testing.T) {
 		t.Fatalf("EnsureLocalStack: sag.yaml: %v", err)
 	}
 
+	t.Setenv("SAG_TEST_AWS_ENDPOINT", localStackInner)
 	t.Setenv("AWS_ENDPOINT_URL_SECRETS_MANAGER", localStackOuter)
 	t.Setenv("AWS_ACCESS_KEY_ID", localStackAccessKey)
 	t.Setenv("AWS_SECRET_ACCESS_KEY", localStackSecretKey)
@@ -70,9 +73,11 @@ func localStackRunning(ctx context.Context, r Runner) bool {
 	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
 
+const LocalStackName = localStackName
+
 func startLocalStack(ctx context.Context, r Runner) error {
 	_, err := r.Output(ctx,
-		"podman", "run", "--detach",
+		"podman", "run", "--detach", "--rm",
 		"--label", "sag.devx-e2e=1",
 		"--name", localStackName,
 		"--publish", "127.0.0.1:4566:4566",
@@ -90,10 +95,31 @@ func waitLocalStackReady(ctx context.Context) error {
 		conn, err := net.DialTimeout("tcp", localStackHostAddr, time.Second)
 		if err == nil {
 			conn.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("localstack tcp not ready after %s", localStackReadyTimeout)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	for {
+		cmd := exec.Command("aws",
+			"--endpoint-url", localStackOuter,
+			"--region", localStackRegion,
+			"secretsmanager", "list-secrets",
+			"--output", "json",
+		)
+		cmd.Env = append(os.Environ(),
+			"AWS_ACCESS_KEY_ID="+localStackAccessKey,
+			"AWS_SECRET_ACCESS_KEY="+localStackSecretKey,
+			"AWS_REGION="+localStackRegion,
+		)
+		out, err := cmd.Output()
+		if err == nil && len(out) > 0 {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("localstack not ready after %s", localStackReadyTimeout)
+			return fmt.Errorf("localstack secretsmanager not ready after %s", localStackReadyTimeout)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -165,6 +191,57 @@ func hasStorageKey(root *yaml.Node) bool {
 		}
 	}
 	return false
+}
+
+const (
+	awsTestPGImage = "docker.io/library/postgres:17.12-bookworm"
+	awsTestPGPort  = "5432/tcp"
+)
+
+func StartAWSTestPostgres(ctx context.Context, r Runner, name string) (string, error) {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("StartAWSTestPostgres: rand: %w", err)
+	}
+	sfx := hex.EncodeToString(b)
+	user := "u" + sfx[:8]
+	pwd := "p" + sfx[8:16]
+	database := "d" + sfx[16:]
+	_, err := r.Output(ctx,
+		"podman", "run", "--detach", "--rm",
+		"--label", "sag.devx-e2e=1",
+		"--name", name,
+		"--publish", "127.0.0.1::5432",
+		"--env", "POSTGRES_USER="+user,
+		"--env", "POSTGRES_PASSWORD="+pwd,
+		"--env", "POSTGRES_DB="+database,
+		awsTestPGImage,
+	)
+	if err != nil {
+		return "", fmt.Errorf("StartAWSTestPostgres: start: %w", err)
+	}
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		if _, err := r.Output(ctx, "podman", "exec", name, "pg_isready", "-U", user, "-h", "127.0.0.1"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("StartAWSTestPostgres: %s not ready", name)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	out, err := r.Output(ctx, "podman", "port", name, awsTestPGPort)
+	if err != nil {
+		return "", fmt.Errorf("StartAWSTestPostgres: port: %w", err)
+	}
+	line := strings.TrimSpace(string(out))
+	i := strings.LastIndex(line, ":")
+	if i < 0 {
+		return "", fmt.Errorf("StartAWSTestPostgres: unexpected port output: %q", line)
+	}
+	port := line[i+1:]
+	dsn := "postgres://" + user + ":" + pwd + "@host.containers.internal:" + port + "/" + database
+	return dsn, nil
 }
 
 func buildStorageAWSNode() *yaml.Node {

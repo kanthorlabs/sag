@@ -90,6 +90,70 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 		}
 	}
 
+	t.Log("check aws secret tags")
+	tagOut, tagErr := r.Output(ctx, "aws",
+		"--endpoint-url", "http://localhost:4566",
+		"--region", "us-east-1",
+		"secretsmanager", "describe-secret",
+		"--secret-id", "sag/"+resName+"/conn",
+		"--query", "Tags",
+		"--output", "json")
+	if tagErr != nil {
+		t.Fatalf("DXAC31: describe-secret tags: %v", tagErr)
+	}
+	var gotTags []struct {
+		Key   string `json:"Key"`
+		Value string `json:"Value"`
+	}
+	if err := json.Unmarshal(tagOut, &gotTags); err != nil {
+		t.Fatalf("DXAC31: parse tags: %v", err)
+	}
+	wantTagMap := map[string]string{
+		"sag.resource": resName,
+		"sag.kind":     "postgres",
+		"sag.role":     "connection",
+	}
+	if len(gotTags) != len(wantTagMap) {
+		t.Errorf("DXAC31: got %d tags, want %d", len(gotTags), len(wantTagMap))
+	}
+	for _, tag := range gotTags {
+		if want, ok := wantTagMap[tag.Key]; !ok || want != tag.Value {
+			t.Errorf("DXAC31: unexpected tag %q=%q", tag.Key, tag.Value)
+		}
+	}
+
+	t.Log("resource test passes with aws-sm backend")
+	const realResName = "dxac31-realdb"
+	pgDSN, pgErr := dxh.StartAWSTestPostgres(ctx, r, "sag-dxac31-pg")
+	if pgErr != nil {
+		t.Fatalf("DXAC31: start test postgres: %v", pgErr)
+	}
+	realCode, realOut := runSAGWithInputAndEnvExtra(t, ctx, []byte(pgDSN), nil,
+		"credential", "create", realResName,
+		"--kind", "postgres",
+		"--agent", "pi",
+		"--backend", "aws-sm",
+		"--tls", "disable",
+		"--stdin",
+	)
+	if realCode != 0 {
+		t.Fatalf("DXAC31: credential create real: exit %d\n%s", realCode, realOut)
+	}
+	if err := dxh.WaitLaunchAgentIdle(ctx, r, uid); err != nil {
+		t.Fatalf("DXAC31: wait idle after real create: %v", err)
+	}
+	rtStdout, rtStderr, rtErr := runSAGWithStderr(t, ctx, "resource", "test", realResName)
+	if rtErr != nil {
+		t.Fatalf("DXAC31: resource test %s: %v\nstdout: %s\nstderr: %s", realResName, rtErr, rtStdout, rtStderr)
+	}
+	realDelCode, realDelTTY := deleteViaStartTTY(t, ctx, realResName)
+	if realDelCode != 0 {
+		t.Fatalf("DXAC31: delete real: exit %d; output: %s", realDelCode, realDelTTY.RawOutput())
+	}
+	if err := dxh.WaitLaunchAgentIdle(ctx, r, uid); err != nil {
+		t.Fatalf("DXAC31: wait idle after real delete: %v", err)
+	}
+
 	t.Log("delete")
 	code, tty := deleteViaStartTTY(t, ctx, resName)
 	if code != 0 {
@@ -113,6 +177,27 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 	}
 	if findEntryByName(listResult2.Credentials, resName) != nil {
 		t.Fatalf("DXAC31: %q still in credential list after delete", resName)
+	}
+
+	t.Log("AWS secrets gone from LocalStack after delete")
+	secretListOut, secretListErr := r.Output(ctx, "aws",
+		"--endpoint-url", "http://localhost:4566",
+		"--region", "us-east-1",
+		"secretsmanager", "list-secrets",
+		"--filter", "Key=name,Values=sag/"+resName+"/conn",
+		"--query", "SecretList[*].Name",
+		"--output", "json")
+	if secretListErr != nil {
+		t.Fatalf("DXAC31: list-secrets after delete: %v", secretListErr)
+	}
+	var remainingSecrets []string
+	if err := json.Unmarshal(secretListOut, &remainingSecrets); err != nil {
+		t.Fatalf("DXAC31: parse list-secrets: %v", err)
+	}
+	for _, s := range remainingSecrets {
+		if s == "sag/"+resName+"/conn" {
+			t.Errorf("DXAC31: AWS secret sag/%s/conn still present after delete", resName)
+		}
 	}
 }
 

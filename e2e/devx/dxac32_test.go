@@ -33,7 +33,7 @@ const (
 	ac32AWSRegion    = "us-east-1"
 	ac32AWSEndpoint  = "http://localhost:4566"
 	ac32AWSCred      = "sag-aws-credentials"
-	ac32LSContainer  = "localstack-main"
+	ac32LSContainer  = "sag-localstack"
 
 	ac32AWSRes1 = "dxac32-aws-db1"
 	ac32AWSRes2 = "dxac32-aws-db2"
@@ -59,7 +59,16 @@ func DXAC32_AWSUnavailable(t *testing.T, ctx context.Context) {
 		t.Fatalf("DXAC32: wait launch agent idle: %v", err)
 	}
 
-	dsn32 := "postgres://ac32:ac32pw-7q3x@127.0.0.1:5432/ac32"
+	pgDSN, pgErr := dxh.StartAWSTestPostgres(ctx, r, "sag-dxac32-pg")
+	if pgErr != nil {
+		t.Fatalf("DXAC32: start test postgres: %v", pgErr)
+	}
+	t.Cleanup(func() {
+		cctx := context.Background()
+		_, _ = r.Output(cctx, "podman", "stop", "sag-dxac32-pg")
+	})
+
+	dsn32 := pgDSN
 	connFile := filepath.Join(t.TempDir(), "dxac32-local-conn")
 	if err := os.WriteFile(connFile, []byte(dsn32), 0o600); err != nil {
 		t.Fatal(err)
@@ -82,7 +91,7 @@ func DXAC32_AWSUnavailable(t *testing.T, ctx context.Context) {
 	for _, name := range []string{ac32Secret1, ac32Secret2, ac32Secret3} {
 		createArgs := append([]string{"secretsmanager", "create-secret",
 			"--name", name,
-			"--secret-string", "postgres://awsuser:awspw-9b4z@aws-db.internal:5432/awsdb"}, awsArgs...)
+			"--secret-string", pgDSN}, awsArgs...)
 		if _, err := r.Output(ctx, "aws", createArgs...); err != nil {
 			t.Fatalf("DXAC32: aws create-secret %s: %v", name, err)
 		}
@@ -98,27 +107,27 @@ func DXAC32_AWSUnavailable(t *testing.T, ctx context.Context) {
 	if err != nil {
 		t.Fatalf("DXAC32: read sag.yaml: %v", err)
 	}
-	resourceBlock := fmt.Sprintf(`storage:
-  aws:
-    region: %s
-    credentials: secret:%s
-resources:
+	resourceBlock := fmt.Sprintf(`resources:
   %s:
     kind: postgres
     connection: secret:%s
+    tls: disable
     agents: [%s]
   %s:
     kind: postgres
     connection: aws-sm:%s
+    tls: disable
     agents: [%s]
   %s:
     kind: postgres
     connection: aws-sm:%s
+    tls: disable
     agents: [%s]
   %s:
     kind: postgres
     connection: aws-sm:%s
-    agents: [%s]`, ac32AWSRegion, ac32AWSCred,
+    tls: disable
+    agents: [%s]`,
 		ac32LocalRes, ac32LocalCred, ac32LocalAgent,
 		ac32AWSRes1, ac32Secret1, ac32LocalAgent,
 		ac32AWSRes2, ac32Secret2, ac32LocalAgent,
@@ -164,14 +173,26 @@ resources:
 		Timeout:   15 * time.Second,
 	}
 
+	localReadyDeadline := time.Now().Add(60 * time.Second)
+	for {
+		if !ac32ResourceUnavailable(ctx, t, mcpClient, jwt, ac32LocalRes) {
+			break
+		}
+		if time.Now().After(localReadyDeadline) {
+			t.Fatalf("DXAC32: local resource %s not served 60s after service start", ac32LocalRes)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+
 	for _, res := range []string{ac32AWSRes1, ac32AWSRes2, ac32AWSRes3} {
 		if !ac32ResourceUnavailable(ctx, t, mcpClient, jwt, res) {
 			t.Errorf("DXAC32: resource %s should be unavailable while LocalStack paused", res)
 		}
-	}
-
-	if ac32ResourceUnavailable(ctx, t, mcpClient, jwt, ac32LocalRes) {
-		t.Errorf("DXAC32: local Podman resource %s should be served while LocalStack paused", ac32LocalRes)
 	}
 
 	if _, err := r.Output(ctx, "podman", "unpause", ac32LSContainer); err != nil {

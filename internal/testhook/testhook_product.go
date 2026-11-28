@@ -45,3 +45,7 @@ func FailTLSCACreate() bool {
 func RequireHTTPS() bool {
 	return true
 }
+
+func AWSEndpoint() string {
+	return ""
+}
