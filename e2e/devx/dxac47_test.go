@@ -98,12 +98,13 @@ func DXAC47_RealClaudeCode(t *testing.T, ctx context.Context) {
 			t.Fatalf("DXAC47-B: credential create: %v\n%s", err, createOut.String())
 		}
 		defer func() {
-			delCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			delCmd := exec.CommandContext(delCtx, sagBin, "credential", "delete", tempName)
-			delCmd.Env = setupEnv
-			delCmd.Run() //nolint:errcheck
+			if code, tty := deleteViaStartTTY(t, context.Background(), tempName); code != 0 {
+				t.Errorf("DXAC47-B: credential delete %s: exit %d\n%s", tempName, code, dxh.FilterNoJWT(tty.RawOutput()))
+			}
 		}()
+		if err := healthzOK(ctx, caPEM); err != nil {
+			t.Fatalf("DXAC47-B: /healthz after credential create: %v", err)
+		}
 
 		listCtx, cancel2 := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel2()
