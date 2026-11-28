@@ -107,14 +107,19 @@ func TestRegistryHookTLSOffForHookOnly(t *testing.T) {
 		if _, err := image.Ensure(context.Background(), fr, "docker.io/kanthorlabs/sag:main", out); err != nil {
 			t.Fatal(err)
 		}
+		pulled := false
 		for _, c := range fr.calls {
 			if len(c.args) >= 1 && c.args[0] == "pull" {
+				pulled = true
 				for _, a := range c.args {
 					if strings.Contains(a, "tls-verify") {
 						t.Fatalf("unexpected tls-verify flag for non-hook ref: %v", c.args)
 					}
 				}
 			}
+		}
+		if !pulled {
+			t.Fatal("no pull call found")
 		}
 	})
 }

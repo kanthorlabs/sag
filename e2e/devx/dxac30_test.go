@@ -37,38 +37,30 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 		CfgDir: dxh.CfgDir(home),
 	}
 
-	port := freePort(t)
-	registry := fmt.Sprintf("127.0.0.1:%d", port)
+	var registry string
 	registryContainerName := "sag-devx-e2e-registry-dxac30"
 
 	confBefore := dxac30RegistriesConf(t, ctx, r)
+	var digestSeen string
 	t.Cleanup(func() {
 		cctx := context.Background()
 		if out, _ := r.Output(cctx, "podman", "ps", "-a", "--filter", "name=^"+registryContainerName+"$", "--format", "{{.Names}}"); strings.TrimSpace(string(out)) != "" {
 			t.Errorf("DXAC30: registry container %s remains", registryContainerName)
 		}
-		if out, _ := r.Output(cctx, "podman", "image", "ls", "--filter", "reference="+registry+"/*", "--format", "{{.Repository}}"); strings.TrimSpace(string(out)) != "" {
-			t.Errorf("DXAC30: pulled references remain: %s", out)
+		for _, ref := range []string{registry + "/kanthorlabs/sag:main", registry + "/kanthorlabs/sag@" + digestSeen} {
+			if _, err := r.Output(cctx, "podman", "image", "exists", ref); err == nil {
+				t.Errorf("DXAC30: pulled reference %s remains", ref)
+			}
 		}
 		if confAfter := dxac30RegistriesConf(t, cctx, r); confAfter != confBefore {
 			t.Error("DXAC30: the registry configuration of podman-machine-default changed")
 		}
 	})
 
-	startOut, startErr := r.Output(ctx, "podman", "run", "-d",
-		"--rm",
-		"--label", "sag.devx-e2e=1",
-		"--name", registryContainerName,
-		"-p", fmt.Sprintf("127.0.0.1:%d:5000", port),
-		registryImage,
-	)
-	if startErr != nil {
-		t.Fatalf("start registry: %v\n%s", startErr, startOut)
-	}
 	t.Cleanup(func() {
-		r.Output(context.Background(), "podman", "rm", "-f", registryContainerName)
+		r.Output(context.Background(), "podman", "rm", "-f", "--ignore", registryContainerName)
 	})
-
+	registry = dxac30StartRegistry(t, ctx, r, registryContainerName)
 	waitForRegistry(t, ctx, registry)
 
 	destRef := registry + "/kanthorlabs/sag:main"
@@ -77,6 +69,7 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 	}
 
 	digest := registryDigest(t, ctx, registry)
+	digestSeen = digest
 
 	repoRoot, err := dxh.RepoRoot()
 	if err != nil {
@@ -100,8 +93,8 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 	}
 	removeRegistryRefs()
 	t.Cleanup(func() {
-		removeRegistryRefs()
 		dxh.Teardown(context.Background(), r, tcfg)
+		removeRegistryRefs()
 	})
 
 	t.Run("digest_binary_pulls_by_digest", func(t *testing.T) {
@@ -117,6 +110,12 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 
 		if dxac30HasLine(stdout, dxac30WarnLine) {
 			t.Fatalf("unexpected warn line in digest binary stdout:\n%s", stdout)
+		}
+		if !dxac30HasLine(stdout, "install image "+digestRef) {
+			t.Fatalf("line %q missing in digest binary stdout:\n%s", "install image "+digestRef, stdout)
+		}
+		if _, err := r.Output(ctx, "podman", "image", "exists", mainRef); err == nil {
+			t.Fatalf("digest binary also pulled %s", mainRef)
 		}
 
 		r.Output(ctx, "podman", "rm", "-f", "sag")
@@ -136,6 +135,9 @@ func DXAC30_ImageSelection(t *testing.T, ctx context.Context) {
 
 		if !dxac30HasLine(stdout, dxac30WarnLine) {
 			t.Fatalf("warn line %q missing in no-digest binary stdout:\n%s", dxac30WarnLine, stdout)
+		}
+		if !dxac30HasLine(stdout, "install image "+mainRef) {
+			t.Fatalf("line %q missing in no-digest binary stdout:\n%s", "install image "+mainRef, stdout)
 		}
 	})
 }
@@ -229,10 +231,14 @@ func runBinaryBootstrap(t *testing.T, ctx context.Context, bin, registry string)
 		"--agent-setup", "pi=no",
 	)
 	cmd.Env = filtered
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	err = cmd.Run()
-	return stdout.String(), err
+	if err != nil {
+		return stdout.String(), fmt.Errorf("%w; stderr: %s", err, stderr.String())
+	}
+	return stdout.String(), nil
 }
 
 const dxac30WarnLine = "warn image dev build; pulls the main tag"
@@ -257,4 +263,26 @@ func dxac30RegistriesConf(t *testing.T, ctx context.Context, r dxh.Runner) strin
 		t.Fatalf("DXAC30: read registry configuration: %v", err)
 	}
 	return string(out)
+}
+
+func dxac30StartRegistry(t *testing.T, ctx context.Context, r dxh.Runner, name string) string {
+	t.Helper()
+	var failures []string
+	for attempt := 0; attempt < 3; attempt++ {
+		registry := fmt.Sprintf("127.0.0.1:%d", freePort(t))
+		out, err := exec.CommandContext(ctx, "podman", "run", "-d",
+			"--rm",
+			"--label", "sag.devx-e2e=1",
+			"--name", name,
+			"-p", registry+":5000",
+			registryImage,
+		).CombinedOutput()
+		if err == nil {
+			return registry
+		}
+		failures = append(failures, fmt.Sprintf("%s: %v: %s", registry, err, strings.TrimSpace(string(out))))
+		r.Output(ctx, "podman", "rm", "-f", "--ignore", name)
+	}
+	t.Fatalf("start registry:\n%s", strings.Join(failures, "\n"))
+	return ""
 }
