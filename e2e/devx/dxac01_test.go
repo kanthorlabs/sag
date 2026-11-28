@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -40,9 +41,19 @@ func DXAC01_Bootstrap(t *testing.T, ctx context.Context) {
 
 	r := dxh.NewRunner()
 	uid := fmt.Sprintf("%d", os.Getuid())
-	lOut, lErr := r.Output(ctx, "launchctl", "print", "gui/"+uid+"/net.kanthorlabs.sag")
-	if lErr != nil {
-		t.Fatalf("launchctl print gui/%s/net.kanthorlabs.sag: %v\n%s", uid, lErr, lOut)
+	if runtime.GOOS == "linux" {
+		depOut, depErr := r.Output(ctx, "systemctl", "--user", "list-dependencies", "default.target")
+		if depErr != nil {
+			t.Fatalf("systemctl --user list-dependencies default.target: %v\n%s", depErr, depOut)
+		}
+		if !strings.Contains(string(depOut), "sag.service") {
+			t.Fatalf("sag.service not in default.target dependencies:\n%s", depOut)
+		}
+	} else {
+		lOut, lErr := r.Output(ctx, "launchctl", "print", "gui/"+uid+"/net.kanthorlabs.sag")
+		if lErr != nil {
+			t.Fatalf("launchctl print gui/%s/net.kanthorlabs.sag: %v\n%s", uid, lErr, lOut)
+		}
 	}
 }
 
@@ -95,6 +106,12 @@ func launchAgentShows(ctx context.Context, uid string) bool {
 	return err == nil
 }
 
+func systemdUnitInDefaultTarget(ctx context.Context) bool {
+	r := dxh.NewRunner()
+	out, err := r.Output(ctx, "systemctl", "--user", "list-dependencies", "default.target")
+	return err == nil && strings.Contains(string(out), "sag.service")
+}
+
 func plistExists(home string) bool {
 	p := filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist")
 	_, err := os.Stat(p)
@@ -104,6 +121,23 @@ func plistExists(home string) bool {
 func plistContent(home string) (string, error) {
 	p := filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist")
 	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func quadletPath(home string) string {
+	return filepath.Join(home, ".config", "containers", "systemd", "sag.container")
+}
+
+func quadletExists(home string) bool {
+	_, err := os.Stat(quadletPath(home))
+	return err == nil
+}
+
+func quadletContent(home string) (string, error) {
+	b, err := os.ReadFile(quadletPath(home))
 	if err != nil {
 		return "", err
 	}

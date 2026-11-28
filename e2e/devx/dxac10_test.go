@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -44,8 +45,10 @@ func DXAC10_CanaryNoLeak(t *testing.T, ctx context.Context) {
 	cfgDir := dxh.CfgDir(home)
 	uid := fmt.Sprintf("%d", os.Getuid())
 
-	if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
-		t.Fatalf("waitLaunchAgentIdle: %v", err)
+	if runtime.GOOS != "linux" {
+		if err := dxh.WaitLaunchAgentIdle(ctx, dxh.NewRunner(), uid); err != nil {
+			t.Fatalf("waitLaunchAgentIdle: %v", err)
+		}
 	}
 
 	t.Log("collect sources")
@@ -115,11 +118,32 @@ func DXAC10_CanaryNoLeak(t *testing.T, ctx context.Context) {
 		namedSources["audit file "+filepath.Base(name)] = content
 	}
 
-	serviceLogPath := filepath.Join(home, "Library", "Logs", "sag", "service.log")
-	if data, err := os.ReadFile(serviceLogPath); err == nil {
-		namedSources["service log"] = string(data)
-	} else if !os.IsNotExist(err) {
-		t.Fatalf("read service log: %v", err)
+	if runtime.GOOS == "linux" {
+		journalData, err := dxh.UserJournal(ctx, r, 1000)
+		if err != nil {
+			t.Fatalf("user journal: %v", err)
+		}
+		namedSources["service log"] = string(journalData)
+
+		qContent, err := quadletContent(home)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("read quadlet file: %v", err)
+		}
+		namedSources["quadlet file"] = qContent
+	} else {
+		serviceLogPath := filepath.Join(home, "Library", "Logs", "sag", "service.log")
+		if data, err := os.ReadFile(serviceLogPath); err == nil {
+			namedSources["service log"] = string(data)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("read service log: %v", err)
+		}
+
+		launchAgentPath := filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist")
+		if data, err := os.ReadFile(launchAgentPath); err == nil {
+			namedSources["launch agent"] = string(data)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("read launch agent: %v", err)
+		}
 	}
 
 	answersPath := filepath.Join(cfgDir, "answers.json")
@@ -135,13 +159,6 @@ func DXAC10_CanaryNoLeak(t *testing.T, ctx context.Context) {
 	}
 	for name, content := range cfgFiles {
 		namedSources["cfg:"+name] = content
-	}
-
-	launchAgentPath := filepath.Join(home, "Library", "LaunchAgents", "net.kanthorlabs.sag.plist")
-	if data, err := os.ReadFile(launchAgentPath); err == nil {
-		namedSources["launch agent"] = string(data)
-	} else if !os.IsNotExist(err) {
-		t.Fatalf("read launch agent: %v", err)
 	}
 
 	t.Log("search for canary parts in sources")
