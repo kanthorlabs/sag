@@ -3,6 +3,7 @@ package dxh_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -798,5 +799,39 @@ func writeJSON(t *testing.T, path string, v interface{}) {
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClaudeRunningGate(t *testing.T) {
+	running := errors.New("checknoclaude: claude process is running")
+
+	if warning, err := dxh.ClaudeRunningGate(nil, ""); warning != "" || err != nil {
+		t.Errorf("no claude: got warning %q, err %v; want none", warning, err)
+	}
+
+	for _, accept := range []string{"", "0", "true", "yes"} {
+		warning, err := dxh.ClaudeRunningGate(running, accept)
+		if err == nil {
+			t.Errorf("accept=%q: want refusal, got nil error", accept)
+			continue
+		}
+		if warning != "" {
+			t.Errorf("accept=%q: refusal also returned warning %q", accept, warning)
+		}
+		for _, want := range []string{"claude process is running", "R24", dxh.AcceptClaudeRunningEnv + "=1"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("accept=%q: error %q does not name %q", accept, err, want)
+			}
+		}
+	}
+
+	warning, err := dxh.ClaudeRunningGate(running, "1")
+	if err != nil {
+		t.Fatalf("accept=1: got error %v; want warning", err)
+	}
+	for _, want := range []string{"warning:", "claude process is running", "R24", dxh.AcceptClaudeRunningEnv + "=1"} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("accept=1: warning %q does not name %q", warning, want)
+		}
 	}
 }

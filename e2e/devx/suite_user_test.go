@@ -18,8 +18,12 @@ var userHarnessTests = map[string]func(*testing.T, context.Context){}
 var userRealBinDir string
 
 func TestDevxUser(t *testing.T) {
-	if err := dxh.CheckNoClaude(context.Background()); err != nil {
+	warning, err := dxh.ClaudeRunningGate(dxh.CheckNoClaude(context.Background()), os.Getenv(dxh.AcceptClaudeRunningEnv))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if warning != "" {
+		t.Log(warning)
 	}
 	if err := dxh.CheckProfileEnv(); err != nil {
 		t.Fatal(err)

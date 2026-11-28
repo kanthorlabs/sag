@@ -58,6 +58,18 @@ func ScanForClaudeProcess(psOutput string) error {
 	return nil
 }
 
+const AcceptClaudeRunningEnv = "SAG_TEST_ACCEPT_CLAUDE_RUNNING"
+
+func ClaudeRunningGate(scanErr error, accept string) (string, error) {
+	if scanErr == nil {
+		return "", nil
+	}
+	if accept == "1" {
+		return fmt.Sprintf("warning: %v; risk R24 accepted with %s=1: a running Claude Code session can remove mcpServers.sag from ~/.claude.json during the run", scanErr, AcceptClaudeRunningEnv), nil
+	}
+	return "", fmt.Errorf("%v; a running Claude Code session can remove mcpServers.sag from ~/.claude.json during the run (risk R24); stop each session, or set %s=1 to accept the risk", scanErr, AcceptClaudeRunningEnv)
+}
+
 func CheckProfileEnv() error {
 	if v := os.Getenv("CLAUDE_CONFIG_DIR"); v != "" {
 		return fmt.Errorf("unset CLAUDE_CONFIG_DIR; this suite uses the default profile")

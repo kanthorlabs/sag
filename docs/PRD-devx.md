@@ -1088,7 +1088,7 @@ Phase A, macOS development machine:
 - DX-AC52 runs the real `tailscale serve` and never `tailscale funnel`. Before DX-AC52, save the output of `tailscale serve status --json`. After the section 15 teardown, the serve status equals the saved output.
 - Real-harness criteria: DX-AC47, DX-AC48, and the default path case of DX-AC39. They change the harness files of the operator.
 - The real-harness criteria use the default Claude Code profile: `~/.claude` and `~/.claude.json`. When `CLAUDE_CONFIG_DIR` is set, the run exits 1 with `unset CLAUDE_CONFIG_DIR; this suite uses the default profile` and changes nothing. Precondition: `env -u CLAUDE_CONFIG_DIR claude -p "ok"` works.
-- Run the real-harness criteria from a terminal outside a Claude Code session, because a Claude Code session rewrites `.claude.json` (R24). The run refuses to start while a `claude` process runs.
+- Run the real-harness criteria from a terminal outside a Claude Code session, because a Claude Code session rewrites `.claude.json` (R24). While a `claude` process runs, the run exits 1 with a warning that names R24 and `SAG_TEST_ACCEPT_CLAUDE_RUNNING=1`, and changes nothing. With `SAG_TEST_ACCEPT_CLAUDE_RUNNING=1`, the run writes the warning to the report and continues.
 - Before the real-harness criteria, copy `~/.claude.json`, `~/.claude/settings.json`, `~/.pi/agent/mcp.json`, and the shell profile. After the section 15 teardown, compare only the SAG entries of each file with its copy.
 - The SAG entries are `mcpServers.sag`, `env.NODE_EXTRA_CA_CERTS`, the deny rules of section 12.7, and the lines of section 12.5. On a difference, the run exits 1 and keeps the copies.
 - The installer run, `podman machine init`, and `podman machine start` have no e2e test. Section 18.1 covers them.
