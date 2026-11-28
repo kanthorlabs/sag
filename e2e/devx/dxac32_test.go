@@ -3,6 +3,7 @@
 package devx_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -30,10 +31,8 @@ const (
 	ac32LocalRes   = "dxac32-local"
 	ac32LocalCred  = "sag-res-dxac32-local"
 
-	ac32AWSRegion    = "us-east-1"
-	ac32AWSEndpoint  = "http://localhost:4566"
-	ac32AWSCred      = "sag-aws-credentials"
-	ac32LSContainer  = "sag-localstack"
+	ac32AWSCred     = "sag-aws-credentials"
+	ac32LSContainer = "sag-localstack"
 
 	ac32AWSRes1 = "dxac32-aws-db1"
 	ac32AWSRes2 = "dxac32-aws-db2"
@@ -84,22 +83,14 @@ func DXAC32_AWSUnavailable(t *testing.T, ctx context.Context) {
 		_, _ = r.Output(cctx, "podman", "secret", "rm", ac32LocalCred)
 	})
 
-	awsArgs := []string{
-		"--endpoint-url", ac32AWSEndpoint,
-		"--region", ac32AWSRegion,
-	}
 	for _, name := range []string{ac32Secret1, ac32Secret2, ac32Secret3} {
-		createArgs := append([]string{"secretsmanager", "create-secret",
-			"--name", name,
-			"--secret-string", pgDSN}, awsArgs...)
-		if _, err := r.Output(ctx, "aws", createArgs...); err != nil {
-			t.Fatalf("DXAC32: aws create-secret %s: %v", name, err)
+		if err := dxh.LocalStackCreateSecret(ctx, name, pgDSN); err != nil {
+			t.Fatalf("DXAC32: create AWS secret %s: %v", name, err)
 		}
 		t.Cleanup(func() {
-			cctx := context.Background()
-			deleteArgs := append([]string{"secretsmanager", "delete-secret",
-				"--secret-id", name, "--force-delete-without-recovery"}, awsArgs...)
-			_, _ = r.Output(cctx, "aws", deleteArgs...)
+			if err := dxh.LocalStackDeleteSecret(context.Background(), name); err != nil {
+				t.Errorf("DXAC32: delete AWS secret %s: %v", name, err)
+			}
 		})
 	}
 
@@ -173,25 +164,11 @@ func DXAC32_AWSUnavailable(t *testing.T, ctx context.Context) {
 		Timeout:   15 * time.Second,
 	}
 
-	localReadyDeadline := time.Now().Add(60 * time.Second)
-	for {
-		if !ac32ResourceUnavailable(ctx, t, mcpClient, jwt, ac32LocalRes) {
-			break
-		}
-		if time.Now().After(localReadyDeadline) {
-			t.Fatalf("DXAC32: local resource %s not served 60s after service start", ac32LocalRes)
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(2 * time.Second):
-		}
-	}
+	ac32WaitServed(t, ctx, mcpClient, jwt, ac32LocalRes, time.Now().Add(60*time.Second), "after service start")
 
 	for _, res := range []string{ac32AWSRes1, ac32AWSRes2, ac32AWSRes3} {
-		if !ac32ResourceUnavailable(ctx, t, mcpClient, jwt, res) {
-			t.Errorf("DXAC32: resource %s should be unavailable while LocalStack paused", res)
+		if state := ac32ResourceState(ctx, mcpClient, jwt, res); state != ac32Unavailable {
+			t.Errorf("DXAC32: resource %s while LocalStack paused: %s; want %s", res, state, ac32Unavailable)
 		}
 	}
 
@@ -201,19 +178,29 @@ func DXAC32_AWSUnavailable(t *testing.T, ctx context.Context) {
 
 	deadline := time.Now().Add(120 * time.Second)
 	for _, res := range []string{ac32AWSRes1, ac32AWSRes2, ac32AWSRes3} {
-		for {
-			if !ac32ResourceUnavailable(ctx, t, mcpClient, jwt, res) {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Errorf("DXAC32: resource %s still unavailable 120s after LocalStack unpause", res)
-				break
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(5 * time.Second):
-			}
+		ac32WaitServed(t, ctx, mcpClient, jwt, res, deadline, "within 120s after LocalStack unpause")
+	}
+}
+
+const (
+	ac32Served      = "served"
+	ac32Unavailable = "resource_unavailable"
+)
+
+func ac32WaitServed(t *testing.T, ctx context.Context, client *http.Client, jwt, res string, deadline time.Time, when string) {
+	t.Helper()
+	for {
+		state := ac32ResourceState(ctx, client, jwt, res)
+		if state == ac32Served {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("DXAC32: resource %s not served %s; last state: %s", res, when, state)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("DXAC32: resource %s: %v", res, ctx.Err())
+		case <-time.After(2 * time.Second):
 		}
 	}
 }
@@ -259,19 +246,20 @@ func ac32CAPool(t *testing.T, caPath string) *x509.CertPool {
 	return pool
 }
 
-func ac32ResourceUnavailable(ctx context.Context, t *testing.T, client *http.Client, jwt, resource string) bool {
-	t.Helper()
-	body, _ := json.Marshal(map[string]any{
+func ac32ResourceState(ctx context.Context, client *http.Client, jwt, resource string) string {
+	body, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{
 			"name":      "sql_list_tables",
 			"arguments": map[string]any{"resource": resource},
 		},
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://localhost:8443/mcp",
-		strings.NewReader(string(body)))
 	if err != nil {
-		return true
+		return "request: " + err.Error()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://localhost:8443/mcp", bytes.NewReader(body))
+	if err != nil {
+		return "request: " + err.Error()
 	}
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	req.Header.Set("Content-Type", "application/json")
@@ -279,9 +267,60 @@ func ac32ResourceUnavailable(ctx context.Context, t *testing.T, client *http.Cli
 	req.Header.Set("Mcp-Protocol-Version", "2025-06-18")
 	resp, err := client.Do(req)
 	if err != nil {
-		return true
+		return "transport: " + err.Error()
 	}
 	defer resp.Body.Close()
-	out, _ := io.ReadAll(resp.Body)
-	return strings.Contains(string(out), "resource_unavailable")
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "read: " + err.Error()
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Sprintf("http status %d", resp.StatusCode)
+	}
+	return ac32ParseState(raw)
+}
+
+func ac32ParseState(raw []byte) string {
+	payload := raw
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		if data, ok := bytes.CutPrefix(bytes.TrimSpace(line), []byte("data:")); ok {
+			payload = bytes.TrimSpace(data)
+		}
+	}
+	var msg struct {
+		Result *struct {
+			IsError bool `json:"isError"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		return "unparsed response"
+	}
+	if msg.Error != nil {
+		return "rpc error: " + msg.Error.Message
+	}
+	if msg.Result == nil {
+		return "no result"
+	}
+	if !msg.Result.IsError {
+		return ac32Served
+	}
+	if len(msg.Result.Content) != 1 {
+		return "tool error without one content item"
+	}
+	var te struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(msg.Result.Content[0].Text), &te); err != nil {
+		return "unparsed tool error"
+	}
+	if te.Code == ac32Unavailable {
+		return ac32Unavailable
+	}
+	return "tool error " + te.Code
 }

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +42,7 @@ func (s *resourceSet) all() []core.Resource {
 	return slices.Clone(s.list)
 }
 
-func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, creds map[string]secret.Credential, loader awsLoader, scrubber scrub.Scrubber, inv *inventory.Inventory, approvals core.ApprovalVerifier, wrap func(sql.Dialect) sql.Dialect, sched resourceScheduler) (*resourceSet, error) {
+func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, creds map[string]secret.Credential, loader AWSLoader, scrubber scrub.Scrubber, inv *inventory.Inventory, approvals core.ApprovalVerifier, wrap func(sql.Dialect) sql.Dialect, sched resourceScheduler) (*resourceSet, error) {
 	opened := &resourceSet{}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Resources)) {
 		r := cfg.Resources[name]
@@ -63,13 +62,12 @@ func openResources(ctx context.Context, log *slog.Logger, cfg *config.Config, cr
 		}
 		rc := ResourceConfig(name, r, creds, approvals)
 		timeout := r.Limits.ConnectTimeout + preflightSlack
-		if loader != nil && strings.HasPrefix(string(r.Connection), secret.BackendAWSSM+":") {
-			awsName := strings.TrimPrefix(string(r.Connection), secret.BackendAWSSM+":")
+		if loader != nil && len(AWSRefs(r)) > 0 {
 			entry.Status = inventory.StatusUnavailable
 			if err := inv.Add(entry); err != nil {
 				return opened, fmt.Errorf("%s: %w", name, err)
 			}
-			openFn := awsOpenFunc(log, loader, scrubber, inv, opened, name, awsName, adapter, rc, wrap)
+			openFn := awsOpenFunc(log, loader, scrubber, inv, opened, name, r, creds, adapter, approvals, wrap)
 			sched.AddUnopenedImmediate(name, openFn, timeout)
 			continue
 		}

@@ -15,5 +15,5 @@ type Options struct {
 	Log         io.Writer
 	WrapDialect func(sql.Dialect) sql.Dialect
 
-	testAWSLoader awsLoader
+	testAWSLoader AWSLoader
 }

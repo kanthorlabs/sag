@@ -109,7 +109,7 @@ func Run(ctx context.Context, opts Options) error {
 		return fatal(errAudit, err)
 	}
 
-	var loader awsLoader
+	var loader AWSLoader
 	if cfg.Storage.AWS.Region != "" {
 		if opts.testAWSLoader != nil {
 			loader = opts.testAWSLoader

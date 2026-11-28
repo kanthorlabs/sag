@@ -7,9 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
-	"strings"
 	"testing"
 
 	"github.com/kanthorlabs/sag/e2e/devx/dxh"
@@ -46,8 +46,8 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 	if code != 0 {
 		t.Fatalf("DXAC31: credential create: exit %d\n%s", code, combined)
 	}
-	if !strings.Contains(combined, resName) && !strings.Contains(combined, "created") {
-		t.Logf("DXAC31: create output: %s", combined)
+	if want := "resource " + resName + " created; SAG restarted; run sag resource test " + resName; !dxac30HasLine(combined, want) {
+		t.Fatalf("DXAC31: create output lacks %q:\n%s", want, combined)
 	}
 
 	if err := dxh.WaitLaunchAgentIdle(ctx, r, uid); err != nil {
@@ -91,36 +91,7 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 	}
 
 	t.Log("check aws secret tags")
-	tagOut, tagErr := r.Output(ctx, "aws",
-		"--endpoint-url", "http://localhost:4566",
-		"--region", "us-east-1",
-		"secretsmanager", "describe-secret",
-		"--secret-id", "sag/"+resName+"/conn",
-		"--query", "Tags",
-		"--output", "json")
-	if tagErr != nil {
-		t.Fatalf("DXAC31: describe-secret tags: %v", tagErr)
-	}
-	var gotTags []struct {
-		Key   string `json:"Key"`
-		Value string `json:"Value"`
-	}
-	if err := json.Unmarshal(tagOut, &gotTags); err != nil {
-		t.Fatalf("DXAC31: parse tags: %v", err)
-	}
-	wantTagMap := map[string]string{
-		"sag.resource": resName,
-		"sag.kind":     "postgres",
-		"sag.role":     "connection",
-	}
-	if len(gotTags) != len(wantTagMap) {
-		t.Errorf("DXAC31: got %d tags, want %d", len(gotTags), len(wantTagMap))
-	}
-	for _, tag := range gotTags {
-		if want, ok := wantTagMap[tag.Key]; !ok || want != tag.Value {
-			t.Errorf("DXAC31: unexpected tag %q=%q", tag.Key, tag.Value)
-		}
-	}
+	dxac31AssertTags(t, ctx, resName)
 
 	t.Log("resource test passes with aws-sm backend")
 	const realResName = "dxac31-realdb"
@@ -128,6 +99,9 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 	if pgErr != nil {
 		t.Fatalf("DXAC31: start test postgres: %v", pgErr)
 	}
+	t.Cleanup(func() {
+		_, _ = r.Output(context.Background(), "podman", "stop", "sag-dxac31-pg")
+	})
 	realCode, realOut := runSAGWithInputAndEnvExtra(t, ctx, []byte(pgDSN), nil,
 		"credential", "create", realResName,
 		"--kind", "postgres",
@@ -142,6 +116,7 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 	if err := dxh.WaitLaunchAgentIdle(ctx, r, uid); err != nil {
 		t.Fatalf("DXAC31: wait idle after real create: %v", err)
 	}
+	dxac31AssertTags(t, ctx, realResName)
 	rtStdout, rtStderr, rtErr := runSAGWithStderr(t, ctx, "resource", "test", realResName)
 	if rtErr != nil {
 		t.Fatalf("DXAC31: resource test %s: %v\nstdout: %s\nstderr: %s", realResName, rtErr, rtStdout, rtStderr)
@@ -180,24 +155,30 @@ func DXAC31_AWSBackend(t *testing.T, ctx context.Context) {
 	}
 
 	t.Log("AWS secrets gone from LocalStack after delete")
-	secretListOut, secretListErr := r.Output(ctx, "aws",
-		"--endpoint-url", "http://localhost:4566",
-		"--region", "us-east-1",
-		"secretsmanager", "list-secrets",
-		"--filter", "Key=name,Values=sag/"+resName+"/conn",
-		"--query", "SecretList[*].Name",
-		"--output", "json")
-	if secretListErr != nil {
-		t.Fatalf("DXAC31: list-secrets after delete: %v", secretListErr)
-	}
-	var remainingSecrets []string
-	if err := json.Unmarshal(secretListOut, &remainingSecrets); err != nil {
-		t.Fatalf("DXAC31: parse list-secrets: %v", err)
-	}
-	for _, s := range remainingSecrets {
-		if s == "sag/"+resName+"/conn" {
-			t.Errorf("DXAC31: AWS secret sag/%s/conn still present after delete", resName)
+	for _, name := range []string{resName, realResName} {
+		exists, err := dxh.LocalStackSecretExists(ctx, "sag/"+name+"/conn")
+		if err != nil {
+			t.Fatalf("DXAC31: describe sag/%s/conn after delete: %v", name, err)
 		}
+		if exists {
+			t.Errorf("DXAC31: AWS secret sag/%s/conn still present after delete", name)
+		}
+	}
+}
+
+func dxac31AssertTags(t *testing.T, ctx context.Context, resName string) {
+	t.Helper()
+	got, err := dxh.LocalStackTags(ctx, "sag/"+resName+"/conn")
+	if err != nil {
+		t.Fatalf("DXAC31: tags of sag/%s/conn: %v", resName, err)
+	}
+	want := map[string]string{
+		"sag.resource": resName,
+		"sag.kind":     "postgres",
+		"sag.role":     "connection",
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("DXAC31: tags of sag/%s/conn = %v; want exactly %v", resName, got, want)
 	}
 }
 

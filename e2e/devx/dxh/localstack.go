@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -15,6 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	smtypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -66,6 +71,8 @@ func EnsureLocalStack(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", localStackAccessKey)
 	t.Setenv("AWS_SECRET_ACCESS_KEY", localStackSecretKey)
 	t.Setenv("AWS_REGION", localStackRegion)
+	t.Setenv("AWS_CONFIG_FILE", os.DevNull)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", os.DevNull)
 }
 
 func localStackRunning(ctx context.Context, r Runner) bool {
@@ -102,27 +109,69 @@ func waitLocalStackReady(ctx context.Context) error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	client := LocalStackClient()
 	for {
-		cmd := exec.Command("aws",
-			"--endpoint-url", localStackOuter,
-			"--region", localStackRegion,
-			"secretsmanager", "list-secrets",
-			"--output", "json",
-		)
-		cmd.Env = append(os.Environ(),
-			"AWS_ACCESS_KEY_ID="+localStackAccessKey,
-			"AWS_SECRET_ACCESS_KEY="+localStackSecretKey,
-			"AWS_REGION="+localStackRegion,
-		)
-		out, err := cmd.Output()
-		if err == nil && len(out) > 0 {
+		_, err := client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{})
+		if err == nil {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("localstack secretsmanager not ready after %s", localStackReadyTimeout)
+			return fmt.Errorf("localstack secretsmanager not ready after %s: %w", localStackReadyTimeout, err)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+func LocalStackClient() *secretsmanager.Client {
+	return secretsmanager.New(secretsmanager.Options{
+		Region:       localStackRegion,
+		Credentials:  credentials.NewStaticCredentialsProvider(localStackAccessKey, localStackSecretKey, ""),
+		BaseEndpoint: aws.String(localStackOuter),
+	})
+}
+
+func LocalStackCreateSecret(ctx context.Context, name, value string) error {
+	_, err := LocalStackClient().CreateSecret(ctx, &secretsmanager.CreateSecretInput{
+		Name:         aws.String(name),
+		SecretString: aws.String(value),
+	})
+	return err
+}
+
+func LocalStackDeleteSecret(ctx context.Context, name string) error {
+	_, err := LocalStackClient().DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{
+		SecretId:                   aws.String(name),
+		ForceDeleteWithoutRecovery: aws.Bool(true),
+	})
+	return err
+}
+
+func LocalStackTags(ctx context.Context, name string) (map[string]string, error) {
+	out, err := LocalStackClient().DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{SecretId: aws.String(name)})
+	if err != nil {
+		return nil, err
+	}
+	tags := make(map[string]string, len(out.Tags))
+	for _, tag := range out.Tags {
+		k, v := aws.ToString(tag.Key), aws.ToString(tag.Value)
+		if _, dup := tags[k]; dup {
+			return nil, fmt.Errorf("secret %s: duplicate tag %q", name, k)
+		}
+		tags[k] = v
+	}
+	return tags, nil
+}
+
+func LocalStackSecretExists(ctx context.Context, name string) (bool, error) {
+	_, err := LocalStackClient().DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{SecretId: aws.String(name)})
+	if err == nil {
+		return true, nil
+	}
+	var nf *smtypes.ResourceNotFoundException
+	if errors.As(err, &nf) {
+		return false, nil
+	}
+	return false, err
 }
 
 func ensureAWSCredSecret(ctx context.Context) error {

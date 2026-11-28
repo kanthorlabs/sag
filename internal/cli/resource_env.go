@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
+	"slices"
 
 	"github.com/kanthorlabs/sag/internal/approval"
 	"github.com/kanthorlabs/sag/internal/config"
@@ -57,33 +57,26 @@ func resourceFromPaths(name string) (resourceTarget, error) {
 		return resourceTarget{}, fmt.Errorf("resource %q has unknown kind %q", name, r.Kind)
 	}
 
-	fileNames := []string{secret.MasterKeyName}
-	awsSMConn := strings.HasPrefix(string(r.Connection), secret.BackendAWSSM+":")
-	if !awsSMConn {
-		fileNames = append(fileNames, string(r.Connection))
+	names := []string{secret.MasterKeyName}
+	for _, ref := range []config.SecretRef{r.Connection, r.TLSCA} {
+		if ref != "" && !slices.Contains(daemon.AWSRefs(r), ref) {
+			names = append(names, string(ref))
+		}
 	}
-	awsSMCA := r.TLSCA != "" && strings.HasPrefix(string(r.TLSCA), secret.BackendAWSSM+":")
-	if r.TLSCA != "" && !awsSMCA {
-		fileNames = append(fileNames, string(r.TLSCA))
-	}
-
-	creds, err := secret.Load(paths.Secrets, paths.SecretUID, fileNames)
+	creds, err := secret.Load(paths.Secrets, paths.SecretUID, names)
 	if err != nil {
 		return resourceTarget{}, err
 	}
-
-	if awsSMConn {
-		awsName := strings.TrimPrefix(string(r.Connection), secret.BackendAWSSM+":")
+	if len(daemon.AWSRefs(r)) > 0 {
 		ctx := context.Background()
-		backend, berr := awssm.NewDaemon(ctx, cfg.Storage.AWS.Region, string(cfg.Storage.AWS.Credentials))
-		if berr != nil {
-			return resourceTarget{}, fmt.Errorf("resource %q: aws-sm backend: %w", name, berr)
+		backend, err := awssm.NewDaemon(ctx, cfg.Storage.AWS.Region, string(cfg.Storage.AWS.Credentials))
+		if err != nil {
+			return resourceTarget{}, fmt.Errorf("resource %q: aws-sm backend: %w", name, err)
 		}
-		conn, lerr := backend.Load(ctx, awsName)
-		if lerr != nil {
-			return resourceTarget{}, fmt.Errorf("resource %q: load from aws-sm: %w", name, lerr)
+		creds, err = daemon.LoadAWSRefs(ctx, backend, r, creds)
+		if err != nil {
+			return resourceTarget{}, fmt.Errorf("resource %q: load from aws-sm: %w", name, err)
 		}
-		creds[string(r.Connection)] = conn
 	}
 
 	master, err := secret.DecodeMasterKey(creds[secret.MasterKeyName])
