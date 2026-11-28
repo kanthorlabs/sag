@@ -129,7 +129,7 @@ The operator supplies the certificate and the key as the Podman secrets `sag-tls
 | Environment | Certificate source |
 |---|---|
 | Server reached over Tailscale | Server install only. `tailscale cert <machine>.<tailnet>.ts.net` on the host. The operator creates the Podman secrets from the output files. Before the certificate expires, the operator runs the command again, replaces the secrets, and restarts the container. |
-| macOS and Ubuntu development machine | `sag bootstrap` (section 5.7 of `docs/PRD-devx.md`). Its CA has no name constraints extension, and no file holds the CA key. The server certificate names `localhost`, `127.0.0.1`, `::1`, and the Tailscale address of section 5.8 of `docs/PRD-devx.md`. `NODE_EXTRA_CA_CERTS` points to `<cfg>/ca.pem` through section 12.5 of `docs/PRD-devx.md`. |
+| macOS and Debian 13 development machine | `sag bootstrap` (section 5.7 of `docs/PRD-devx.md`). Its CA has no name constraints extension, and no file holds the CA key. The server certificate names `localhost`, `127.0.0.1`, `::1`, and the Tailscale address of section 5.8 of `docs/PRD-devx.md`. `NODE_EXTRA_CA_CERTS` points to `<cfg>/ca.pem` through section 12.5 of `docs/PRD-devx.md`. |
 | Manual mkcert setup | mkcert. Run `mkcert -install` one time. Then run `mkcert localhost 127.0.0.1 <hostname>` and create the Podman secrets from the output files. |
 
 Node-based agent clients, for example Claude Code, do not read the macOS trust store. With a mkcert certificate, start the client with `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"`.
