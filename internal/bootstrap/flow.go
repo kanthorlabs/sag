@@ -28,12 +28,13 @@ import (
 )
 
 type Deps struct {
-	GOOS     func() string
-	GOARCH   func() string
-	OpenFile func(string) error
-	UID      func() string
-	Home     func() string
-	SAGPath  func() (string, error)
+	GOOS      func() string
+	GOARCH    func() string
+	OpenFile  func(string) error
+	UID       func() string
+	Home      func() string
+	SAGPath   func() (string, error)
+	OSRelease func() (string, string, error)
 
 	ResolvePaths func() (hoststate.Paths, error)
 	EnsureCfg    func(hoststate.Paths) (bool, error)
@@ -88,6 +89,7 @@ func DefaultDeps(asker prompt.Asker, out stepline.Writer, print io.Writer) Deps 
 		SAGPath: func() (string, error) {
 			return os.Executable()
 		},
+		OSRelease: readOSRelease,
 
 		ResolvePaths: hoststate.ResolvePaths,
 		EnsureCfg:    hoststate.EnsureCfg,
@@ -222,6 +224,15 @@ func Run(ctx context.Context, flags Flags, deps Deps) error {
 func (d Deps) stepPlatformCheck(_ context.Context, s *State) error {
 	if err := checkPlatform(d.GOOS(), d.GOARCH()); err != nil {
 		return err
+	}
+	if d.GOOS() == "linux" && d.OSRelease != nil {
+		id, versionID, err := d.OSRelease()
+		if err != nil {
+			return fmt.Errorf("bootstrap: read os-release: %w", err)
+		}
+		if err := checkLinuxDistro(d.GOOS(), d.GOARCH(), id, versionID); err != nil {
+			return err
+		}
 	}
 	uid := d.UID()
 	if uid == "0" {

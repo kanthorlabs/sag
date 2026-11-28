@@ -54,6 +54,32 @@ func (e *OlderError) Error() string {
 	return fmt.Sprintf("deps: %s installed %s is older than pin %s", e.Name, e.Installed, e.Pin)
 }
 
+type AptNoCandidateError struct {
+	Name string
+}
+
+func (e *AptNoCandidateError) Error() string {
+	return fmt.Sprintf("deps: apt: no candidate for %s", e.Name)
+}
+
+type AptOlderCandidateError struct {
+	Name      string
+	Candidate string
+	Pin       string
+}
+
+func (e *AptOlderCandidateError) Error() string {
+	return fmt.Sprintf("deps: apt: %s candidate %s is older than pin %s", e.Name, e.Candidate, e.Pin)
+}
+
+type NewuidmapMissingError struct {
+	Name string
+}
+
+func (e *NewuidmapMissingError) Error() string {
+	return fmt.Sprintf("deps: %s: newuidmap not found in PATH", e.Name)
+}
+
 type Deps struct {
 	PodmanVersion     func(ctx context.Context, path string) (string, error)
 	Download          func(ctx context.Context, url, dir string) (string, error)
@@ -65,6 +91,10 @@ type Deps struct {
 	MachineStart      func(ctx context.Context, path string) error
 	HasTerminal       func() bool
 	AskInstall        func(name, version, locator string) (bool, error)
+	AptCandidateVersion func(ctx context.Context, name string) (string, error)
+	AptInstall          func(ctx context.Context, name string, noInteractive bool) error
+	FindNewuidmap       func() bool
+	AskAptInstall       func(name, candidate, pin string) (bool, error)
 	IsAbsent          func() bool
 	StopBeforeInstall func() bool
 	Out               stepline.Writer
@@ -74,72 +104,164 @@ type Deps struct {
 func (d Deps) Make(ctx context.Context, items []pins.Item, podmanPath string, autoApprove []string) (Plan, error) {
 	var plan Plan
 	for _, item := range items {
-		if item.Source != "release" {
-			continue
-		}
-
-		pi := PlanItem{Pin: item}
-
-		absent := d.IsAbsent != nil && d.IsAbsent()
-		if !absent && podmanPath == "" {
-			absent = true
-		}
-
-		if !absent {
-			version, err := d.PodmanVersion(ctx, podmanPath)
+		switch item.Source {
+		case "release":
+			pi, err := d.makeReleaseItem(ctx, item, podmanPath, autoApprove)
 			if err != nil {
-				return Plan{}, fmt.Errorf("deps: %s --version: %w", item.Name, err)
+				return Plan{}, err
 			}
-			cmp, err := compareVersions(version, item.Version)
+			plan.Items = append(plan.Items, pi)
+		case "apt":
+			if d.AptCandidateVersion == nil {
+				continue
+			}
+			pi, err := d.makeAptItem(ctx, item, podmanPath, autoApprove)
 			if err != nil {
-				return Plan{}, fmt.Errorf("deps: version parse: %w", err)
+				return Plan{}, err
 			}
-			switch {
-			case cmp < 0:
-				d.Out.Line(stepline.StatusFail, item.Name, "installed "+version+", pin "+item.Version)
-				return Plan{}, &OlderError{Name: item.Name, Installed: version, Pin: item.Version}
-			case cmp == 0:
-				d.Out.Line(stepline.StatusOK, item.Name, version)
-			case cmp > 0:
-				pi.Newer = true
-				d.Out.Line(stepline.StatusWarn, item.Name, "installed "+version+", pin "+item.Version)
-			}
+			plan.Items = append(plan.Items, pi)
 		}
-
-		if absent {
-			pi.Absent = true
-			approved, warnMsg := checkAutoApprove(autoApprove, item)
-			if warnMsg != "" {
-				d.Out.Line(stepline.StatusWarn, item.Name, warnMsg)
-			}
-			if !approved {
-				if d.HasTerminal != nil && d.HasTerminal() {
-					ok, err := d.AskInstall(item.Name, item.Version, item.Locator)
-					if err != nil {
-						return Plan{}, err
-					}
-					if !ok {
-						d.Out.Line(stepline.StatusFail, item.Name, "absent; run on a terminal or add --auto-approve "+item.Name+"@"+item.Version)
-						return Plan{}, &InstallRefusal{Name: item.Name, Version: item.Version}
-					}
-					approved = true
-				} else {
-					d.Out.Line(stepline.StatusFail, item.Name, "absent; run on a terminal or add --auto-approve "+item.Name+"@"+item.Version)
-					return Plan{}, &InstallRefusal{Name: item.Name, Version: item.Version}
-				}
-			}
-			pi.Approve = approved
-		}
-
-		plan.Items = append(plan.Items, pi)
 	}
 	return plan, nil
+}
+
+func (d Deps) makeReleaseItem(ctx context.Context, item pins.Item, podmanPath string, autoApprove []string) (PlanItem, error) {
+	pi := PlanItem{Pin: item}
+
+	absent := d.IsAbsent != nil && d.IsAbsent()
+	if !absent && podmanPath == "" {
+		absent = true
+	}
+
+	if !absent {
+		version, err := d.PodmanVersion(ctx, podmanPath)
+		if err != nil {
+			return PlanItem{}, fmt.Errorf("deps: %s --version: %w", item.Name, err)
+		}
+		cmp, err := compareVersions(version, item.Version)
+		if err != nil {
+			return PlanItem{}, fmt.Errorf("deps: version parse: %w", err)
+		}
+		switch {
+		case cmp < 0:
+			d.Out.Line(stepline.StatusFail, item.Name, "installed "+version+", pin "+item.Version)
+			return PlanItem{}, &OlderError{Name: item.Name, Installed: version, Pin: item.Version}
+		case cmp == 0:
+			d.Out.Line(stepline.StatusOK, item.Name, version)
+		case cmp > 0:
+			pi.Newer = true
+			d.Out.Line(stepline.StatusWarn, item.Name, "installed "+version+", pin "+item.Version)
+		}
+	}
+
+	if absent {
+		pi.Absent = true
+		approved, warnMsg := checkAutoApprove(autoApprove, item)
+		if warnMsg != "" {
+			d.Out.Line(stepline.StatusWarn, item.Name, warnMsg)
+		}
+		if !approved {
+			if d.HasTerminal != nil && d.HasTerminal() {
+				ok, err := d.AskInstall(item.Name, item.Version, item.Locator)
+				if err != nil {
+					return PlanItem{}, err
+				}
+				if !ok {
+					d.Out.Line(stepline.StatusFail, item.Name, "absent; run on a terminal or add --auto-approve "+item.Name+"@"+item.Version)
+					return PlanItem{}, &InstallRefusal{Name: item.Name, Version: item.Version}
+				}
+				approved = true
+			} else {
+				d.Out.Line(stepline.StatusFail, item.Name, "absent; run on a terminal or add --auto-approve "+item.Name+"@"+item.Version)
+				return PlanItem{}, &InstallRefusal{Name: item.Name, Version: item.Version}
+			}
+		}
+		pi.Approve = approved
+	}
+
+	return pi, nil
+}
+
+func (d Deps) makeAptItem(ctx context.Context, item pins.Item, podmanPath string, autoApprove []string) (PlanItem, error) {
+	pi := PlanItem{Pin: item}
+
+	candidate, err := d.AptCandidateVersion(ctx, item.Locator)
+	if err != nil {
+		return PlanItem{}, fmt.Errorf("deps: apt: %s: %w", item.Name, err)
+	}
+	if candidate == "" {
+		d.Out.Line(stepline.StatusFail, item.Name, "no apt candidate")
+		return PlanItem{}, &AptNoCandidateError{Name: item.Name}
+	}
+	cmp, err := compareVersions(candidate, item.Version)
+	if err != nil {
+		return PlanItem{}, fmt.Errorf("deps: apt version parse: %w", err)
+	}
+	if cmp < 0 {
+		d.Out.Line(stepline.StatusFail, item.Name, "candidate "+candidate+", pin "+item.Version)
+		return PlanItem{}, &AptOlderCandidateError{Name: item.Name, Candidate: candidate, Pin: item.Version}
+	}
+
+	absent := d.IsAbsent != nil && d.IsAbsent()
+	if !absent && podmanPath == "" {
+		absent = true
+	}
+
+	if absent {
+		pi.Absent = true
+		approved, warnMsg := checkAutoApprove(autoApprove, item)
+		if warnMsg != "" {
+			d.Out.Line(stepline.StatusWarn, item.Name, warnMsg)
+		}
+		if !approved {
+			if d.HasTerminal != nil && d.HasTerminal() {
+				var ok bool
+				if d.AskAptInstall != nil {
+					ok, err = d.AskAptInstall(item.Name, candidate, item.Version)
+				} else {
+					ok, err = d.AskInstall(item.Name, item.Version, item.Locator)
+				}
+				if err != nil {
+					return PlanItem{}, err
+				}
+				if !ok {
+					d.Out.Line(stepline.StatusFail, item.Name, "absent; run on a terminal or add --auto-approve "+item.Name+"@"+item.Version)
+					return PlanItem{}, &InstallRefusal{Name: item.Name, Version: item.Version}
+				}
+				approved = true
+			} else {
+				d.Out.Line(stepline.StatusFail, item.Name, "absent; run on a terminal or add --auto-approve "+item.Name+"@"+item.Version)
+				return PlanItem{}, &InstallRefusal{Name: item.Name, Version: item.Version}
+			}
+		}
+		pi.Approve = approved
+	} else {
+		if cmp == 0 {
+			d.Out.Line(stepline.StatusOK, item.Name, candidate)
+		} else {
+			pi.Newer = true
+			d.Out.Line(stepline.StatusWarn, item.Name, "candidate "+candidate+", pin "+item.Version)
+		}
+	}
+
+	return pi, nil
 }
 
 func (d Deps) Apply(ctx context.Context, plan Plan) (string, error) {
 	var newPodmanPath string
 	for _, pi := range plan.Items {
 		if !pi.Absent || !pi.Approve {
+			continue
+		}
+
+		if pi.Pin.Source == "apt" {
+			p, err := d.applyAptItem(ctx, pi)
+			if err != nil {
+				return newPodmanPath, err
+			}
+			if p != "" {
+				newPodmanPath = p
+			}
 			continue
 		}
 
@@ -229,6 +351,26 @@ func (d Deps) Apply(ctx context.Context, plan Plan) (string, error) {
 	}
 
 	return newPodmanPath, nil
+}
+
+func (d Deps) applyAptItem(ctx context.Context, pi PlanItem) (string, error) {
+	noInteractive := d.HasTerminal == nil || !d.HasTerminal()
+	if err := d.AptInstall(ctx, pi.Pin.Locator, noInteractive); err != nil {
+		return "", fmt.Errorf("deps: apt install %s: %w", pi.Pin.Name, err)
+	}
+	if d.FindNewuidmap != nil && !d.FindNewuidmap() {
+		d.Out.Line(stepline.StatusFail, pi.Pin.Name, "newuidmap not found")
+		return "", &NewuidmapMissingError{Name: pi.Pin.Name}
+	}
+	d.Out.Line(stepline.StatusInstall, pi.Pin.Name, pi.Pin.Version)
+	if d.FindPodman == nil {
+		return "", nil
+	}
+	p, err := d.FindPodman("")
+	if err != nil {
+		return "", fmt.Errorf("deps: find %s after apt install: %w", pi.Pin.Name, err)
+	}
+	return p, nil
 }
 
 func stripVersionSuffix(v string) string {

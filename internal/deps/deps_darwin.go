@@ -15,6 +15,10 @@ import (
 	"strings"
 )
 
+var DefaultAptCandidateVersion func(ctx context.Context, name string) (string, error) = nil
+var DefaultAptInstall func(ctx context.Context, name string, noInteractive bool) error = nil
+var DefaultFindNewuidmap func() bool = nil
+
 func DefaultPodmanVersion(ctx context.Context, path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("deps: podman path is empty")
