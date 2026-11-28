@@ -185,7 +185,10 @@ func CheckLinuxPreconditions(ctx context.Context, r Runner, cfg PreconditionConf
 	if cfg.CfgExists != nil && cfg.CfgExists() {
 		return fmt.Errorf("precondition: cfg directory exists: %s", cfg.CfgDir)
 	}
-	if cfg.QuadletExists != nil && cfg.QuadletExists() {
+	if cfg.QuadletExists == nil {
+		return fmt.Errorf("precondition: QuadletExists is not set")
+	}
+	if cfg.QuadletExists() {
 		return fmt.Errorf("precondition: quadlet file exists")
 	}
 	return checkLinuxUnit(ctx, r)
@@ -229,9 +232,12 @@ func CheckLinuxPreconditionsWithRecovery(ctx context.Context, r Runner, cfg Prec
 }
 
 func checkLinuxUnit(ctx context.Context, r Runner) error {
-	_, err := r.Output(ctx, "systemctl", "--user", "is-active", "sag.service")
-	if err == nil {
-		return fmt.Errorf("precondition: unit sag.service is active")
+	out, err := r.Output(ctx, "systemctl", "--user", "show", "-p", "LoadState", "--value", "sag.service")
+	if err != nil {
+		return fmt.Errorf("precondition: systemctl --user show sag.service: %w", err)
+	}
+	if state := strings.TrimSpace(string(out)); state != "not-found" {
+		return fmt.Errorf("precondition: unit sag.service exists (LoadState %s)", state)
 	}
 	return nil
 }

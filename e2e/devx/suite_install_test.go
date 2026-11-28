@@ -40,27 +40,8 @@ func TestDevxInstall(t *testing.T) {
 	}
 	markerFile := filepath.Join(devDir, "local", "devx-run-active")
 
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		t.Fatalf("suite entry: XDG_CONFIG_HOME=%q is set; unset it before running e2e-devx", xdg)
-	}
-	if err := dxh.CheckRunLock(filepath.Dir(filepath.Dir(markerFile))); err != nil {
-		t.Fatalf("suite entry: %v", err)
-	}
-	if _, err := os.Stat(markerFile); err == nil {
-		pcfg.Marker = true
-	}
-	if err := dxh.CheckLinuxPreconditionsWithRecovery(ctx, r, pcfg, func(ctx context.Context) error {
-		return dxh.Teardown(ctx, r, tcfg)
-	}); err != nil {
-		t.Fatalf("suite precondition: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(markerFile), 0o700); err != nil {
-		t.Fatalf("suite entry mkdir: %v", err)
-	}
-	if err := os.WriteFile(markerFile, nil, 0o600); err != nil {
-		t.Fatalf("suite entry write marker: %v", err)
-	}
-	defer func() { _ = os.Remove(markerFile) }()
+	cleanup := dxh.SuiteEntry(t, r, pcfg, tcfg, markerFile)
+	defer cleanup()
 
 	installOrder := []string{
 		"DXAC05_PodmanAptInstall",
