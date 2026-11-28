@@ -1,35 +1,42 @@
-# Development setup on macOS
+# Development setup
 
-Run these steps at the repository root. Development state goes to `.dev/local/`, which `.git/info/exclude` covers.
+Run these steps on macOS arm64. On Ubuntu, use `sag_linux_<arch>` and `sha256sum` instead of `shasum -a 256`.
 
-1. Install the tools: `brew install podman mkcert jq`.
-2. If no Podman machine exists, run `podman machine init --cpus 4 --memory 8192 --disk-size 30`.
-3. Start the machine: `podman machine start`.
-4. Install the mkcert root CA one time: `mkcert -install`.
-5. Start the development stack: `make dev-up`. `make dev-up` creates the certificates, the keys, and the secrets. It starts `sag-dev-pg` (PostgreSQL 17 with the mkcert certificate) and `sag-dev` with `deploy/dev/sag.yaml`.
-6. Issue a JWT: `export SAG_TOKEN="$(podman exec -t sag-dev sag jwt generate claude-code-dev | tr -d '\r')"`.
-7. Start Claude Code with the mkcert CA: `NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem" claude`.
-8. Stop the stack: `make dev-down`.
+Prerequisites:
 
-Claude Code MCP configuration, user scope:
+- `gh` 2.49 or later, logged in with `gh auth login`.
+- `~/.local/bin` exists and is in `PATH`. Create it with `mkdir -p ~/.local/bin`.
 
-```sh
-claude mcp add --transport http --scope user sag https://localhost:8443/mcp \
-  --header "Authorization: Bearer ${SAG_TOKEN}"
+## 1. Install `sag`
+
+```
+gh release download <tag> --repo kanthorlabs/sag --pattern sag_darwin_arm64 --pattern SHA256SUMS
+shasum -a 256 --ignore-missing -c SHA256SUMS
+gh attestation verify sag_darwin_arm64 --repo kanthorlabs/sag
+install -m 0755 sag_darwin_arm64 ~/.local/bin/sag
+sag bootstrap
 ```
 
-Project configuration `.mcp.json` with expansion. Do not commit a literal JWT:
+If a check fails, do not install the binary.
 
-```json
-{
-  "mcpServers": {
-    "sag": {
-      "type": "http",
-      "url": "https://localhost:8443/mcp",
-      "headers": { "Authorization": "Bearer ${SAG_TOKEN}" }
-    }
-  }
-}
+`sag bootstrap` installs or checks Podman, starts SAG, creates the certificate authority `~/.config/sag/ca.pem`, and asks for the agent setup of each harness.
+
+## 2. Register a database
+
+```
+sag credential create mydb --kind postgres --agent claude-code
 ```
 
-The mkcert root CA stays on the development machine (PRD R8).
+`sag` asks for the connection string on the terminal and does not echo it. For a database on this machine, use the host `host.containers.internal` in the connection string.
+
+## 3. Set up a harness
+
+```
+sag agent setup claude-code
+```
+
+Agent setup writes the MCP entry with its JWT into the harness configuration and adds the certificate authority of SAG. Start a new Claude Code session after the setup.
+
+## Local daemon code
+
+`sag bootstrap` runs only a published image. To run local daemon code, use the e2e harness: `make e2e` builds `localhost/sag:e2e`.
