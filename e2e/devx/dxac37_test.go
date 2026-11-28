@@ -82,11 +82,15 @@ func DXAC37_CreateTLSCA(t *testing.T, ctx context.Context) {
 		}
 	}
 
+	pg37Addr, err := dxh.PublishAddr(ctx, r)
+	if err != nil {
+		t.Fatalf("DXAC37: %v", err)
+	}
 	_, err = r.Output(ctx,
 		"podman", "run", "--detach",
 		"--label", "sag.devx-e2e=1",
 		"--name", pg37Container,
-		"--publish", "127.0.0.1::5432",
+		"--publish", pg37Addr+"::5432",
 		"--secret", pg37PwdName,
 		"--secret", pg37CertName,
 		"--secret", pg37KeyName+",uid=999,gid=999,mode=0600",

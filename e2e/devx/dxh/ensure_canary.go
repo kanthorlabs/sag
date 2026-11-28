@@ -130,11 +130,15 @@ func createCanaryPGSecret(ctx context.Context, pwd string) error {
 }
 
 func startCanaryPG(ctx context.Context, r Runner, user, database string) error {
-	_, err := r.Output(ctx,
+	addr, err := PublishAddr(ctx, r)
+	if err != nil {
+		return err
+	}
+	_, err = r.Output(ctx,
 		"podman", "run", "--detach",
 		"--label", "sag.devx-e2e=1",
 		"--name", canaryPGContainer,
-		"--publish", "127.0.0.1::5432",
+		"--publish", addr+"::5432",
 		"--secret", canaryPGSecretName,
 		"--env", "POSTGRES_PASSWORD_FILE=/run/secrets/"+canaryPGSecretName,
 		"--env", "POSTGRES_USER="+user,

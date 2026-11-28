@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -83,16 +84,25 @@ func localStackRunning(ctx context.Context, r Runner) bool {
 const LocalStackName = localStackName
 
 func startLocalStack(ctx context.Context, r Runner) error {
-	_, err := r.Output(ctx,
-		"podman", "run", "--detach", "--rm",
+	args := []string{"run", "--detach", "--rm",
 		"--label", "sag.devx-e2e=1",
 		"--name", localStackName,
 		"--publish", "127.0.0.1:4566:4566",
+	}
+	if runtime.GOOS == "linux" {
+		addr, err := PublishAddr(ctx, r)
+		if err != nil {
+			return err
+		}
+		args = append(args, "--publish", addr+":4566:4566")
+	}
+	args = append(args,
 		"--env", "SERVICES=secretsmanager",
 		"--env", "DEFAULT_REGION="+localStackRegion,
 		"--env", "AWS_DEFAULT_REGION="+localStackRegion,
 		LocalStackImage,
 	)
+	_, err := r.Output(ctx, "podman", args...)
 	return err
 }
 
@@ -256,11 +266,15 @@ func StartAWSTestPostgres(ctx context.Context, r Runner, name string) (string, e
 	user := "u" + sfx[:8]
 	pwd := "p" + sfx[8:16]
 	database := "d" + sfx[16:]
-	_, err := r.Output(ctx,
+	addr, err := PublishAddr(ctx, r)
+	if err != nil {
+		return "", fmt.Errorf("StartAWSTestPostgres: %w", err)
+	}
+	_, err = r.Output(ctx,
 		"podman", "run", "--detach", "--rm",
 		"--label", "sag.devx-e2e=1",
 		"--name", name,
-		"--publish", "127.0.0.1::5432",
+		"--publish", addr+"::5432",
 		"--env", "POSTGRES_USER="+user,
 		"--env", "POSTGRES_PASSWORD="+pwd,
 		"--env", "POSTGRES_DB="+database,
